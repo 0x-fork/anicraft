@@ -287,6 +287,26 @@ fn a_fla_archive_imports_the_same() {
 }
 
 #[test]
+fn folder_import_ignores_backslash_escapes_and_symlinks() {
+    let dir = std::env::temp_dir().join(format!("anicraft-xfl-path-{}", std::process::id()));
+    let pkg = dir.join("pkg");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(dir.join("secret.xml"), DOC).unwrap();
+    // A reference that climbs out with backslashes is not read (here it would be the whole document).
+    std::fs::write(pkg.join("DOMDocument.xml"), "<DOMDocument><symbols><Include href=\"x\\..\\..\\secret.xml\"/></symbols></DOMDocument>").unwrap();
+    let (doc, _) = crate::import_path(&pkg).unwrap();
+    assert_eq!(doc.library.len(), 0);
+    #[cfg(unix)]
+    {
+        std::fs::remove_file(pkg.join("DOMDocument.xml")).unwrap();
+        std::os::unix::fs::symlink(dir.join("secret.xml"), pkg.join("DOMDocument.xml")).unwrap();
+        let e = crate::import_path(&pkg).err().map(|e| e.to_string());
+        assert!(e.is_some_and(|e| e.contains("no DOMDocument.xml")), "a symlink is not package content");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn hostile_packages_fail_cleanly() {
     let mut files = package();
     files.insert("DOMDocument.xml", "<DOMDocument><timelines><DOMTimeline><layers><DOMLayer><frames><DOMFrame index=\"99999999999\" duration=\"-4\"><elements><DOMShape><edges><Edge fillStyle1=\"1\" edges=\"!#FFFFFFFF.FF 1e30|nan 0[\"/></edges></DOMShape></elements></DOMFrame></frames></DOMLayer></layers></DOMTimeline></timelines></DOMDocument>");

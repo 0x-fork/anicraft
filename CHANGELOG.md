@@ -1279,6 +1279,7 @@
   * Headless: new `motion.pin_point` and `motion.unpin_point`; `motion.info` and the path
     commands report `pins`.
 
+* **Security: Animate import limits.** A `.fla` may inflate at most 1 GiB in all, an import keeps at most 256 megapixels of bitmaps (the rest are reported), and an XFL folder import refuses `\\` path tricks and symlinks and never reads past its size cap.
 * **Stroke caps, joins, miter limit, and dashed and dotted lines** (ADR 0046, M7). Properties ›
   Stroke has Animate's rows: **Style** (Solid, Dashed with a dash and gap editor, Dotted with
   dot spacing), **Cap** (None, Round, Square), **Join** (Miter, Round, Bevel) and **Miter**

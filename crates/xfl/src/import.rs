@@ -1532,12 +1532,20 @@ pub fn import_path(path: &std::path::Path) -> Result<(Document, Report), XflErro
             return Ok(None);
         }
         let full = dir.join(p);
-        match std::fs::read(&full) {
-            Ok(b) if b.len() <= xml::MAX_INPUT => Ok(Some(b)),
-            Ok(_) => Err(XflError::NotXfl(format!("{p} is too large"))),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e.into()),
+        // Regular files only (a symlink to /dev/zero or a secret is not package content), and
+        // never more than the cap is read, however big the file claims to be.
+        match std::fs::symlink_metadata(&full) {
+            Ok(m) if m.is_file() => {}
+            Ok(_) => return Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
         }
+        let mut b = Vec::new();
+        std::io::Read::read_to_end(&mut std::io::Read::take(std::fs::File::open(&full)?, xml::MAX_INPUT as u64 + 1), &mut b)?;
+        if b.len() > xml::MAX_INPUT {
+            return Err(XflError::NotXfl(format!("{p} is too large")));
+        }
+        Ok(Some(b))
     };
     import_with(&read)
 }
