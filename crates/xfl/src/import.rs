@@ -1168,7 +1168,7 @@ impl<'a> Builder<'a> {
                 }
             };
             let (model, xml_root) = parsed.into_parts(craft_xfl::document::ModelLimits { max_timelines: 0, max_layers_per_timeline: MAX_LAYERS });
-            let item = match xml::from_craft_xml_owned(xml_root) {
+            let item = match xml::from_craft_xml_owned_local_names(xml_root) {
                 Ok(item) => item,
                 Err(_) => {
                     self.report.skip("library files that couldn't be read");
@@ -1307,7 +1307,7 @@ fn import_from<'a>(read: &'a Reader<'a>, fonts: Option<&'a Fonts>) -> Result<(Do
     let parsed = craft_xfl::document::Document::parse(&bytes).map_err(xml::from_craft_error)?;
     let (schema, xml_root) =
         parsed.into_parts(craft_xfl::document::ModelLimits { max_timelines: anicraft_doc::MAX_SCENES, max_layers_per_timeline: MAX_LAYERS });
-    let root = xml::from_craft_xml_owned(xml_root)?;
+    let root = xml::from_craft_xml_owned_local_names(xml_root)?;
     if root.name != "DOMDocument" {
         return Err(XflError::NotXfl(format!("the root element is <{}>", root.name)));
     }

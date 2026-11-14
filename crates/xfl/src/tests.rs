@@ -124,6 +124,27 @@ fn stage_layers_frames_and_tweens() {
 }
 
 #[test]
+fn prefixed_xfl_names_survive_shared_parse_and_domain_mapping() {
+    let doc = r##"<a:DOMDocument xmlns:a="http://ns.adobe.com/xfl/2008/" width="120" height="80">
+      <a:timelines><a:DOMTimeline name="Prefixed Scene"><a:layers>
+        <a:DOMLayer name="Prefixed Layer"><a:frames><a:DOMFrame index="0" duration="3" name="key">
+          <a:elements><a:DOMRectangleObject x="2" y="3" objectWidth="10" objectHeight="8"><a:fill><a:SolidColor color="#336699"/></a:fill></a:DOMRectangleObject></a:elements>
+        </a:DOMFrame></a:frames></a:DOMLayer>
+      </a:layers></a:DOMTimeline></a:timelines>
+    </a:DOMDocument>"##;
+    let (document, _) = import(&HashMap::from([("DOMDocument.xml", doc)])).unwrap();
+    assert_eq!(document.scenes[0].name, "Prefixed Scene");
+    let layer = &document.timeline(0).layers[0];
+    assert_eq!(layer.name, "Prefixed Layer");
+    assert_eq!(layer.keyframes.len(), 1);
+    assert_eq!(
+        (layer.keyframes[0].start, layer.keyframes[0].duration, layer.keyframes[0].label.as_str()),
+        (0, 3, "key")
+    );
+    assert_eq!(layer.keyframes[0].elements.len(), 1, "prefixed geometry reaches the app model");
+}
+
+#[test]
 fn mask_layers_mask_the_layers_that_point_at_them() {
     // A mask inside a folder: `parentLayerIndex` counts every layer in the file, folders too.
     let shape = r##"<DOMShape><fills><FillStyle index="1"><SolidColor color="#FF0000"/></FillStyle></fills>

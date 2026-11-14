@@ -184,6 +184,21 @@ pub fn from_craft_xml_owned(source: craft_xml::El) -> Result<Element, XmlError> 
     convert_owned(source, &[], &mut used)
 }
 
+fn normalize_element_names(element: &mut Element) {
+    element.name = local(&element.name).to_string();
+    for child in &mut element.children {
+        normalize_element_names(child);
+    }
+}
+
+/// Converts an owned shared XML tree and drops element-name prefixes for formats whose
+/// vocabulary is defined by local element names, such as XFL. Attribute names are preserved.
+pub fn from_craft_xml_owned_local_names(source: craft_xml::El) -> Result<Element, XmlError> {
+    let mut element = from_craft_xml_owned(source)?;
+    normalize_element_names(&mut element);
+    Ok(element)
+}
+
 /// Parses a document and returns its root element.
 pub fn parse(src: &[u8]) -> Result<Element, XmlError> {
     let root = options().parse(src).map_err(from_craft_error)?;
@@ -216,6 +231,17 @@ mod tests {
         let parts: Vec<(&str, &str)> = text.children.iter().map(|child| (child.name.as_str(), child.text.as_str())).collect();
         assert_eq!(parts, [(TEXT_NODE, "Hello "), ("tspan", "big"), (TEXT_NODE, " world& more")]);
         assert_eq!(root.children[1].text, "");
+    }
+
+    #[test]
+    fn xfl_compatibility_conversion_uses_element_local_names_and_preserves_attributes() {
+        let root = craft_xml::Options::default()
+            .parse(b"<x:DOMDocument xmlns:x='urn:xfl' x:version='1'><x:timelines><x:DOMTimeline/></x:timelines></x:DOMDocument>")
+            .unwrap();
+        let root = from_craft_xml_owned_local_names(root).unwrap();
+        assert_eq!(root.name, "DOMDocument");
+        assert_eq!(root.attr("x:version"), Some("1"));
+        assert_eq!(root.list("timelines")[0].name, "DOMTimeline");
     }
 
     #[test]
