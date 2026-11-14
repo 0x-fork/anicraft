@@ -1401,15 +1401,10 @@ fn fla_from(data: &[u8], fonts: Option<&Fonts>) -> Result<(Document, Report), Xf
 /// `__MACOSX` folder some zip tools add beside it is ignored. An archive holding several
 /// documents in top folders is refused with their names rather than one picked.
 fn package_root(archive: &crate::zip::Archive<'_>) -> Result<String, XflError> {
-    if archive.names().any(|n| n == "DOMDocument.xml") {
-        return Ok(String::new());
-    }
-    let mut tops: Vec<&str> = archive.names().filter_map(|n| n.strip_suffix("/DOMDocument.xml")).filter(|top| !top.contains('/') && *top != "__MACOSX").collect();
-    tops.sort_unstable();
-    match tops.as_slice() {
-        [] => Ok(String::new()),
-        [top] => Ok(format!("{top}/")),
-        many => {
+    match archive.xfl_package_root() {
+        crate::zip::XflPackageRoot::Document | crate::zip::XflPackageRoot::Missing => Ok(String::new()),
+        crate::zip::XflPackageRoot::Folder(top) => Ok(format!("{top}/")),
+        crate::zip::XflPackageRoot::Multiple(many) => {
             let names: Vec<String> = many.iter().take(5).map(|t| t.chars().take(80).collect()).collect();
             let more = if many.len() > 5 { format!(" and {} more", many.len() - 5) } else { String::new() };
             Err(XflError::NotXfl(format!("the archive holds {} Animate documents ({}{more}): unzip it and open one of them", many.len(), names.join(", "))))
