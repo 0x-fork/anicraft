@@ -199,7 +199,7 @@ This page is generated from the command registry, so it always matches the versi
 - **Break Apart** `modify.break_apart` · **Ctrl+B** (macOS **⌘B**) · changes the document
   Parameters: `{} the selected symbol instances become their contents, text becomes shapes, and drawing objects become raw shapes that merge with the raw shapes they touch`
 - **Group** `modify.group` · **Ctrl+G** (macOS **⌘G**) · changes the document
-  Parameters: `{} puts the selected elements on each layer into one group there (ADR 0073), where the topmost of them was, and selects it → {group, members} (one layer) or {layers: [..]}. Members keep their places exactly: the group's transform starts as the identity. Raw shapes inside merge only with each other; double-click the group (symbol.edit) to edit it in place`
+  Parameters: `{} puts the selected elements on each layer into one group there (ADR 0073), where the topmost of them was, and selects it → {group, members} (one layer) or {layers: [..]}. Members keep their places exactly. The group's registration point is the centre of what was grouped, and members are stored relative to it. Raw shapes inside merge only with each other; double-click the group (symbol.edit) to edit it in place`
 - **Ungroup** `modify.ungroup` · **Ctrl+Shift+G** (macOS **⇧⌘G**) · changes the document
   Parameters: `{} puts each selected group's members back on its layer where it was, each placed and coloured as the group showed it, and selects them; raw shapes among them merge with the drawing there → {members}`
 - **Union** `modify.union` · Modify › Combine Objects · changes the document
