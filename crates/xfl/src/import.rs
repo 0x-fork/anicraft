@@ -1239,18 +1239,15 @@ impl<'a> Builder<'a> {
     fn publish_settings(&mut self) -> Result<(), XflError> {
         // Optional: settings that can't be read leave the defaults (#226).
         let Ok(Some(bytes)) = (self.read)("PublishSettings.xml") else { return Ok(()) };
-        let Ok(root) = xml::parse(&bytes) else { return Ok(()) };
-        let profiles: Vec<&X> = root.children.iter().filter(|c| c.name == "flash_profile").collect();
-        let profile = profiles.iter().find(|p| p.bool("current") == Some(true)).or(profiles.first()).copied().unwrap_or(&root);
-        let flash = profile.child("PublishFlashProperties").unwrap_or(profile);
-        let text = |name: &str| flash.child(name).map(|e| e.text.trim().to_string()).filter(|t| !t.is_empty());
-        self.language = match text("ActionScriptVersion").as_deref() {
+        let Ok(document) = craft_xfl::document::Document::parse(&bytes) else { return Ok(()) };
+        let settings = document.publish_settings();
+        self.language = match settings.action_script_version.as_deref() {
             Some("1" | "2") => Language::ActionScript1or2,
             _ => Language::ActionScript3,
         };
-        if let Some(class) = text("DocumentClass") {
+        if let Some(class) = settings.document_class {
             if anicraft_doc::actions::valid_class_name(&class) {
-                self.doc.document_class = class;
+                self.doc.document_class = class.to_string();
                 self.report.keep("document class");
             } else {
                 self.report.skip("document classes that aren't class names (left out)");
