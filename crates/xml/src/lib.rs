@@ -79,7 +79,9 @@ fn options() -> craft_xml::Options<'static> {
     }
 }
 
-fn map_error(error: craft_xml::Error) -> XmlError {
+/// Keeps AniCraft's historical diagnostics when a shared parser entry point returns a
+/// `craft-xml` error directly.
+pub fn from_craft_error(error: craft_xml::Error) -> XmlError {
     match error {
         craft_xml::Error::TooLarge(_) => XmlError::TooLarge,
         craft_xml::Error::TooDeep(_) => XmlError::TooDeep,
@@ -140,16 +142,57 @@ fn convert(source: &craft_xml::El, mixed: &[&str], used: &mut usize) -> Result<E
     Ok(element)
 }
 
+fn convert_owned(source: craft_xml::El, mixed: &[&str], used: &mut usize) -> Result<Element, XmlError> {
+    use craft_xml::Node;
+
+    charge_item(used)?;
+    let craft_xml::El { name, attrs, children } = source;
+    let is_mixed = mixed.contains(&local(&name));
+    let has_elements = children.iter().any(|node| matches!(node, Node::El(_)));
+    let mut element = Element { name, ..Element::default() };
+    for (name, value) in attrs {
+        element.attrs.insert(name, value);
+    }
+    for node in children {
+        match node {
+            Node::El(child) => element.children.push(convert_owned(child, mixed, used)?),
+            Node::Text(text) | Node::CData(text) => {
+                element.text.push_str(&text);
+                if is_mixed {
+                    charge_item(used)?;
+                    element.children.push(text_node(&text));
+                }
+            }
+            Node::Pi { .. } | Node::Comment(_) => {}
+        }
+    }
+    if !is_mixed && has_elements && element.text.trim().is_empty() {
+        element.text.clear();
+    }
+    Ok(element)
+}
+
+/// Converts the shared XML tree into AniCraft's compatibility tree without reparsing bytes.
+pub fn from_craft_xml(source: &craft_xml::El) -> Result<Element, XmlError> {
+    let mut used = 0;
+    convert(source, &[], &mut used)
+}
+
+/// Converts and consumes the shared XML tree without retaining a second copy during conversion.
+pub fn from_craft_xml_owned(source: craft_xml::El) -> Result<Element, XmlError> {
+    let mut used = 0;
+    convert_owned(source, &[], &mut used)
+}
+
 /// Parses a document and returns its root element.
 pub fn parse(src: &[u8]) -> Result<Element, XmlError> {
-    let root = options().parse(src).map_err(map_error)?;
-    let mut used = 0;
-    convert(&root, &[], &mut used)
+    let root = options().parse(src).map_err(from_craft_error)?;
+    from_craft_xml(&root)
 }
 
 /// Parses a document whose `mixed` elements keep character stretches among their children.
 pub fn parse_mixed(src: &[u8], mixed: &[&str]) -> Result<Element, XmlError> {
-    let root = options().parse(src).map_err(map_error)?;
+    let root = options().parse(src).map_err(from_craft_error)?;
     let mut used = 0;
     convert(&root, mixed, &mut used)
 }

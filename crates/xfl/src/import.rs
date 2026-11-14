@@ -41,6 +41,15 @@ struct RawHint {
     end: Option<Vec2>,
 }
 
+struct PendingSymbol {
+    id: SymbolId,
+    name: String,
+    kind: SymbolKind,
+    linkage: Option<Linkage>,
+    item: X,
+    timeline: Option<craft_xfl::document::TimelineModel>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum XflError {
     #[error("{0}")]
@@ -237,7 +246,7 @@ struct Builder<'a> {
     /// refer to any symbol).
     ids: HashMap<String, SymbolId>,
     /// Parsed symbol files waiting to be built, with their script class.
-    pending: Vec<(SymbolId, String, SymbolKind, Option<Linkage>, X)>,
+    pending: Vec<PendingSymbol>,
     /// The language the document's frame scripts are written in (from its publish settings).
     language: Language,
     /// Library item name → bitmap id, for the bitmaps that could be read.
@@ -632,64 +641,67 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn timeline(&mut self, tl: &X) -> Timeline {
+    fn timeline(&mut self, tl: &X, schema: &craft_xfl::document::TimelineModel) -> Timeline {
         let mut layers = Vec::new();
         // Layers by their position in the file's layer list: `parentLayerIndex` points at a
         // layer's folder or mask. Links that don't fit AniCraft's rules are dropped by
         // `repair_masks` below.
         let mut by_index: Vec<LayerId> = Vec::new();
-        for l in tl.list("layers").iter().filter(|l| l.name == "DOMLayer").take(MAX_LAYERS) {
-            let kind = match l.attr("layerType") {
-                Some("folder") => LayerKind::Folder,
-                Some("guide") => LayerKind::Guide,
-                Some("mask") => LayerKind::Mask,
-                _ => LayerKind::Normal,
+        for (l, schema_layer) in tl.list("layers").iter().filter(|l| l.name == "DOMLayer").take(MAX_LAYERS).zip(&schema.layers) {
+            let kind = match schema_layer.layer_type {
+                craft_xfl::document::LayerType::Folder => LayerKind::Folder,
+                craft_xfl::document::LayerType::Guide => LayerKind::Guide,
+                craft_xfl::document::LayerType::Mask => LayerKind::Mask,
+                craft_xfl::document::LayerType::Normal | craft_xfl::document::LayerType::Other => LayerKind::Normal,
             };
             let id = LayerId(self.doc.alloc_id());
             by_index.push(id);
             let mut layer = Layer::new(id, l.attr("name").unwrap_or("Layer"));
             layer.kind = kind;
-            layer.parent = l.u32("parentLayerIndex").and_then(|i| by_index.get(i as usize).copied()).filter(|p| *p != id);
+            layer.parent = schema_layer.parent_layer_index.and_then(|i| by_index.get(i as usize).copied()).filter(|p| *p != id);
             if kind == LayerKind::Folder {
                 // A folder holds layers, never frames.
                 layer.keyframes.clear();
-                layer.visible = l.bool("visible").unwrap_or(true);
-                layer.locked = l.bool("locked").unwrap_or(false);
+                layer.visible = schema_layer.visible.unwrap_or(true);
+                layer.locked = schema_layer.locked.unwrap_or(false);
                 layer.color = color(l, "color", "__none");
                 layers.push(Arc::new(layer));
                 continue;
             }
-            layer.visible = l.bool("visible").unwrap_or(true);
-            layer.locked = l.bool("locked").unwrap_or(false);
-            layer.outline = l.bool("outline").unwrap_or(false);
+            layer.visible = schema_layer.visible.unwrap_or(true);
+            layer.locked = schema_layer.locked.unwrap_or(false);
+            layer.outline = schema_layer.outline.unwrap_or(false);
             layer.color = color(l, "color", "__none");
             // Layer Properties' height, 100 / 200 / 300 % (ADR 0061), as a multiple of a row.
-            layer.height_rows = l.u32("heightMultiplier").map_or(1, |h| h.clamp(1, u32::from(anicraft_doc::MAX_LAYER_HEIGHT)) as u8);
+            layer.height_rows = schema_layer.height_multiplier.map_or(1, |h| h.clamp(1, u32::from(anicraft_doc::MAX_LAYER_HEIGHT)) as u8);
             let mut keys = Vec::new();
             let mut raw_hints: HashMap<u32, Vec<RawHint>> = HashMap::new();
-            for f in l.list("frames").iter().filter(|f| f.name == "DOMFrame") {
-                let start = f.u32("index").unwrap_or(0).min(MAX_FRAME);
-                let duration = f.u32("duration").unwrap_or(1).clamp(1, MAX_FRAME);
+            for (f, schema_frame) in l.list("frames").iter().filter(|f| f.name == "DOMFrame").zip(&schema_layer.frames) {
+                let start = schema_frame.index.unwrap_or(0).min(MAX_FRAME);
+                let duration = schema_frame.duration.unwrap_or(1).clamp(1, MAX_FRAME);
                 let mut k = Keyframe::new(start, duration);
                 // A frame's name is a label (or an anchor, a label too); a comment is a note
                 // to the animator that nothing can go to, which AniCraft has no place for yet.
-                if f.attr("labelType").map(str::trim) == Some("comment") {
+                if schema_frame.is_comment {
                     self.report.skip("frame comments");
                 } else {
                     k.label = f.attr("name").unwrap_or("").chars().take(256).collect();
                 }
-                match f.attr("tweenType") {
-                    Some(t @ ("motion" | "shape")) => {
-                        let kind = if t == "shape" { TweenKind::Shape } else { TweenKind::Classic };
+                match schema_frame.tween_type {
+                    craft_xfl::document::TweenType::Motion | craft_xfl::document::TweenType::Shape => {
+                        let kind =
+                            if schema_frame.tween_type == craft_xfl::document::TweenType::Shape { TweenKind::Shape } else { TweenKind::Classic };
                         let orient = f.bool("motionTweenOrientToPath").unwrap_or(false);
-                        if kind == TweenKind::Classic && f.attr("motionTweenRotate").is_some_and(|r| matches!(r.trim(), "clockwise" | "counter-clockwise")) {
+                        if kind == TweenKind::Classic
+                            && f.attr("motionTweenRotate").is_some_and(|r| matches!(r.trim(), "clockwise" | "counter-clockwise"))
+                        {
                             self.report.skip("tween spins (turned the shortest way)");
                         }
                         let (easing, groups) = self.easing(f);
                         k.tween = Some(Tween { easing, kind, orient, groups });
                     }
-                    Some("motion object") => self.report.skip("motion tweens (kept as keyframes)"),
-                    _ => {}
+                    craft_xfl::document::TweenType::MotionObject => self.report.skip("motion tweens (kept as keyframes)"),
+                    craft_xfl::document::TweenType::Other => {}
                 }
                 // Shape hints sit on both keyframes of a shape tween; they are paired up below.
                 if let Some(h) = f.child("shapeHints").filter(|h| !h.children.is_empty()) {
@@ -1137,13 +1149,28 @@ impl<'a> Builder<'a> {
             }
             // A damaged symbol file is left out (its instances with it), not the whole
             // document (#226).
-            let item = match (self.read)(&format!("LIBRARY/{href}")).map(|b| b.map(|b| xml::parse(&b))) {
-                Ok(Some(Ok(item))) => item,
+            let bytes = match (self.read)(&format!("LIBRARY/{href}")) {
+                Ok(Some(bytes)) => bytes,
                 Ok(None) => {
                     self.report.skip("missing library files");
                     continue;
                 }
-                Err(_) | Ok(Some(Err(_))) => {
+                Err(_) => {
+                    self.report.skip("library files that couldn't be read");
+                    continue;
+                }
+            };
+            let parsed = match craft_xfl::document::Document::parse(&bytes) {
+                Ok(parsed) => parsed,
+                Err(_) => {
+                    self.report.skip("library files that couldn't be read");
+                    continue;
+                }
+            };
+            let (model, xml_root) = parsed.into_parts(craft_xfl::document::ModelLimits { max_timelines: 0, max_layers_per_timeline: MAX_LAYERS });
+            let item = match xml::from_craft_xml_owned(xml_root) {
+                Ok(item) => item,
+                Err(_) => {
                     self.report.skip("library files that couldn't be read");
                     continue;
                 }
@@ -1162,7 +1189,7 @@ impl<'a> Builder<'a> {
             let id = SymbolId(self.doc.alloc_id());
             let linkage = self.linkage(&item);
             self.ids.insert(name.clone(), id);
-            self.pending.push((id, name, kind, linkage, item));
+            self.pending.push(PendingSymbol { id, name, kind, linkage, item, timeline: model.symbol_timeline });
         }
         Ok(())
     }
@@ -1233,9 +1260,9 @@ impl<'a> Builder<'a> {
     }
 
     fn build_symbols(&mut self) {
-        for (id, name, kind, linkage, item) in std::mem::take(&mut self.pending) {
-            let timeline = match item.child("timeline").and_then(|t| t.child("DOMTimeline")) {
-                Some(tl) => self.timeline(tl),
+        for PendingSymbol { id, name, kind, linkage, item, timeline: schema_timeline } in std::mem::take(&mut self.pending) {
+            let timeline = match item.child("timeline").and_then(|t| t.child("DOMTimeline")).zip(schema_timeline.as_ref()) {
+                Some((tl, schema)) => self.timeline(tl, schema),
                 None => Timeline { layers: vec![Arc::new(Layer::new(LayerId(self.doc.alloc_id()), "Layer 1"))] },
             };
             let short = name.rsplit('/').next().unwrap_or(&name).to_string();
@@ -1280,11 +1307,26 @@ pub fn import_with_fonts(read: &Reader<'_>, fonts: &Fonts) -> Result<(Document, 
 
 fn import_from<'a>(read: &'a Reader<'a>, fonts: Option<&'a Fonts>) -> Result<(Document, Report), XflError> {
     let bytes = read("DOMDocument.xml")?.ok_or_else(|| XflError::NotXfl("no DOMDocument.xml".into()))?;
-    let root = xml::parse(&bytes)?;
+    let parsed = craft_xfl::document::Document::parse(&bytes).map_err(xml::from_craft_error)?;
+    let (schema, xml_root) =
+        parsed.into_parts(craft_xfl::document::ModelLimits { max_timelines: anicraft_doc::MAX_SCENES, max_layers_per_timeline: MAX_LAYERS });
+    let root = xml::from_craft_xml_owned(xml_root)?;
     if root.name != "DOMDocument" {
         return Err(XflError::NotXfl(format!("the root element is <{}>", root.name)));
     }
-    let mut b = Builder { doc: Document::default(), read, ids: HashMap::new(), pending: Vec::new(), language: Language::ActionScript3, bitmaps: HashMap::new(), sounds: HashMap::new(), videos: HashMap::new(), report: Report::default(), fonts, faces: HashMap::new() };
+    let mut b = Builder {
+        doc: Document::default(),
+        read,
+        ids: HashMap::new(),
+        pending: Vec::new(),
+        language: Language::ActionScript3,
+        bitmaps: HashMap::new(),
+        sounds: HashMap::new(),
+        videos: HashMap::new(),
+        report: Report::default(),
+        fonts,
+        faces: HashMap::new(),
+    };
     b.publish_settings()?;
     // Only symbols keep a script class yet.
     for _ in root.list("media").iter().filter(|m| m.attr("linkageClassName").is_some_and(|c| !c.trim().is_empty())) {
@@ -1292,12 +1334,13 @@ fn import_from<'a>(read: &'a Reader<'a>, fonts: Option<&'a Fonts>) -> Result<(Do
     }
     b.doc.library.clear();
     b.doc.scenes.clear();
+    let stage = schema.stage;
     b.doc.stage = Stage {
-        width: root.f32("width").unwrap_or(550.0).clamp(1.0, 8192.0) as u32,
-        height: root.f32("height").unwrap_or(400.0).clamp(1.0, 8192.0) as u32,
-        fps: root.f32("frameRate").unwrap_or(24.0).clamp(1.0, 120.0),
+        width: stage.width.unwrap_or(550.0).clamp(1.0, 8192.0) as u32,
+        height: stage.height.unwrap_or(400.0).clamp(1.0, 8192.0) as u32,
+        fps: stage.frame_rate.unwrap_or(24.0).clamp(1.0, 120.0),
         // Animate leaves the default, white, out of the file (#163).
-        background: if root.attr("backgroundColor").is_some() { color(&root, "backgroundColor", "__none") } else { Rgba::WHITE },
+        background: if stage.has_background_color { color(&root, "backgroundColor", "__none") } else { Rgba::WHITE },
     };
     b.register_folders(&root);
     b.register_bitmaps(&root)?;
@@ -1307,9 +1350,10 @@ fn import_from<'a>(read: &'a Reader<'a>, fonts: Option<&'a Fonts>) -> Result<(Do
     b.build_symbols();
     // Every DOMTimeline is a scene, in order.
     let scenes: Vec<&X> = root.list("timelines").iter().filter(|t| t.name == "DOMTimeline").take(anicraft_doc::MAX_SCENES).collect();
-    for (i, tl) in scenes.iter().enumerate() {
-        let name: String = tl.attr("name").filter(|n| !n.trim().is_empty()).map_or_else(|| format!("Scene {}", i + 1), |n| n.chars().take(256).collect());
-        let timeline = b.timeline(tl);
+    for (i, (tl, schema_timeline)) in scenes.iter().zip(&schema.timelines).enumerate() {
+        let name: String =
+            tl.attr("name").filter(|n| !n.trim().is_empty()).map_or_else(|| format!("Scene {}", i + 1), |n| n.chars().take(256).collect());
+        let timeline = b.timeline(tl, schema_timeline);
         b.doc.scenes.push(Arc::new(Scene { name, timeline, guides: Vec::new() }));
     }
     if !b.doc.library_tree.folders.is_empty() {
@@ -1345,7 +1389,9 @@ fn fla_from(data: &[u8], fonts: Option<&Fonts>) -> Result<(Document, Report), Xf
         return Err(XflError::NotXfl("the file is too large".into()));
     }
     if data.starts_with(&OLE_MAGIC) {
-        return Err(XflError::NotXfl("this .fla was saved by Flash CS4 or earlier, in a format AniCraft can't read: open it in Animate and save it again".into()));
+        return Err(XflError::NotXfl(
+            "this .fla was saved by Flash CS4 or earlier, in a format AniCraft can't read: open it in Animate and save it again".into(),
+        ));
     }
     let archive = crate::zip::Archive::open(data)?;
     let root = package_root(&archive)?;
