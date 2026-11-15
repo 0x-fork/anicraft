@@ -32,8 +32,8 @@ craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "f0f4758c
 craft-gif = { git = "https://github.com/storytold/craft-libs", rev = "f0f4758c01581d79577b9bf5046c06f4e77b1f18" }
 craft-image-codecs = { git = "https://github.com/storytold/craft-libs", rev = "f0f4758c01581d79577b9bf5046c06f4e77b1f18" }
 craft-webp = { git = "https://github.com/storytold/craft-libs", rev = "f0f4758c01581d79577b9bf5046c06f4e77b1f18" }
-craft-xfl = { git = "https://github.com/storytold/craft-libs", rev = "b8ac3142860121c32144d82c6cd1f84e2ee99058" }
-craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "b8ac3142860121c32144d82c6cd1f84e2ee99058" }
+craft-xfl = { git = "https://github.com/storytold/craft-libs", rev = "bf48df0473a58c85e8bd050e23f97379dd902215" }
+craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "bf48df0473a58c85e8bd050e23f97379dd902215" }
 # The GPU stage (ADR 0019) uses the wgpu that eframe's egui-wgpu brings, with the same
 # (default) features, so the tree keeps one wgpu build.
 wgpu = "30"
