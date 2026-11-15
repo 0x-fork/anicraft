@@ -1200,8 +1200,8 @@ impl<'a> Builder<'a> {
     /// Allocates ids for every symbol the document lists, parsing their files.
     fn register_symbols(&mut self, root: &X) -> Result<(), XflError> {
         let mut seen = HashSet::new();
-        for inc in root.list("symbols").iter().filter(|i| i.name == "Include").take(MAX_SYMBOLS) {
-            let Some(href) = inc.attr("href") else { continue };
+        for inc in craft_xfl::document::symbol_includes(root).take(MAX_SYMBOLS) {
+            let Some(href) = inc.href() else { continue };
             if !seen.insert(href.to_string()) {
                 continue;
             }
@@ -1236,16 +1236,17 @@ impl<'a> Builder<'a> {
             if item.name != "DOMSymbolItem" {
                 continue;
             }
-            let name = item.attr("name").map(str::to_string).unwrap_or_else(|| href.trim_end_matches(".xml").to_string());
+            let symbol = craft_xfl::document::SymbolItem::new(&item);
+            let name = symbol.name().map(str::to_string).unwrap_or_else(|| href.trim_end_matches(".xml").to_string());
             // The format leaves out default values, and a symbol's default type is movie clip:
             // only graphics and buttons say what they are.
-            let kind = match item.attr("symbolType").map(str::trim) {
+            let kind = match symbol.symbol_type().map(str::trim) {
                 Some("graphic") => SymbolKind::Graphic,
                 Some("button") => SymbolKind::Button,
                 _ => SymbolKind::MovieClip,
             };
             let id = SymbolId(self.doc.alloc_id());
-            let linkage = self.linkage(&item);
+            let linkage = self.linkage(symbol);
             self.ids.insert(name.clone(), id);
             self.pending.push(PendingSymbol { id, name, kind, linkage, item, timeline: model.symbol_timeline });
         }
@@ -1254,12 +1255,20 @@ impl<'a> Builder<'a> {
 
     /// A library symbol's script class (`linkageClassName`, or an older document's
     /// `linkageIdentifier`, when `linkageExportForAS` doesn't turn it off) and its base class.
-    fn linkage(&mut self, item: &X) -> Option<Linkage> {
-        if item.attr("linkageExportForAS").is_some_and(|v| v.trim() != "true") {
+    fn linkage(&mut self, item: craft_xfl::document::SymbolItem<'_, X>) -> Option<Linkage> {
+        if item.linkage_export_for_action_script().is_some_and(|v| v.trim() != "true") {
             return None;
         }
-        let class = ["linkageClassName", "linkageIdentifier"].iter().find_map(|k| item.attr(k).map(str::trim).filter(|c| !c.is_empty()))?;
-        let base = item.attr("linkageBaseClass").map(str::trim).filter(|b| anicraft_doc::actions::valid_class_name(b)).unwrap_or("");
+        let class = [item.linkage_class_name(), item.linkage_identifier()]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .find(|class| !class.is_empty())?;
+        let base = item
+            .linkage_base_class()
+            .map(str::trim)
+            .filter(|base| anicraft_doc::actions::valid_class_name(base))
+            .unwrap_or("");
         let l = Linkage { class: class.to_string(), base: base.to_string() };
         if l.check().is_err() {
             self.report.skip("linkage classes that aren't class names (left out)");
@@ -1272,14 +1281,17 @@ impl<'a> Builder<'a> {
     /// A symbol's 9-slice guides (ADR 0055): `scaleGridLeft`, `scaleGridRight`, `scaleGridTop`
     /// and `scaleGridBottom` on the `DOMSymbolItem`, in the symbol's space, written when its
     /// guides are on. All four or none; guides given the wrong way round are put in order.
-    fn scale_grid(&mut self, item: &X) -> Option<ScaleGrid> {
-        let keys = ["scaleGridLeft", "scaleGridRight", "scaleGridTop", "scaleGridBottom"];
-        if keys.iter().all(|k| item.attr(k).is_none()) {
+    fn scale_grid(&mut self, item: craft_xfl::document::SymbolItem<'_, X>) -> Option<ScaleGrid> {
+        if !item.has_scale_grid() {
             return None;
         }
-        let v: Vec<f32> = keys.iter().filter_map(|k| item.f32(k)).collect();
-        let grid = match v[..] {
-            [l, r, t, b] => Some(ScaleGrid { left: l.min(r), right: l.max(r), top: t.min(b), bottom: t.max(b) }),
+        let grid = match (item.scale_grid_left(), item.scale_grid_right(), item.scale_grid_top(), item.scale_grid_bottom()) {
+            (Some(left), Some(right), Some(top), Some(bottom)) => Some(ScaleGrid {
+                left: left.min(right),
+                right: left.max(right),
+                top: top.min(bottom),
+                bottom: top.max(bottom),
+            }),
             _ => None,
         };
         let grid = grid.filter(|g| g.check().is_ok());
@@ -1321,7 +1333,7 @@ impl<'a> Builder<'a> {
                 None => Timeline { layers: vec![Arc::new(Layer::new(LayerId(self.doc.alloc_id()), "Layer 1"))] },
             };
             let short = name.rsplit('/').next().unwrap_or(&name).to_string();
-            let scale_grid = self.scale_grid(&item);
+            let scale_grid = self.scale_grid(craft_xfl::document::SymbolItem::new(&item));
             self.doc.library.push(Arc::new(Symbol { id, name: short, kind, linkage, scale_grid, scale_grid_kept: None, timeline }));
             self.place_in_folder(&name, anicraft_doc::LibraryItem::Symbol(id));
         }
@@ -1330,8 +1342,8 @@ impl<'a> Builder<'a> {
     /// The Library's folders (`<folders>`, so empty ones come across too), each a path such as
     /// `Characters/Hero` (ADR 0050).
     fn register_folders(&mut self, root: &X) {
-        for f in root.list("folders").iter().filter(|f| f.name == "DOMFolderItem").take(anicraft_doc::library::MAX_FOLDERS) {
-            if let Some(path) = f.attr("name") {
+        for folder in craft_xfl::document::library_folders(root).take(anicraft_doc::library::MAX_FOLDERS) {
+            if let Some(path) = folder.name() {
                 self.doc.ensure_folder_path(path);
             }
         }

@@ -503,6 +503,38 @@ trace(n);]]></script></Actionscript><elements><DOMSymbolInstance libraryItemName
 }
 
 #[test]
+fn shared_symbol_metadata_views_keep_prefixed_library_mapping_and_defaults() {
+    let document = r#"<x:DOMDocument xmlns:x="http://ns.adobe.com/xfl/2008/">
+      <x:symbols>
+        <x:Extension href="Missing.xml"/>
+        <x:Include href="Ui/Panel.xml"/>
+        <x:Include href="Ui/Panel.xml"/>
+      </x:symbols>
+      <x:folders><x:Extension name="Ignored"/><x:DOMFolderItem name="Empty"/></x:folders>
+      <x:timelines><x:DOMTimeline name="Scene 1"><x:layers/></x:DOMTimeline></x:timelines>
+    </x:DOMDocument>"#;
+    let symbol = r#"<x:DOMSymbolItem xmlns:x="http://ns.adobe.com/xfl/2008/" name="Ui/Panel" symbolType="button"
+        linkageExportForAS="true" linkageClassName=" " linkageIdentifier="ui.Panel"
+        linkageBaseClass="flash.display.MovieClip"
+        scaleGridLeft="90" scaleGridRight="10" scaleGridTop="30" scaleGridBottom="10">
+      <x:timeline><x:DOMTimeline name="Panel"><x:layers/></x:DOMTimeline></x:timeline>
+    </x:DOMSymbolItem>"#;
+    let files = HashMap::from([("DOMDocument.xml", document), ("LIBRARY/Ui/Panel.xml", symbol)]);
+    let (doc, report) = import(&files).unwrap();
+
+    assert_eq!(doc.library.len(), 1, "repeated Include paths still register one library symbol");
+    let panel = &doc.library[0];
+    assert_eq!(panel.name, "Panel");
+    assert_eq!(panel.kind, SymbolKind::Button);
+    assert_eq!(panel.linkage.as_ref().map(|linkage| (linkage.class.as_str(), linkage.base.as_str())), Some(("ui.Panel", "flash.display.MovieClip")));
+    let grid = panel.scale_grid.expect("all four finite guide attributes form a grid");
+    assert_eq!((grid.left, grid.right, grid.top, grid.bottom), (10.0, 90.0, 10.0, 30.0));
+    let folder_paths: Vec<String> = doc.library_tree.folders.iter().map(|folder| doc.entry_path(anicraft_doc::LibraryEntry::Folder(folder.id))).collect();
+    assert_eq!(folder_paths, ["Empty", "Ui"]);
+    assert!(!report.skipped.contains_key("missing library files"), "non-Include extension nodes are ignored");
+}
+
+#[test]
 fn loose_shapes_come_in_raw_and_drawing_objects_and_groups_as_groups() {
     // Animate's raw shapes (merge drawing) are loose `DOMShape`s; a drawing object says so, and
     // a group is a group (ADR 0073) whose shapes merge only with each other.
