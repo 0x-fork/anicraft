@@ -104,11 +104,11 @@ impl Path {
             if nums.is_empty() || !nums.len().is_multiple_of(need) {
                 return Err(format!("{c} needs a multiple of {need} numbers, got {}", nums.len()));
             }
-            for g in nums.chunks(need) {
+            for (index, g) in nums.chunks(need).enumerate() {
                 let v = |i: usize| Vec2::new(g[i], g[i + 1]);
                 cmds.push(match c {
-                    'M' => PathCmd::MoveTo(v(0)),
-                    'L' => PathCmd::LineTo(v(0)),
+                    'M' if !emitted && index == 0 => PathCmd::MoveTo(v(0)),
+                    'M' | 'L' => PathCmd::LineTo(v(0)),
                     'Q' => PathCmd::QuadTo(v(0), v(2)),
                     _ => PathCmd::CubicTo(v(0), v(2), v(4)),
                 });
@@ -684,8 +684,32 @@ mod tests {
     }
 
     #[test]
+    fn svg_moveto_repeats_become_lines_across_streaming_batches() {
+        for count in [2, 4, 8, 5, 9] {
+            let points: Vec<_> = (0..count).map(|i| format!("{i} {}", i * 2)).collect();
+            let implicit = format!("M{}", points.join(" "));
+            let explicit = format!("M0 0L{}", points[1..].join("L"));
+            for (suffix, explicit_suffix) in [
+                ("", ""),
+                ("Z", "Z"),
+                ("M20 20 30 30", "M20 20L30 30"),
+                ("ZM20 20 30 30", "ZM20 20L30 30"),
+                ("L40 40M50 50 60 60", "L40 40M50 50L60 60"),
+            ] {
+                assert_eq!(
+                    Path::from_svg(&format!("{implicit}{suffix}")).unwrap(),
+                    Path::from_svg(&format!("{explicit}{explicit_suffix}")).unwrap(),
+                    "{implicit} with suffix {suffix:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn svg_streaming_batches_still_reject_incomplete_commands() {
-        for (command, complete) in [('L', "M0 0L1 0 2 0 3 0 4 0"), ('Q', "M0 0Q1 1 2 0 3 1 4 0"), ('C', "M0 0C1 1 2 1 3 0 4 1 5 1 6 0")] {
+        for (command, complete) in
+            [('M', "M0 0 1 0 2 0 3 0"), ('L', "M0 0L1 0 2 0 3 0 4 0"), ('Q', "M0 0Q1 1 2 0 3 1 4 0"), ('C', "M0 0C1 1 2 1 3 0 4 1 5 1 6 0")]
+        {
             let different = if command == 'L' { 'Q' } else { 'L' };
             for invalid in [format!("M0 0{command}"), format!("{complete}{command}"), format!("{complete}{different}"), format!("{complete} 9")] {
                 assert!(Path::from_svg(&invalid).is_err(), "{invalid}");
