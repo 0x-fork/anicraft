@@ -119,6 +119,10 @@ pub fn round(x: f64) -> f64 {
     if !x.is_finite() {
         return x;
     }
+    // Negative fractions rounded to zero keep their sign, so their reciprocal is -Infinity.
+    if (-0.5..0.0).contains(&x) {
+        return -0.0;
+    }
     let f = x.floor();
     if x - f >= 0.5 { f + 1.0 } else { f }
 }
