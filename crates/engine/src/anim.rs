@@ -65,7 +65,7 @@ pub struct Rect {
 }
 
 /// One frame, compressed: the region it covers, whether it blends over what is there (else it
-/// replaces it), and its image data (PNG `IDAT` data, or a whole `VP8L` chunk).
+/// replaces it), and its image data (PNG `IDAT` data, or a raw `VP8L` payload).
 struct Encoded {
     rect: Rect,
     over: bool,
