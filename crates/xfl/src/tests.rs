@@ -212,6 +212,17 @@ fn symbols_instances_and_the_tween_between_them() {
 }
 
 #[test]
+fn bevel_filter_keeps_white_highlight_when_only_alpha_is_stored() {
+    let mut files = package();
+    let document = Box::leak(DOC.replace("<filters>", "<filters><BevelFilter highlightAlpha=\"0.4\"/>").into_boxed_str());
+    files.insert("DOMDocument.xml", document);
+    let (doc, _) = import(&files).unwrap();
+    let ElementKind::Symbol { filters, .. } = &doc.timeline(0).layers[0].keyframes[0].elements[0].kind else { panic!("a symbol instance") };
+    let anicraft_doc::Filter::Bevel { highlight_color, .. } = filters[0].filter else { panic!("a bevel filter") };
+    assert_eq!(highlight_color, Rgba::WHITE.with_alpha(0.4));
+}
+
+#[test]
 fn shapes_become_fills_and_strokes() {
     let (doc, _) = import(&package()).unwrap();
     let els = &doc.timeline(0).layers[1].keyframes[0].elements;
