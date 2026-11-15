@@ -414,11 +414,20 @@ fn shared_webp_container_preserves_payload_timing_loop_and_alpha() {
     let bytes = webp_file(1, 1, 7, true, [1, 2, 3, 4], &[(&f, 123)]).unwrap();
     let anim = riff_chunk(&bytes, b"ANIM").unwrap();
     assert_eq!(anim, &[3, 2, 1, 4, 7, 0]);
+    let frame = riff_chunk(&bytes, b"ANMF").unwrap();
+    assert_eq!(&frame[12..15], &[123, 0, 0], "single-frame duration is retained on the wire");
+    // The pinned image decoder treats one-frame WebP as a still image (delay 0).
+    // Check that contract separately, then use two distinct frames to exercise playback timing.
     let decoded = decode_webp(&bytes);
+    assert_eq!(decoded.frames, vec![(px.to_vec(), 0)]);
+    let second_px = [90, 80, 70, 160];
+    let second = encode(Kind::Webp, None, &second_px, 1, 1).unwrap();
+    let animation = webp_file(1, 1, 7, true, [1, 2, 3, 4], &[(&f, 123), (&second, 47)]).unwrap();
+    let decoded = decode_webp(&animation);
     assert_eq!(decoded.size, (1, 1));
     assert_eq!(decoded.loop_count, 7);
     assert!(decoded.alpha);
-    assert_eq!(decoded.frames, vec![(px.to_vec(), 123)]);
+    assert_eq!(decoded.frames, vec![(px.to_vec(), 123), (second_px.to_vec(), 47)]);
     assert!(webp_file(1, 1, 0, false, [0; 4], &[]).is_err());
     assert!(webp_file(1, 1, 0, false, [0; 4], &[(&f, 1 << 24)]).is_err());
 }
