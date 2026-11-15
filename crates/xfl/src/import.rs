@@ -23,6 +23,7 @@
 
 use crate::edges::{self, Edge};
 use crate::xml::{self, Element as X};
+use craft_xfl::filters::{Filter as NativeFilter, FilterKind as NativeFilterKind, FilterList as NativeFilterList, FilterSide as NativeFilterSide};
 use anicraft_doc::{
     Cap, Dash, Join, StrokeStyle, Bitmap, BitmapId, BlendMode, ColorEffect, ColorTransform, Filter, FilterEntry, FilterSide, Document, Easing, Element, ElementId, ElementKind, GradientStop, Keyframe, Layer, LayerId, LayerKind, LoopMode, Paint, Rgba, Shape, Stage, Stroke, Symbol, SymbolId,
     Scene, ShapeHint, SymbolKind, Timeline, Tween, TweenKind, CustomEase, EaseGroup, FrameScript, FrameSound, Language, Linkage, ScaleGrid, SoundSync, SourceScript, Spread, MAX_FOCAL,
@@ -263,24 +264,31 @@ struct Builder<'a> {
     faces: HashMap<String, FaceMatch>,
 }
 
-/// A bevel or gradient filter's `type`: `inner`, `outer` or `full` (`default` when missing).
-fn filter_side(el: &X, default: FilterSide) -> FilterSide {
-    match el.attr("type").map(str::trim) {
-        Some("inner") => FilterSide::Inner,
-        Some("outer") => FilterSide::Outer,
-        Some("full") => FilterSide::Full,
-        _ => default,
+/// Maps a neutral shared XFL filter side into the document model, applying the consumer's
+/// established default when the wire value is absent or unknown.
+fn filter_side(side: Option<NativeFilterSide>, default: FilterSide) -> FilterSide {
+    match side {
+        Some(NativeFilterSide::Inner) => FilterSide::Inner,
+        Some(NativeFilterSide::Outer) => FilterSide::Outer,
+        Some(NativeFilterSide::Full) => FilterSide::Full,
+        None => default,
     }
 }
 
-/// A gradient filter's ramp: its `GradientEntry` children (directly, or in a wrapper), with
-/// ratios 0..1 (or Flash's 0..255).
-fn ramp(el: &X) -> Vec<GradientStop> {
-    let entries = el.children.iter().flat_map(|c| if c.name == "GradientEntry" { std::slice::from_ref(c) } else { c.children.as_slice() }).filter(|g| g.name == "GradientEntry");
-    let raw: Vec<(f32, Rgba)> = entries.take(anicraft_doc::MAX_RAMP_STOPS).map(|g| (g.f32("ratio").filter(|r| r.is_finite()).unwrap_or(0.0), color(g, "color", "alpha"))).collect();
+fn rgba(color: craft_xfl::shape::Color) -> Rgba {
+    Rgba::hex(color.rgb).with_alpha(color.alpha)
+}
+
+/// Converts the neutral native ramp into AniCraft's sorted, normalized paint stops.
+fn ramp(filter: &NativeFilter<'_, X>) -> Vec<GradientStop> {
+    let raw: Vec<(f32, Rgba)> = filter
+        .ramp_entries()
+        .take(anicraft_doc::MAX_RAMP_STOPS)
+        .map(|entry| (entry.ratio().unwrap_or(0.0), rgba(entry.color())))
+        .collect();
     // One scale for the whole ramp: any ratio past 1 means bytes.
-    let scale = if raw.iter().any(|(r, _)| *r > 1.0) { 1.0 / 255.0 } else { 1.0 };
-    let mut stops: Vec<GradientStop> = raw.into_iter().map(|(r, c)| GradientStop { offset: (r * scale).clamp(0.0, 1.0), color: c }).collect();
+    let scale = if raw.iter().any(|(ratio, _)| *ratio > 1.0) { 1.0 / 255.0 } else { 1.0 };
+    let mut stops: Vec<GradientStop> = raw.into_iter().map(|(ratio, color)| GradientStop { offset: (ratio * scale).clamp(0.0, 1.0), color }).collect();
     stops.sort_by(|a, b| a.offset.total_cmp(&b.offset));
     stops
 }
@@ -493,50 +501,81 @@ impl<'a> Builder<'a> {
     /// are reported.
     fn filters(&mut self, el: &X) -> Vec<FilterEntry> {
         let mut out = Vec::new();
-        for f in el.list("filters") {
-            let enabled = f.bool("enabled") != Some(false);
-            let num = |k: &str, d: f32| f.f32(k).unwrap_or(d);
-            let flag = |k: &str| f.bool(k).unwrap_or(false);
-            let quality = f.u32("quality").unwrap_or(1).clamp(1, 3) as u8;
-            let filter = match f.name.as_str() {
-                "BlurFilter" => Filter::Blur { blur_x: num("blurX", 5.0), blur_y: num("blurY", 5.0), quality },
-                "DropShadowFilter" => Filter::DropShadow {
-                    blur_x: num("blurX", 5.0),
-                    blur_y: num("blurY", 5.0),
-                    strength: num("strength", 1.0),
+        for f in NativeFilterList::new(el).iter() {
+            let enabled = f.enabled();
+            let quality = f.quality();
+            let num = |value: Option<f32>, default: f32| value.unwrap_or(default);
+            let flag = |value: Option<bool>| value.unwrap_or(false);
+            let filter = match f.kind() {
+                Some(NativeFilterKind::Blur) => Filter::Blur { blur_x: num(f.blur_x(), 5.0), blur_y: num(f.blur_y(), 5.0), quality },
+                Some(NativeFilterKind::DropShadow) => Filter::DropShadow {
+                    blur_x: num(f.blur_x(), 5.0),
+                    blur_y: num(f.blur_y(), 5.0),
+                    strength: num(f.strength(), 1.0),
                     quality,
-                    angle: num("angle", 45.0),
-                    distance: num("distance", 4.0),
-                    color: color(f, "color", "alpha"),
-                    inner: flag("inner"),
-                    knockout: flag("knockout"),
-                    hide_object: flag("hideObject"),
+                    angle: num(f.angle(), 45.0),
+                    distance: num(f.distance(), 4.0),
+                    color: rgba(f.color()),
+                    inner: flag(f.inner()),
+                    knockout: flag(f.knockout()),
+                    hide_object: flag(f.hide_object()),
                 },
-                "GlowFilter" => Filter::Glow { blur_x: num("blurX", 5.0), blur_y: num("blurY", 5.0), strength: num("strength", 1.0), quality, color: color(f, "color", "alpha"), inner: flag("inner"), knockout: flag("knockout") },
-                "AdjustColorFilter" => Filter::AdjustColor { brightness: num("brightness", 0.0), contrast: num("contrast", 0.0), saturation: num("saturation", 0.0), hue: num("hue", 0.0) },
-                "BevelFilter" => Filter::Bevel {
-                    blur_x: num("blurX", 5.0),
-                    blur_y: num("blurY", 5.0),
-                    strength: num("strength", 1.0),
+                Some(NativeFilterKind::Glow) => Filter::Glow {
+                    blur_x: num(f.blur_x(), 5.0),
+                    blur_y: num(f.blur_y(), 5.0),
+                    strength: num(f.strength(), 1.0),
                     quality,
-                    angle: num("angle", 45.0),
-                    distance: num("distance", 5.0),
-                    shadow_color: color(f, "shadowColor", "shadowAlpha"),
-                    highlight_color: if f.attr("highlightColor").is_some() { color(f, "highlightColor", "highlightAlpha") } else { Rgba::WHITE.with_alpha(num("highlightAlpha", 1.0).clamp(0.0, 1.0)) },
-                    side: filter_side(f, FilterSide::Inner),
-                    knockout: flag("knockout"),
+                    color: rgba(f.color()),
+                    inner: flag(f.inner()),
+                    knockout: flag(f.knockout()),
                 },
-                "GradientGlowFilter" | "GradientBevelFilter" => {
-                    let glow = f.name == "GradientGlowFilter";
-                    let (blur_x, blur_y, strength, angle, distance, knockout) = (num("blurX", 5.0), num("blurY", 5.0), num("strength", 1.0), num("angle", 45.0), num("distance", 5.0), flag("knockout"));
-                    let stops = ramp(f);
-                    if glow {
-                        Filter::GradientGlow { blur_x, blur_y, strength, quality, angle, distance, stops: if stops.is_empty() { anicraft_doc::default_glow_ramp() } else { stops }, side: filter_side(f, FilterSide::Outer), knockout }
-                    } else {
-                        Filter::GradientBevel { blur_x, blur_y, strength, quality, angle, distance, stops: if stops.is_empty() { anicraft_doc::default_bevel_ramp() } else { stops }, side: filter_side(f, FilterSide::Inner), knockout }
+                Some(NativeFilterKind::AdjustColor) => Filter::AdjustColor {
+                    brightness: num(f.brightness(), 0.0),
+                    contrast: num(f.contrast(), 0.0),
+                    saturation: num(f.saturation(), 0.0),
+                    hue: num(f.hue(), 0.0),
+                },
+                Some(NativeFilterKind::Bevel) => Filter::Bevel {
+                    blur_x: num(f.blur_x(), 5.0),
+                    blur_y: num(f.blur_y(), 5.0),
+                    strength: num(f.strength(), 1.0),
+                    quality,
+                    angle: num(f.angle(), 45.0),
+                    distance: num(f.distance(), 5.0),
+                    shadow_color: rgba(f.shadow_color()),
+                    highlight_color: f.highlight_color().map(rgba).unwrap_or_else(|| Rgba::WHITE.with_alpha(num(f.highlight_alpha(), 1.0).clamp(0.0, 1.0))),
+                    side: filter_side(f.side(), FilterSide::Inner),
+                    knockout: flag(f.knockout()),
+                },
+                Some(NativeFilterKind::GradientGlow) => {
+                    let stops = ramp(&f);
+                    Filter::GradientGlow {
+                        blur_x: num(f.blur_x(), 5.0),
+                        blur_y: num(f.blur_y(), 5.0),
+                        strength: num(f.strength(), 1.0),
+                        quality,
+                        angle: num(f.angle(), 45.0),
+                        distance: num(f.distance(), 5.0),
+                        stops: if stops.is_empty() { anicraft_doc::default_glow_ramp() } else { stops },
+                        side: filter_side(f.side(), FilterSide::Outer),
+                        knockout: flag(f.knockout()),
                     }
                 }
-                _ => {
+                Some(NativeFilterKind::GradientBevel) => {
+                    let stops = ramp(&f);
+                    Filter::GradientBevel {
+                        blur_x: num(f.blur_x(), 5.0),
+                        blur_y: num(f.blur_y(), 5.0),
+                        strength: num(f.strength(), 1.0),
+                        quality,
+                        angle: num(f.angle(), 45.0),
+                        distance: num(f.distance(), 5.0),
+                        stops: if stops.is_empty() { anicraft_doc::default_bevel_ramp() } else { stops },
+                        side: filter_side(f.side(), FilterSide::Inner),
+                        knockout: flag(f.knockout()),
+                    }
+                }
+                None => {
                     self.report.skip("unknown filters");
                     continue;
                 }
@@ -713,9 +752,10 @@ impl<'a> Builder<'a> {
                     craft_xfl::document::TweenType::Motion | craft_xfl::document::TweenType::Shape => {
                         let kind =
                             if schema_frame.tween_type == craft_xfl::document::TweenType::Shape { TweenKind::Shape } else { TweenKind::Classic };
-                        let orient = f.bool("motionTweenOrientToPath").unwrap_or(false);
+                        let native_tween = craft_xfl::tween::FrameTween::new(f);
+                        let orient = native_tween.orient_to_path().unwrap_or(false);
                         if kind == TweenKind::Classic
-                            && f.attr("motionTweenRotate").is_some_and(|r| matches!(r.trim(), "clockwise" | "counter-clockwise"))
+                            && native_tween.rotate().is_some_and(|r| matches!(r.trim(), "clockwise" | "counter-clockwise"))
                         {
                             self.report.skip("tween spins (turned the shortest way)");
                         }
@@ -726,15 +766,16 @@ impl<'a> Builder<'a> {
                     craft_xfl::document::TweenType::Other => {}
                 }
                 // Shape hints sit on both keyframes of a shape tween; they are paired up below.
-                if let Some(h) = f.child("shapeHints").filter(|h| !h.children.is_empty()) {
-                    raw_hints.insert(start, self.raw_hints(h));
+                let shape_hints = craft_xfl::shape_hints::ShapeHints::new(f);
+                if !shape_hints.is_empty() {
+                    raw_hints.insert(start, self.raw_hints(f));
                 }
                 // Frame scripts are kept verbatim (ADR 0013 tier 1); those in the subset run.
                 if let Some(a) = f.child("Actionscript") {
                     k.script = self.frame_script(a);
                 }
-                if let Some(name) = f.attr("soundName").filter(|n| !n.trim().is_empty()) {
-                    k.sound = self.frame_sound(f, name);
+                if craft_xfl::sound::FrameSound::new(f).name().is_some_and(|name| !name.trim().is_empty()) {
+                    k.sound = self.frame_sound(f);
                 }
                 let mut els = Vec::new();
                 self.elements(f.list("elements"), &Affine::IDENTITY, &mut els, 0);
@@ -784,21 +825,22 @@ impl<'a> Builder<'a> {
     /// `useSingleEaseCurve="false"` each property group (`position`, `rotation`, `scale`,
     /// `color`, `filters`) has its own curve, and `all` (or the slider) eases the rest.
     fn easing(&mut self, f: &X) -> (Easing, Vec<(EaseGroup, Easing)>) {
-        let acc = f.f32("acceleration").unwrap_or(0.0).clamp(-100.0, 100.0);
+        let native_tween = craft_xfl::tween::FrameTween::new(f);
+        let acc = native_tween.acceleration().unwrap_or(0.0).clamp(-100.0, 100.0);
         let classic = if acc == 0.0 { Easing::Linear } else { Easing::Classic(acc) };
-        if f.bool("hasCustomEase") != Some(true) {
+        if native_tween.has_custom_ease() != Some(true) {
             return (classic, Vec::new());
         }
-        let curves: Vec<&X> = f.list("tweens").iter().filter(|c| c.name == "CustomEase").collect();
+        let curves: Vec<_> = native_tween.custom_eases().collect();
         if curves.is_empty() {
             self.report.skip("custom eases without their curve (drawn with the simple ease)");
             return (classic, Vec::new());
         }
-        let single = f.bool("useSingleEaseCurve") != Some(false) || curves.len() == 1;
+        let single = native_tween.use_single_ease_curve() != Some(false) || curves.len() == 1;
         let mut main = None;
         let mut groups: Vec<(EaseGroup, Easing)> = Vec::new();
         for (n, c) in curves.iter().enumerate() {
-            let target = c.attr("target").map_or("all", str::trim);
+            let target = c.target();
             // One curve for everything: the first.
             if single && n > 0 {
                 break;
@@ -823,10 +865,10 @@ impl<'a> Builder<'a> {
     }
 
     /// One `<CustomEase>` curve; `None` (reported) when its points don't make a curve.
-    fn ease_curve(&mut self, c: &X) -> Option<Easing> {
+    fn ease_curve(&mut self, c: &craft_xfl::tween::CustomEase<'_, X>) -> Option<Easing> {
         // Far more than a curve keeps (longer ones are thinned), and one more to tell.
         const MAX_READ: usize = anicraft_doc::MAX_EASE_POINTS * 3 * 16 + 1;
-        let pts: Vec<Vec2> = c.children.iter().filter(|p| p.name == "Point").take(MAX_READ + 1).map(|p| Vec2::new(p.f32("x").unwrap_or(0.0), p.f32("y").unwrap_or(0.0))).collect();
+        let pts: Vec<Vec2> = c.points().take(MAX_READ + 1).map(|point| Vec2::new(point.x().unwrap_or(0.0), point.y().unwrap_or(0.0))).collect();
         if pts.len() > MAX_READ {
             self.report.skip("custom ease curves too long to read (drawn with the simple ease)");
             return None;
@@ -853,25 +895,19 @@ impl<'a> Builder<'a> {
     /// `startX`/`startY`), and may carry its end point too (`endPoint`, or `endX`/`endY`);
     /// otherwise the end comes from the same hint on the next keyframe. Points are in pixels.
     /// The order is `index` (or a letter `name`), else the order in the file.
-    fn raw_hints(&mut self, list: &X) -> Vec<RawHint> {
-        let pt = |h: &X, joined: &str, x: &str, y: &str| -> Option<Vec2> {
-            let p = match h.attr(joined) {
-                Some(v) => {
-                    let mut it = v.split([',', ' ']).filter(|s| !s.trim().is_empty()).map(|s| s.trim().parse::<f32>().ok());
-                    Vec2::new(it.next()??, it.next()??)
-                }
-                None => Vec2::new(h.f32(x)?, h.f32(y)?),
-            };
-            (p.is_finite() && p.x.abs() < 1e6 && p.y.abs() < 1e6).then_some(p)
+    fn raw_hints(&mut self, frame: &X) -> Vec<RawHint> {
+        let hints = craft_xfl::shape_hints::ShapeHints::new(frame);
+        let to_vec = |point: Option<craft_xfl::shape_hints::Point>| {
+            point.map(|point| Vec2::new(point.x, point.y)).filter(|point| point.x.abs() < 1e6 && point.y.abs() < 1e6)
         };
         let mut out: Vec<RawHint> = Vec::new();
-        for (n, h) in list.children.iter().enumerate().take(anicraft_doc::MAX_SHAPE_HINTS * 4) {
-            let order = h.u32("index").map(|i| i as usize).or_else(|| h.attr("name").and_then(anicraft_doc::hint_index)).unwrap_or(n);
-            let Some(here) = pt(h, "startPoint", "startX", "startY").or_else(|| pt(h, "point", "x", "y")) else {
+        for (n, hint) in hints.iter().enumerate().take(anicraft_doc::MAX_SHAPE_HINTS * 4) {
+            let order = hint.index().unwrap_or(n);
+            let Some(here) = to_vec(hint.start_point()) else {
                 self.report.skip("shape hints without a position");
                 continue;
             };
-            out.push(RawHint { order, here, end: pt(h, "endPoint", "endX", "endY") });
+            out.push(RawHint { order, here, end: to_vec(hint.end_point()) });
         }
         out.sort_by_key(|h| h.order);
         if out.len() > anicraft_doc::MAX_SHAPE_HINTS {
@@ -1102,22 +1138,24 @@ impl<'a> Builder<'a> {
     /// start, stop or stream), repeats (`soundLoopMode` loop or repeat, `soundLoop` times) and
     /// effect (`soundEffect`, and the volume points of a custom one in `SoundEnvelope`).
     /// Buttons' frames included: they play as the pointer changes the button's state.
-    fn frame_sound(&mut self, f: &X, name: &str) -> Option<FrameSound> {
+    fn frame_sound(&mut self, f: &X) -> Option<FrameSound> {
+        let native = craft_xfl::sound::FrameSound::new(f);
+        let name = native.name()?;
         let Some(id) = self.sounds.get(name).copied() else {
             self.report.skip("frame sounds whose sound isn't in the package");
             return None;
         };
         let mut fs = FrameSound::new(id);
-        fs.sync = match f.attr("soundSync").map(str::trim) {
-            Some("start") => SoundSync::Start,
-            Some("stop") => SoundSync::Stop,
-            Some("stream") => SoundSync::Stream,
-            _ => SoundSync::Event,
+        fs.sync = match native.sync_mode() {
+            craft_xfl::sound::SyncMode::Start => SoundSync::Start,
+            craft_xfl::sound::SyncMode::Stop => SoundSync::Stop,
+            craft_xfl::sound::SyncMode::Stream => SoundSync::Stream,
+            craft_xfl::sound::SyncMode::Event => SoundSync::Event,
         };
-        fs.looping = f.attr("soundLoopMode").map(str::trim) == Some("loop");
-        fs.repeat = f.u32("soundLoop").unwrap_or(1).clamp(1, anicraft_doc::sound::MAX_REPEAT);
-        fs.effect = self.sound_effect(f);
-        if f.attr("inPoint44").is_some() || f.attr("outPoint44").is_some() {
+        fs.looping = native.looping();
+        fs.repeat = native.repeat().unwrap_or(1).clamp(1, anicraft_doc::sound::MAX_REPEAT);
+        fs.effect = self.sound_effect(&native);
+        if native.has_in_point() || native.has_out_point() {
             self.report.skip("sound in and out points (played whole)");
         }
         Some(fs)
@@ -1127,8 +1165,8 @@ impl<'a> Builder<'a> {
     /// volume points of its envelope (`SoundEnvelope`; each `SoundEnvelopePoint` a time in
     /// samples at 44.1 kHz, `mark44`, and a level per channel, `level0` left and `level1` right,
     /// `0..=32768`, as the SWF format's `SOUNDENVELOPE` keeps them).
-    fn sound_effect(&mut self, f: &X) -> SoundEffect {
-        let key: String = f.attr("soundEffect").unwrap_or("").chars().filter(char::is_ascii_alphanumeric).map(|c| c.to_ascii_lowercase()).collect();
+    fn sound_effect(&mut self, frame: &craft_xfl::sound::FrameSound<'_, X>) -> SoundEffect {
+        let key = frame.effect_key();
         let preset = match key.as_str() {
             "" | "none" => Some(SoundEffect::None),
             "left" | "leftchannel" => Some(SoundEffect::LeftChannel),
@@ -1139,14 +1177,12 @@ impl<'a> Builder<'a> {
             "fadeout" => Some(SoundEffect::FadeOut),
             _ => None,
         };
-        let points: Vec<EnvelopePoint> = f
-            .child("SoundEnvelope")
-            .map(|e| e.children.iter().filter(|p| p.name == "SoundEnvelopePoint").take(anicraft_doc::sound::MAX_ENVELOPE_POINTS).collect::<Vec<_>>())
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| {
-                let level = |k: &str| p.f32(k).map_or(1.0, |v| v / 32_768.0);
-                EnvelopePoint::new(f64::from(p.f32("mark44").unwrap_or(0.0)) / 44_100.0, level("level0"), level("level1"))
+        let points: Vec<EnvelopePoint> = frame
+            .envelope_points()
+            .take(anicraft_doc::sound::MAX_ENVELOPE_POINTS)
+            .map(|point| {
+                let level = |value: Option<f32>| value.map_or(1.0, |value| value / 32_768.0);
+                EnvelopePoint::new(f64::from(point.mark44().unwrap_or(0.0)) / 44_100.0, level(point.level0()), level(point.level1()))
             })
             .collect();
         match preset {
