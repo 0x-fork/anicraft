@@ -79,7 +79,8 @@ impl Path {
         let mut it = src.char_indices().peekable();
         let mut nums: Vec<f32> = Vec::with_capacity(6);
         let mut cur: Option<char> = None;
-        let flush = |cur: Option<char>, nums: &mut Vec<f32>, cmds: &mut Vec<PathCmd>| -> Result<(), String> {
+        let mut emitted = false;
+        let flush = |cur: Option<char>, nums: &mut Vec<f32>, cmds: &mut Vec<PathCmd>, emitted: bool| -> Result<(), String> {
             let Some(c) = cur else {
                 return if nums.is_empty() { Ok(()) } else { Err("number before the first command".into()) };
             };
@@ -94,6 +95,10 @@ impl Path {
                     return Err("Z takes no numbers".into());
                 }
                 cmds.push(PathCmd::Close);
+                return Ok(());
+            }
+            // A streamed batch already supplied this command's operands.
+            if nums.is_empty() && emitted {
                 return Ok(());
             }
             if nums.is_empty() || !nums.len().is_multiple_of(need) {
@@ -117,8 +122,9 @@ impl Path {
         while let Some(&(i, ch)) = it.peek() {
             match ch {
                 'M' | 'L' | 'Q' | 'C' | 'Z' | 'z' => {
-                    flush(cur, &mut nums, &mut cmds)?;
+                    flush(cur, &mut nums, &mut cmds, emitted)?;
                     cur = Some(ch.to_ascii_uppercase());
+                    emitted = false;
                     it.next();
                 }
                 ' ' | ',' | '\n' | '\t' | '\r' => {
@@ -153,14 +159,15 @@ impl Path {
                             _ => return Err("Z takes no numbers".into()),
                         };
                         if nums.len().is_multiple_of(need) {
-                            flush(cur, &mut nums, &mut cmds)?;
+                            flush(cur, &mut nums, &mut cmds, emitted)?;
+                            emitted = true;
                         }
                     }
                 }
                 other => return Err(format!("unexpected character '{other}' in path data")),
             }
         }
-        flush(cur, &mut nums, &mut cmds)?;
+        flush(cur, &mut nums, &mut cmds, emitted)?;
         Ok(Path { cmds })
     }
 }
@@ -656,6 +663,34 @@ mod tests {
         let s = p.to_svg();
         assert_eq!(Path::from_svg(&s).unwrap(), p);
         assert!(s.starts_with('M'));
+    }
+
+    #[test]
+    fn svg_implicit_commands_survive_streaming_batches() {
+        for (command, group, counts) in [('L', "1 0", [4, 8, 5]), ('Q', "1 1 2 0", [2, 4, 3]), ('C', "1 1 2 1 3 0", [2, 4, 3])] {
+            for count in counts {
+                let operands = std::iter::repeat_n(group, count).collect::<Vec<_>>().join(" ");
+                let implicit = format!("M0 0{command}{operands}");
+                let explicit = format!("M0 0{}", format!("{command}{group}").repeat(count));
+                for suffix in ["", "Z", "L9 9"] {
+                    assert_eq!(
+                        Path::from_svg(&format!("{implicit}{suffix}")).unwrap(),
+                        Path::from_svg(&format!("{explicit}{suffix}")).unwrap(),
+                        "{implicit} with suffix {suffix:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn svg_streaming_batches_still_reject_incomplete_commands() {
+        for (command, complete) in [('L', "M0 0L1 0 2 0 3 0 4 0"), ('Q', "M0 0Q1 1 2 0 3 1 4 0"), ('C', "M0 0C1 1 2 1 3 0 4 1 5 1 6 0")] {
+            let different = if command == 'L' { 'Q' } else { 'L' };
+            for invalid in [format!("M0 0{command}"), format!("{complete}{command}"), format!("{complete}{different}"), format!("{complete} 9")] {
+                assert!(Path::from_svg(&invalid).is_err(), "{invalid}");
+            }
+        }
     }
 
     #[test]
