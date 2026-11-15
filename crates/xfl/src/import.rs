@@ -286,14 +286,13 @@ fn ramp(el: &X) -> Vec<GradientStop> {
 }
 
 pub(crate) fn color(el: &X, key: &str, alpha_key: &str) -> Rgba {
-    let rgb = el.attr(key).and_then(|c| u32::from_str_radix(c.trim().trim_start_matches('#'), 16).ok()).unwrap_or(0);
-    Rgba::hex(rgb).with_alpha(el.f32(alpha_key).unwrap_or(1.0).clamp(0.0, 1.0))
+    let parsed = craft_xfl::shape::color(el, key, alpha_key);
+    Rgba::hex(parsed.rgb).with_alpha(parsed.alpha)
 }
 
 fn matrix(el: &X) -> Affine {
-    let Some(m) = el.child("matrix").and_then(|m| m.child("Matrix")) else { return Affine::IDENTITY };
-    let a = Affine { m: [m.f32("a").unwrap_or(1.0), m.f32("b").unwrap_or(0.0), m.f32("c").unwrap_or(0.0), m.f32("d").unwrap_or(1.0), m.f32("tx").unwrap_or(0.0), m.f32("ty").unwrap_or(0.0)] };
-    if a.is_finite() { a } else { Affine::IDENTITY }
+    let m = craft_xfl::shape::matrix(el);
+    Affine { m: [m.a, m.b, m.c, m.d, m.tx, m.ty] }
 }
 
 /// Half the side of the square XFL gradients are defined on, in pixels (16384 twips / 20).
@@ -302,19 +301,26 @@ const GRADIENT_HALF: f32 = 819.2;
 /// A fill definition (`SolidColor`, `LinearGradient`, `RadialGradient`, `BitmapFill`) as a
 /// paint.
 fn paint(def: &X, bitmaps: &HashMap<String, BitmapId>, report: &mut Report) -> Option<Paint> {
-    match def.name.as_str() {
-        "SolidColor" => Some(Paint::Solid(color(def, "color", "alpha"))),
-        "LinearGradient" | "RadialGradient" => {
+    let fill = craft_xfl::shape::Fill::new(def);
+    match fill.kind() {
+        craft_xfl::shape::FillKind::SolidColor => Some(Paint::Solid(color(def, "color", "alpha"))),
+        craft_xfl::shape::FillKind::LinearGradient | craft_xfl::shape::FillKind::RadialGradient => {
             let m = matrix(def);
-            let stops: Vec<GradientStop> = def.children.iter().filter(|c| c.name == "GradientEntry").map(|g| GradientStop { offset: g.f32("ratio").unwrap_or(0.0).clamp(0.0, 1.0), color: color(g, "color", "alpha") }).collect();
+            let stops: Vec<GradientStop> = fill
+                .gradient_entries()
+                .map(|g| {
+                    let color = g.color_value();
+                    GradientStop { offset: g.ratio().unwrap_or(0.0).clamp(0.0, 1.0), color: Rgba::hex(color.rgb).with_alpha(color.alpha) }
+                })
+                .collect();
             if stops.is_empty() {
                 return None;
             }
             // Overflow, interpolation and the focal point carry over as they are (ADR 0074).
-            let spread = def.attr("spreadMethod").and_then(|s| Spread::from_key(s.trim())).unwrap_or_default();
-            let linear_rgb = def.attr("interpolationMethod").is_some_and(|s| s.trim() == "linearRGB");
+            let spread = fill.spread_method().and_then(|s| Spread::from_key(s.trim())).unwrap_or_default();
+            let linear_rgb = fill.interpolation_method().is_some_and(|s| s.trim() == "linearRGB");
             let frame = m.mul(&Affine::scale(GRADIENT_HALF, GRADIENT_HALF));
-            let mut p = if def.name == "LinearGradient" { Paint::linear(Vec2::new(-1.0, 0.0), Vec2::new(1.0, 0.0), stops) } else { Paint::radial(Vec2::ZERO, 1.0, stops) };
+            let mut p = if fill.kind() == craft_xfl::shape::FillKind::LinearGradient { Paint::linear(Vec2::new(-1.0, 0.0), Vec2::new(1.0, 0.0), stops) } else { Paint::radial(Vec2::ZERO, 1.0, stops) };
             match &mut p {
                 Paint::Linear { spread: s, linear_rgb: l, .. } => {
                     *s = spread;
@@ -323,14 +329,14 @@ fn paint(def: &X, bitmaps: &HashMap<String, BitmapId>, report: &mut Report) -> O
                 Paint::Radial { spread: s, linear_rgb: l, focal, .. } => {
                     *s = spread;
                     *l = linear_rgb;
-                    *focal = def.f32("focalPointRatio").filter(|f| f.is_finite()).unwrap_or(0.0).clamp(-MAX_FOCAL, MAX_FOCAL);
+                    *focal = fill.focal_point_ratio().unwrap_or(0.0).clamp(-MAX_FOCAL, MAX_FOCAL);
                 }
                 _ => {}
             }
             Some(p.with_frame(&frame, None))
         }
-        "BitmapFill" => {
-            let Some(&bitmap) = def.attr("bitmapPath").and_then(|n| bitmaps.get(n)) else {
+        craft_xfl::shape::FillKind::Bitmap => {
+            let Some(&bitmap) = fill.bitmap_path().and_then(|n| bitmaps.get(n)) else {
                 report.skip("bitmap fills of missing bitmaps");
                 return None;
             };
@@ -338,9 +344,9 @@ fn paint(def: &X, bitmaps: &HashMap<String, BitmapId>, report: &mut Report) -> O
             let matrix = Affine { m: [m[0] / TWIPS, m[1] / TWIPS, m[2] / TWIPS, m[3] / TWIPS, m[4], m[5]] };
             // Animate repeats a bitmap fill unless it is clipped (then the edge pixels extend,
             // which AniCraft draws as the image shown once).
-            Some(Paint::Bitmap { bitmap, repeat: !def.bool("bitmapIsClipped").unwrap_or(false), matrix })
+            Some(Paint::Bitmap { bitmap, repeat: !fill.bitmap_is_clipped().unwrap_or(false), matrix })
         }
-        _ => None,
+        craft_xfl::shape::FillKind::Other => None,
     }
 }
 
@@ -348,39 +354,42 @@ fn paint(def: &X, bitmaps: &HashMap<String, BitmapId>, report: &mut Report) -> O
 /// joints and miter limit, and the dashes of `DashedStroke` and dots of `DottedStroke`
 /// (ADR 0046). Ragged, stipple and hatched strokes are drawn solid.
 pub(crate) fn stroke(def: &X, bitmaps: &HashMap<String, BitmapId>, report: &mut Report) -> Option<Stroke> {
-    if !matches!(def.name.as_str(), "SolidStroke" | "DashedStroke" | "DottedStroke" | "RaggedStroke" | "StippleStroke" | "HatchedStroke") {
+    let native = craft_xfl::shape::Stroke::new(def);
+    use craft_xfl::shape::StrokeKind as NativeStroke;
+    if native.kind() == NativeStroke::Other {
         return None;
     }
     // Round caps and joints are the format's default, and a miter limit of 3.
-    let cap = match def.attr("caps").map(str::trim) {
+    let cap = match native.caps().map(str::trim) {
         Some("none") => Cap::Butt,
         Some("square") => Cap::Square,
         _ => Cap::Round,
     };
-    let join = match def.attr("joints").map(str::trim) {
+    let join = match native.joints().map(str::trim) {
         Some("miter") => Join::Miter,
         Some("bevel") => Join::Bevel,
         _ => Join::Round,
     };
-    let miter_limit = def.f32("miterLimit").unwrap_or(anicraft_doc::stroke_style::DEFAULT_MITER_LIMIT);
-    let dash = match def.name.as_str() {
-        "DashedStroke" => Dash::dashed(def.f32("dash1").unwrap_or(6.0), def.f32("dash2").unwrap_or(3.0)),
-        "DottedStroke" => Dash::dotted(def.f32("dotSpace").unwrap_or(3.0)),
-        "SolidStroke" => None,
+    let miter_limit = native.miter_limit().unwrap_or(anicraft_doc::stroke_style::DEFAULT_MITER_LIMIT);
+    let dash = match native.kind() {
+        NativeStroke::Dashed => Dash::dashed(native.dash1().unwrap_or(6.0), native.dash2().unwrap_or(3.0)),
+        NativeStroke::Dotted => Dash::dotted(native.dot_space().unwrap_or(3.0)),
+        NativeStroke::Solid => None,
         _ => {
             report.skip("ragged, stipple and hatched strokes (drawn solid)");
             None
         }
     };
     let style = StrokeStyle { cap, join, miter_limit, dash };
-    let width = def.f32("weight").unwrap_or(1.0).clamp(0.05, 1000.0);
-    let fill = def.child("fill").and_then(|f| f.children.first());
+    let width = native.weight().unwrap_or(1.0).clamp(0.05, 1000.0);
+    let fill = native.fill();
     let c = fill.map_or(Rgba::BLACK, |f| {
-        if f.name == "SolidColor" {
-            color(f, "color", "alpha")
+        if f.kind() == craft_xfl::shape::FillKind::SolidColor {
+            let value = f.color_value();
+            Rgba::hex(value.rgb).with_alpha(value.alpha)
         } else {
             report.skip("gradient and bitmap strokes (drawn in one colour)");
-            paint(f, bitmaps, report).map_or(Rgba::BLACK, |p| p.primary_color())
+            paint(f.element(), bitmaps, report).map_or(Rgba::BLACK, |p| p.primary_color())
         }
     });
     Some(Stroke::new(c, width).with_style(style))
@@ -396,16 +405,23 @@ impl<'a> Builder<'a> {
     /// not a drawing object) is raw artwork: its shapes are marked to merge (ADR 0042), and the
     /// engine merges each keyframe's raw shapes into one drawing when it opens the file.
     fn shape(&mut self, el: &X, parent: &Affine, out: &mut Vec<Arc<Element>>, loose: bool) {
+        let Some(schema) = craft_xfl::shape::Shape::new(el) else { return };
         let m = parent.mul(&matrix(el));
-        let merge = loose && !el.bool("isDrawingObject").unwrap_or(false);
-        let fills: Vec<(u32, Option<Paint>)> = el.list("fills").iter().map(|f| (f.u32("index").unwrap_or(0), f.children.first().and_then(|d| paint(d, &self.bitmaps, &mut self.report)))).collect();
-        let strokes: Vec<(u32, Option<Stroke>)> = el.list("strokes").iter().map(|s| (s.u32("index").unwrap_or(0), s.children.first().and_then(|d| stroke(d, &self.bitmaps, &mut self.report)))).collect();
-        let edges: Vec<Edge> = el
-            .list("edges")
-            .iter()
-            .filter(|e| e.name == "Edge")
-            .map(|e| Edge { fill_left: e.u32("fillStyle0").unwrap_or(0), fill_right: e.u32("fillStyle1").unwrap_or(0), stroke: e.u32("strokeStyle").unwrap_or(0), segs: e.attr("edges").map(edges::parse).unwrap_or_default() })
-            .collect();
+        let merge = loose && !schema.is_drawing_object().unwrap_or(false);
+        let fills: Vec<(u32, Option<Paint>)> = schema.fills().map(|style| {
+            let paint = style.definition().and_then(|definition| paint(definition.element(), &self.bitmaps, &mut self.report));
+            (style.index().unwrap_or(0), paint)
+        }).collect();
+        let strokes: Vec<(u32, Option<Stroke>)> = schema.strokes().map(|style| {
+            let stroke = style.definition().and_then(|definition| stroke(definition.element(), &self.bitmaps, &mut self.report));
+            (style.index().unwrap_or(0), stroke)
+        }).collect();
+        let edges: Vec<Edge> = schema.edges().map(|edge| Edge {
+            fill_left: edge.fill_style0().unwrap_or(0),
+            fill_right: edge.fill_style1().unwrap_or(0),
+            stroke: edge.stroke_style().unwrap_or(0),
+            segs: edge.encoded_segments().map(edges::parse).unwrap_or_default(),
+        }).collect();
         for (index, p) in fills {
             let (Some(p), true) = (p, index > 0) else { continue };
             let path = edges::fill_path(&edges, index);
@@ -424,16 +440,22 @@ impl<'a> Builder<'a> {
 
     /// Rectangle and oval primitives.
     fn primitive(&mut self, el: &X, parent: &Affine, out: &mut Vec<Arc<Element>>) {
-        let (x, y) = (el.f32("x").unwrap_or(0.0), el.f32("y").unwrap_or(0.0));
-        let (w, h) = (el.f32("objectWidth").unwrap_or(0.0), el.f32("objectHeight").unwrap_or(0.0));
+        let Some(primitive) = craft_xfl::shape::Primitive::new(el) else { return };
+        let (x, y) = (primitive.x().unwrap_or(0.0), primitive.y().unwrap_or(0.0));
+        let (w, h) = (primitive.width().unwrap_or(0.0), primitive.height().unwrap_or(0.0));
         if !(w > 0.0 && h > 0.0) {
             return;
         }
-        let path = if el.name == "DOMOvalObject" { Path::ellipse(x + w / 2.0, y + h / 2.0, w / 2.0, h / 2.0) } else { Path::rounded_rect(x, y, w, h, el.f32("topLeftRadius").unwrap_or(0.0).max(0.0)) };
-        let fill = el.child("fill").and_then(|f| f.children.first()).and_then(|d| paint(d, &self.bitmaps, &mut self.report));
-        let stroke = el.child("stroke").and_then(|s| s.children.first()).and_then(|d| stroke(d, &self.bitmaps, &mut self.report));
+        let path = if primitive.kind() == craft_xfl::shape::PrimitiveKind::Oval {
+            Path::ellipse(x + w / 2.0, y + h / 2.0, w / 2.0, h / 2.0)
+        } else {
+            Path::rounded_rect(x, y, w, h, primitive.top_left_radius().unwrap_or(0.0).max(0.0))
+        };
+        let fill = primitive.fill().and_then(|definition| paint(definition.element(), &self.bitmaps, &mut self.report));
+        let stroke = primitive.stroke().and_then(|definition| stroke(definition.element(), &self.bitmaps, &mut self.report));
         if fill.is_some() || stroke.is_some() {
-            let m = parent.mul(&matrix(el));
+            let native = primitive.matrix();
+            let m = parent.mul(&Affine { m: [native.a, native.b, native.c, native.d, native.tx, native.ty] });
             out.push(self.element(ElementKind::Shape(Shape { path: Arc::new(path), fill, stroke, fill_rule: FillRule::NonZero, merge: false, warp: None }), m, ColorEffect::default()));
         }
     }
@@ -894,14 +916,14 @@ impl<'a> Builder<'a> {
     /// `bin/`; either is used when it is a PNG or JPEG. Animate's own encodings of the data
     /// file are not public, so those bitmaps are reported instead.
     fn register_bitmaps(&mut self, root: &X) -> Result<(), XflError> {
-        for item in root.list("media").iter().filter(|i| i.name == "DOMBitmapItem").take(MAX_BITMAPS) {
-            let Some(name) = item.attr("name").filter(|n| !self.bitmaps.contains_key(*n)) else { continue };
+        for item in craft_xfl::media::Catalog::new(root).bitmaps().take(MAX_BITMAPS) {
+            let Some(name) = item.name().filter(|n| !self.bitmaps.contains_key(*n)) else { continue };
             let mut candidates = Vec::new();
-            if let Some(href) = item.attr("href") {
-                candidates.push(format!("LIBRARY/{href}"));
+            if let Some(href) = item.href() {
+                candidates.push(craft_xfl::media::library_member(href));
             }
-            if let Some(data) = item.attr("bitmapDataHRef") {
-                candidates.push(format!("bin/{data}"));
+            if let Some(data) = item.data_href() {
+                candidates.push(craft_xfl::media::data_member(data));
             }
             let short: String = name.rsplit('/').next().unwrap_or(name).chars().take(256).collect();
             let (mut found_data, mut unreadable) = (false, false);
@@ -927,7 +949,7 @@ impl<'a> Builder<'a> {
                 Some(mut b) => {
                     b.id = BitmapId(self.doc.alloc_id());
                     // Animate leaves out the default (smoothing on in current versions).
-                    b.smoothing = item.bool("allowSmoothing").unwrap_or(true);
+                    b.smoothing = item.allow_smoothing().unwrap_or(true);
                     self.place_in_folder(name, anicraft_doc::LibraryItem::Bitmap(b.id));
                     self.bitmaps.insert(name.to_string(), b.id);
                     self.doc.bitmaps.push(Arc::new(b));
@@ -946,14 +968,14 @@ impl<'a> Builder<'a> {
     /// own encoding of the data file is not public, so those sounds are reported by name, as is
     /// every other sound that doesn't come across, with its format and why (ADR 0039).
     fn register_sounds(&mut self, root: &X) -> Result<(), XflError> {
-        for item in root.list("media").iter().filter(|i| i.name == "DOMSoundItem").take(MAX_SOUNDS) {
-            let Some(name) = item.attr("name").filter(|n| !self.sounds.contains_key(*n)) else { continue };
+        for item in craft_xfl::media::Catalog::new(root).sounds().take(MAX_SOUNDS) {
+            let Some(name) = item.name().filter(|n| !self.sounds.contains_key(*n)) else { continue };
             let mut candidates = Vec::new();
-            if let Some(href) = item.attr("href") {
-                candidates.push((format!("LIBRARY/{href}"), false));
+            if let Some(href) = item.href() {
+                candidates.push((craft_xfl::media::library_member(href), false));
             }
-            if let Some(data) = item.attr("soundDataHRef") {
-                candidates.push((format!("bin/{data}"), true));
+            if let Some(data) = item.data_href() {
+                candidates.push((craft_xfl::media::data_member(data), true));
             }
             let short: String = name.rsplit('/').next().unwrap_or(name).chars().take(256).collect();
             let shown: String = name.chars().take(256).collect();
@@ -1006,17 +1028,17 @@ impl<'a> Builder<'a> {
     /// original file (`href`, or `sourceExternalFilepath` inside the package) in `LIBRARY/`, then
     /// as its data file in `bin/` (`videoDataHRef`).
     fn register_videos(&mut self, root: &X) {
-        for item in root.list("media").iter().filter(|i| i.name == "DOMVideoItem").take(MAX_VIDEOS) {
-            let Some(name) = item.attr("name").filter(|n| !self.videos.contains_key(*n)) else { continue };
+        for item in craft_xfl::media::Catalog::new(root).videos().take(MAX_VIDEOS) {
+            let Some(name) = item.name().filter(|n| !self.videos.contains_key(*n)) else { continue };
             let mut candidates = Vec::new();
-            if let Some(href) = item.attr("href") {
-                candidates.push(format!("LIBRARY/{href}"));
+            if let Some(href) = item.href() {
+                candidates.push(craft_xfl::media::library_member(href));
             }
-            if let Some(src) = item.attr("sourceExternalFilepath").and_then(|p| p.strip_prefix("./")) {
-                candidates.push(src.replace('\\', "/"));
+            if let Some(path) = item.external_path().and_then(craft_xfl::media::packaged_external_member) {
+                candidates.push(path);
             }
-            if let Some(data) = item.attr("videoDataHRef") {
-                candidates.push(format!("bin/{data}"));
+            if let Some(data) = item.data_href() {
+                candidates.push(craft_xfl::media::data_member(data));
             }
             let shown: String = name.chars().take(256).collect();
             let short: String = name.rsplit('/').next().unwrap_or(name).chars().take(240).collect();
@@ -1043,8 +1065,8 @@ impl<'a> Builder<'a> {
                 }
             }
             // Its length as the item gives it (seconds), else from its frames and rate.
-            let seconds = item.f32("length").filter(|s| s.is_finite() && *s >= 0.0).or_else(|| {
-                let (frames, fps) = (item.f32("frameCount")?, item.f32("fps")?);
+            let seconds = item.length().filter(|s| *s >= 0.0).or_else(|| {
+                let (frames, fps) = (item.frame_count()?, item.frames_per_second()?);
                 (frames.is_finite() && fps.is_finite() && fps > 0.0).then(|| frames.max(0.0) / fps)
             });
             let length = seconds.map(|s| format!(", {:.1} s", s.min(1.0e7))).unwrap_or_default();

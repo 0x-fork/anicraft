@@ -420,6 +420,7 @@ dependencies = [
 name = "anicraft-xml"
 version = "0.3.0"
 dependencies = [
+ "craft-xfl",
  "craft-xml",
  "thiserror 2.0.21",
 ]
@@ -1318,7 +1319,7 @@ dependencies = [
 [[package]]
 name = "craft-xfl"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=136b29dd76923d7d95d88ef48d5bd7c8da5576d8#136b29dd76923d7d95d88ef48d5bd7c8da5576d8"
+source = "git+https://github.com/storytold/craft-libs?rev=0f59e325e5755a9524bc37dedc652fa215ca4d0c#0f59e325e5755a9524bc37dedc652fa215ca4d0c"
 dependencies = [
  "craft-xml",
  "miniz_oxide 0.8.9",
@@ -1328,7 +1329,7 @@ dependencies = [
 [[package]]
 name = "craft-xml"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=136b29dd76923d7d95d88ef48d5bd7c8da5576d8#136b29dd76923d7d95d88ef48d5bd7c8da5576d8"
+source = "git+https://github.com/storytold/craft-libs?rev=0f59e325e5755a9524bc37dedc652fa215ca4d0c#0f59e325e5755a9524bc37dedc652fa215ca4d0c"
 dependencies = [
  "quick-xml 0.41.0",
  "serde",

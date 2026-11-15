@@ -20,6 +20,22 @@ pub struct Element {
     pub text: String,
 }
 
+impl craft_xfl::shape::XflElement for Element {
+    type Elements<'a> = std::slice::Iter<'a, Element>;
+
+    fn local_name(&self) -> &str {
+        self.name.rsplit(':').next().unwrap_or(&self.name)
+    }
+
+    fn attr(&self, name: &str) -> Option<&str> {
+        Element::attr(self, name)
+    }
+
+    fn elements(&self) -> Self::Elements<'_> {
+        self.children.iter()
+    }
+}
+
 impl Element {
     pub fn attr(&self, name: &str) -> Option<&str> {
         self.attrs.get(name).map(String::as_str)
