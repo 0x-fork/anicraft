@@ -765,8 +765,9 @@ impl<'a> Builder<'a> {
                     craft_xfl::document::TweenType::Other => {}
                 }
                 // Shape hints sit on both keyframes of a shape tween; they are paired up below.
-                if let Some(h) = f.child("shapeHints").filter(|h| !h.children.is_empty()) {
-                    raw_hints.insert(start, self.raw_hints(h));
+                let shape_hints = craft_xfl::shape_hints::ShapeHints::new(f);
+                if !shape_hints.is_empty() {
+                    raw_hints.insert(start, self.raw_hints(f));
                 }
                 // Frame scripts are kept verbatim (ADR 0013 tier 1); those in the subset run.
                 if let Some(a) = f.child("Actionscript") {
@@ -892,25 +893,19 @@ impl<'a> Builder<'a> {
     /// `startX`/`startY`), and may carry its end point too (`endPoint`, or `endX`/`endY`);
     /// otherwise the end comes from the same hint on the next keyframe. Points are in pixels.
     /// The order is `index` (or a letter `name`), else the order in the file.
-    fn raw_hints(&mut self, list: &X) -> Vec<RawHint> {
-        let pt = |h: &X, joined: &str, x: &str, y: &str| -> Option<Vec2> {
-            let p = match h.attr(joined) {
-                Some(v) => {
-                    let mut it = v.split([',', ' ']).filter(|s| !s.trim().is_empty()).map(|s| s.trim().parse::<f32>().ok());
-                    Vec2::new(it.next()??, it.next()??)
-                }
-                None => Vec2::new(h.f32(x)?, h.f32(y)?),
-            };
-            (p.is_finite() && p.x.abs() < 1e6 && p.y.abs() < 1e6).then_some(p)
+    fn raw_hints(&mut self, frame: &X) -> Vec<RawHint> {
+        let hints = craft_xfl::shape_hints::ShapeHints::new(frame);
+        let to_vec = |point: Option<craft_xfl::shape_hints::Point>| {
+            point.map(|point| Vec2::new(point.x, point.y)).filter(|point| point.x.abs() < 1e6 && point.y.abs() < 1e6)
         };
         let mut out: Vec<RawHint> = Vec::new();
-        for (n, h) in list.children.iter().enumerate().take(anicraft_doc::MAX_SHAPE_HINTS * 4) {
-            let order = h.u32("index").map(|i| i as usize).or_else(|| h.attr("name").and_then(anicraft_doc::hint_index)).unwrap_or(n);
-            let Some(here) = pt(h, "startPoint", "startX", "startY").or_else(|| pt(h, "point", "x", "y")) else {
+        for (n, hint) in hints.iter().enumerate().take(anicraft_doc::MAX_SHAPE_HINTS * 4) {
+            let order = hint.index().unwrap_or(n);
+            let Some(here) = to_vec(hint.start_point()) else {
                 self.report.skip("shape hints without a position");
                 continue;
             };
-            out.push(RawHint { order, here, end: pt(h, "endPoint", "endX", "endY") });
+            out.push(RawHint { order, here, end: to_vec(hint.end_point()) });
         }
         out.sort_by_key(|h| h.order);
         if out.len() > anicraft_doc::MAX_SHAPE_HINTS {
