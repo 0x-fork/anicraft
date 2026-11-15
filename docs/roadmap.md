@@ -118,6 +118,10 @@ Next, in order:
    ~~every scene~~ ✅, ~~bitmaps~~ ✅ (PNG/JPEG data), ~~text~~ ✅ (one style per line; per-character styles with
    the text model), motion tweens, and ~~a larger self-authored
    corpus checked by render tests~~ ✅ (ADR 0035).
+   - Shared wire-schema work in progress: filters, shape hints, tweens/eases and frame-sound
+     envelopes now read through craft-libs views; AniCraft keeps validation and mapping into its
+     document models. Audit any remaining native document wire parsing before declaring the
+     full XFL format cutover complete.
 2. ~~SVG import~~ ✅ and ~~SVG frame export~~ ✅, ~~text, clip paths and masks (onto mask layers)~~ ✅ (ADR 0021). ~~dashes~~ ✅ (ADR 0046). ~~soft masks (luminance and alpha), text on a path (`textPath`) and per-character positions where simple~~ ✅ (ADR 0070). Next for SVG: booleans between two curved clips, multi-line blocks from stacked chunks, images and style sheets.
 
 ## Risks
