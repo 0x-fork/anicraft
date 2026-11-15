@@ -752,9 +752,10 @@ impl<'a> Builder<'a> {
                     craft_xfl::document::TweenType::Motion | craft_xfl::document::TweenType::Shape => {
                         let kind =
                             if schema_frame.tween_type == craft_xfl::document::TweenType::Shape { TweenKind::Shape } else { TweenKind::Classic };
-                        let orient = f.bool("motionTweenOrientToPath").unwrap_or(false);
+                        let native_tween = craft_xfl::tween::FrameTween::new(f);
+                        let orient = native_tween.orient_to_path().unwrap_or(false);
                         if kind == TweenKind::Classic
-                            && f.attr("motionTweenRotate").is_some_and(|r| matches!(r.trim(), "clockwise" | "counter-clockwise"))
+                            && native_tween.rotate().is_some_and(|r| matches!(r.trim(), "clockwise" | "counter-clockwise"))
                         {
                             self.report.skip("tween spins (turned the shortest way)");
                         }
@@ -824,21 +825,22 @@ impl<'a> Builder<'a> {
     /// `useSingleEaseCurve="false"` each property group (`position`, `rotation`, `scale`,
     /// `color`, `filters`) has its own curve, and `all` (or the slider) eases the rest.
     fn easing(&mut self, f: &X) -> (Easing, Vec<(EaseGroup, Easing)>) {
-        let acc = f.f32("acceleration").unwrap_or(0.0).clamp(-100.0, 100.0);
+        let native_tween = craft_xfl::tween::FrameTween::new(f);
+        let acc = native_tween.acceleration().unwrap_or(0.0).clamp(-100.0, 100.0);
         let classic = if acc == 0.0 { Easing::Linear } else { Easing::Classic(acc) };
-        if f.bool("hasCustomEase") != Some(true) {
+        if native_tween.has_custom_ease() != Some(true) {
             return (classic, Vec::new());
         }
-        let curves: Vec<&X> = f.list("tweens").iter().filter(|c| c.name == "CustomEase").collect();
+        let curves: Vec<_> = native_tween.custom_eases().collect();
         if curves.is_empty() {
             self.report.skip("custom eases without their curve (drawn with the simple ease)");
             return (classic, Vec::new());
         }
-        let single = f.bool("useSingleEaseCurve") != Some(false) || curves.len() == 1;
+        let single = native_tween.use_single_ease_curve() != Some(false) || curves.len() == 1;
         let mut main = None;
         let mut groups: Vec<(EaseGroup, Easing)> = Vec::new();
         for (n, c) in curves.iter().enumerate() {
-            let target = c.attr("target").map_or("all", str::trim);
+            let target = c.target();
             // One curve for everything: the first.
             if single && n > 0 {
                 break;
@@ -863,10 +865,10 @@ impl<'a> Builder<'a> {
     }
 
     /// One `<CustomEase>` curve; `None` (reported) when its points don't make a curve.
-    fn ease_curve(&mut self, c: &X) -> Option<Easing> {
+    fn ease_curve(&mut self, c: &craft_xfl::tween::CustomEase<'_, X>) -> Option<Easing> {
         // Far more than a curve keeps (longer ones are thinned), and one more to tell.
         const MAX_READ: usize = anicraft_doc::MAX_EASE_POINTS * 3 * 16 + 1;
-        let pts: Vec<Vec2> = c.children.iter().filter(|p| p.name == "Point").take(MAX_READ + 1).map(|p| Vec2::new(p.f32("x").unwrap_or(0.0), p.f32("y").unwrap_or(0.0))).collect();
+        let pts: Vec<Vec2> = c.points().take(MAX_READ + 1).map(|point| Vec2::new(point.x().unwrap_or(0.0), point.y().unwrap_or(0.0))).collect();
         if pts.len() > MAX_READ {
             self.report.skip("custom ease curves too long to read (drawn with the simple ease)");
             return None;
