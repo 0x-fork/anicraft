@@ -1319,7 +1319,7 @@ dependencies = [
 [[package]]
 name = "craft-xfl"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=bb0c1c52ce25c2e051717916b489912f5105833e#bb0c1c52ce25c2e051717916b489912f5105833e"
+source = "git+https://github.com/storytold/craft-libs?rev=858d1cde8a7e70d88f262cb636871e3ce9e1f60b#858d1cde8a7e70d88f262cb636871e3ce9e1f60b"
 dependencies = [
  "craft-xml",
  "miniz_oxide 0.8.9",
@@ -1329,7 +1329,7 @@ dependencies = [
 [[package]]
 name = "craft-xml"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=bb0c1c52ce25c2e051717916b489912f5105833e#bb0c1c52ce25c2e051717916b489912f5105833e"
+source = "git+https://github.com/storytold/craft-libs?rev=858d1cde8a7e70d88f262cb636871e3ce9e1f60b#858d1cde8a7e70d88f262cb636871e3ce9e1f60b"
 dependencies = [
  "quick-xml 0.41.0",
  "serde",

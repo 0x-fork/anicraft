@@ -774,8 +774,8 @@ impl<'a> Builder<'a> {
                 if let Some(a) = f.child("Actionscript") {
                     k.script = self.frame_script(a);
                 }
-                if let Some(name) = f.attr("soundName").filter(|n| !n.trim().is_empty()) {
-                    k.sound = self.frame_sound(f, name);
+                if craft_xfl::sound::FrameSound::new(f).name().is_some_and(|name| !name.trim().is_empty()) {
+                    k.sound = self.frame_sound(f);
                 }
                 let mut els = Vec::new();
                 self.elements(f.list("elements"), &Affine::IDENTITY, &mut els, 0);
@@ -1138,22 +1138,24 @@ impl<'a> Builder<'a> {
     /// start, stop or stream), repeats (`soundLoopMode` loop or repeat, `soundLoop` times) and
     /// effect (`soundEffect`, and the volume points of a custom one in `SoundEnvelope`).
     /// Buttons' frames included: they play as the pointer changes the button's state.
-    fn frame_sound(&mut self, f: &X, name: &str) -> Option<FrameSound> {
+    fn frame_sound(&mut self, f: &X) -> Option<FrameSound> {
+        let native = craft_xfl::sound::FrameSound::new(f);
+        let name = native.name()?;
         let Some(id) = self.sounds.get(name).copied() else {
             self.report.skip("frame sounds whose sound isn't in the package");
             return None;
         };
         let mut fs = FrameSound::new(id);
-        fs.sync = match f.attr("soundSync").map(str::trim) {
-            Some("start") => SoundSync::Start,
-            Some("stop") => SoundSync::Stop,
-            Some("stream") => SoundSync::Stream,
-            _ => SoundSync::Event,
+        fs.sync = match native.sync_mode() {
+            craft_xfl::sound::SyncMode::Start => SoundSync::Start,
+            craft_xfl::sound::SyncMode::Stop => SoundSync::Stop,
+            craft_xfl::sound::SyncMode::Stream => SoundSync::Stream,
+            craft_xfl::sound::SyncMode::Event => SoundSync::Event,
         };
-        fs.looping = f.attr("soundLoopMode").map(str::trim) == Some("loop");
-        fs.repeat = f.u32("soundLoop").unwrap_or(1).clamp(1, anicraft_doc::sound::MAX_REPEAT);
-        fs.effect = self.sound_effect(f);
-        if f.attr("inPoint44").is_some() || f.attr("outPoint44").is_some() {
+        fs.looping = native.looping();
+        fs.repeat = native.repeat().unwrap_or(1).clamp(1, anicraft_doc::sound::MAX_REPEAT);
+        fs.effect = self.sound_effect(&native);
+        if native.has_in_point() || native.has_out_point() {
             self.report.skip("sound in and out points (played whole)");
         }
         Some(fs)
@@ -1163,8 +1165,8 @@ impl<'a> Builder<'a> {
     /// volume points of its envelope (`SoundEnvelope`; each `SoundEnvelopePoint` a time in
     /// samples at 44.1 kHz, `mark44`, and a level per channel, `level0` left and `level1` right,
     /// `0..=32768`, as the SWF format's `SOUNDENVELOPE` keeps them).
-    fn sound_effect(&mut self, f: &X) -> SoundEffect {
-        let key: String = f.attr("soundEffect").unwrap_or("").chars().filter(char::is_ascii_alphanumeric).map(|c| c.to_ascii_lowercase()).collect();
+    fn sound_effect(&mut self, frame: &craft_xfl::sound::FrameSound<'_, X>) -> SoundEffect {
+        let key = frame.effect_key();
         let preset = match key.as_str() {
             "" | "none" => Some(SoundEffect::None),
             "left" | "leftchannel" => Some(SoundEffect::LeftChannel),
@@ -1175,14 +1177,12 @@ impl<'a> Builder<'a> {
             "fadeout" => Some(SoundEffect::FadeOut),
             _ => None,
         };
-        let points: Vec<EnvelopePoint> = f
-            .child("SoundEnvelope")
-            .map(|e| e.children.iter().filter(|p| p.name == "SoundEnvelopePoint").take(anicraft_doc::sound::MAX_ENVELOPE_POINTS).collect::<Vec<_>>())
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| {
-                let level = |k: &str| p.f32(k).map_or(1.0, |v| v / 32_768.0);
-                EnvelopePoint::new(f64::from(p.f32("mark44").unwrap_or(0.0)) / 44_100.0, level("level0"), level("level1"))
+        let points: Vec<EnvelopePoint> = frame
+            .envelope_points()
+            .take(anicraft_doc::sound::MAX_ENVELOPE_POINTS)
+            .map(|point| {
+                let level = |value: Option<f32>| value.map_or(1.0, |value| value / 32_768.0);
+                EnvelopePoint::new(f64::from(point.mark44().unwrap_or(0.0)) / 44_100.0, level(point.level0()), level(point.level1()))
             })
             .collect();
         match preset {
