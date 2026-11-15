@@ -23,6 +23,7 @@
 
 use crate::edges::{self, Edge};
 use crate::xml::{self, Element as X};
+use craft_xfl::filters::{Filter as NativeFilter, FilterKind as NativeFilterKind, FilterList as NativeFilterList, FilterSide as NativeFilterSide};
 use anicraft_doc::{
     Cap, Dash, Join, StrokeStyle, Bitmap, BitmapId, BlendMode, ColorEffect, ColorTransform, Filter, FilterEntry, FilterSide, Document, Easing, Element, ElementId, ElementKind, GradientStop, Keyframe, Layer, LayerId, LayerKind, LoopMode, Paint, Rgba, Shape, Stage, Stroke, Symbol, SymbolId,
     Scene, ShapeHint, SymbolKind, Timeline, Tween, TweenKind, CustomEase, EaseGroup, FrameScript, FrameSound, Language, Linkage, ScaleGrid, SoundSync, SourceScript, Spread, MAX_FOCAL,
@@ -263,24 +264,31 @@ struct Builder<'a> {
     faces: HashMap<String, FaceMatch>,
 }
 
-/// A bevel or gradient filter's `type`: `inner`, `outer` or `full` (`default` when missing).
-fn filter_side(el: &X, default: FilterSide) -> FilterSide {
-    match el.attr("type").map(str::trim) {
-        Some("inner") => FilterSide::Inner,
-        Some("outer") => FilterSide::Outer,
-        Some("full") => FilterSide::Full,
-        _ => default,
+/// Maps a neutral shared XFL filter side into the document model, applying the consumer's
+/// established default when the wire value is absent or unknown.
+fn filter_side(side: Option<NativeFilterSide>, default: FilterSide) -> FilterSide {
+    match side {
+        Some(NativeFilterSide::Inner) => FilterSide::Inner,
+        Some(NativeFilterSide::Outer) => FilterSide::Outer,
+        Some(NativeFilterSide::Full) => FilterSide::Full,
+        None => default,
     }
 }
 
-/// A gradient filter's ramp: its `GradientEntry` children (directly, or in a wrapper), with
-/// ratios 0..1 (or Flash's 0..255).
-fn ramp(el: &X) -> Vec<GradientStop> {
-    let entries = el.children.iter().flat_map(|c| if c.name == "GradientEntry" { std::slice::from_ref(c) } else { c.children.as_slice() }).filter(|g| g.name == "GradientEntry");
-    let raw: Vec<(f32, Rgba)> = entries.take(anicraft_doc::MAX_RAMP_STOPS).map(|g| (g.f32("ratio").filter(|r| r.is_finite()).unwrap_or(0.0), color(g, "color", "alpha"))).collect();
+fn rgba(color: craft_xfl::shape::Color) -> Rgba {
+    Rgba::hex(color.rgb).with_alpha(color.alpha)
+}
+
+/// Converts the neutral native ramp into AniCraft's sorted, normalized paint stops.
+fn ramp(filter: &NativeFilter<'_, X>) -> Vec<GradientStop> {
+    let raw: Vec<(f32, Rgba)> = filter
+        .ramp_entries()
+        .take(anicraft_doc::MAX_RAMP_STOPS)
+        .map(|entry| (entry.ratio().unwrap_or(0.0), rgba(entry.color())))
+        .collect();
     // One scale for the whole ramp: any ratio past 1 means bytes.
-    let scale = if raw.iter().any(|(r, _)| *r > 1.0) { 1.0 / 255.0 } else { 1.0 };
-    let mut stops: Vec<GradientStop> = raw.into_iter().map(|(r, c)| GradientStop { offset: (r * scale).clamp(0.0, 1.0), color: c }).collect();
+    let scale = if raw.iter().any(|(ratio, _)| *ratio > 1.0) { 1.0 / 255.0 } else { 1.0 };
+    let mut stops: Vec<GradientStop> = raw.into_iter().map(|(ratio, color)| GradientStop { offset: (ratio * scale).clamp(0.0, 1.0), color }).collect();
     stops.sort_by(|a, b| a.offset.total_cmp(&b.offset));
     stops
 }
@@ -493,50 +501,81 @@ impl<'a> Builder<'a> {
     /// are reported.
     fn filters(&mut self, el: &X) -> Vec<FilterEntry> {
         let mut out = Vec::new();
-        for f in el.list("filters") {
-            let enabled = f.bool("enabled") != Some(false);
-            let num = |k: &str, d: f32| f.f32(k).unwrap_or(d);
-            let flag = |k: &str| f.bool(k).unwrap_or(false);
-            let quality = f.u32("quality").unwrap_or(1).clamp(1, 3) as u8;
-            let filter = match f.name.as_str() {
-                "BlurFilter" => Filter::Blur { blur_x: num("blurX", 5.0), blur_y: num("blurY", 5.0), quality },
-                "DropShadowFilter" => Filter::DropShadow {
-                    blur_x: num("blurX", 5.0),
-                    blur_y: num("blurY", 5.0),
-                    strength: num("strength", 1.0),
+        for f in NativeFilterList::new(el).iter() {
+            let enabled = f.enabled();
+            let quality = f.quality();
+            let num = |value: Option<f32>, default: f32| value.unwrap_or(default);
+            let flag = |value: Option<bool>| value.unwrap_or(false);
+            let filter = match f.kind() {
+                Some(NativeFilterKind::Blur) => Filter::Blur { blur_x: num(f.blur_x(), 5.0), blur_y: num(f.blur_y(), 5.0), quality },
+                Some(NativeFilterKind::DropShadow) => Filter::DropShadow {
+                    blur_x: num(f.blur_x(), 5.0),
+                    blur_y: num(f.blur_y(), 5.0),
+                    strength: num(f.strength(), 1.0),
                     quality,
-                    angle: num("angle", 45.0),
-                    distance: num("distance", 4.0),
-                    color: color(f, "color", "alpha"),
-                    inner: flag("inner"),
-                    knockout: flag("knockout"),
-                    hide_object: flag("hideObject"),
+                    angle: num(f.angle(), 45.0),
+                    distance: num(f.distance(), 4.0),
+                    color: rgba(f.color()),
+                    inner: flag(f.inner()),
+                    knockout: flag(f.knockout()),
+                    hide_object: flag(f.hide_object()),
                 },
-                "GlowFilter" => Filter::Glow { blur_x: num("blurX", 5.0), blur_y: num("blurY", 5.0), strength: num("strength", 1.0), quality, color: color(f, "color", "alpha"), inner: flag("inner"), knockout: flag("knockout") },
-                "AdjustColorFilter" => Filter::AdjustColor { brightness: num("brightness", 0.0), contrast: num("contrast", 0.0), saturation: num("saturation", 0.0), hue: num("hue", 0.0) },
-                "BevelFilter" => Filter::Bevel {
-                    blur_x: num("blurX", 5.0),
-                    blur_y: num("blurY", 5.0),
-                    strength: num("strength", 1.0),
+                Some(NativeFilterKind::Glow) => Filter::Glow {
+                    blur_x: num(f.blur_x(), 5.0),
+                    blur_y: num(f.blur_y(), 5.0),
+                    strength: num(f.strength(), 1.0),
                     quality,
-                    angle: num("angle", 45.0),
-                    distance: num("distance", 5.0),
-                    shadow_color: color(f, "shadowColor", "shadowAlpha"),
-                    highlight_color: if f.attr("highlightColor").is_some() { color(f, "highlightColor", "highlightAlpha") } else { Rgba::WHITE.with_alpha(num("highlightAlpha", 1.0).clamp(0.0, 1.0)) },
-                    side: filter_side(f, FilterSide::Inner),
-                    knockout: flag("knockout"),
+                    color: rgba(f.color()),
+                    inner: flag(f.inner()),
+                    knockout: flag(f.knockout()),
                 },
-                "GradientGlowFilter" | "GradientBevelFilter" => {
-                    let glow = f.name == "GradientGlowFilter";
-                    let (blur_x, blur_y, strength, angle, distance, knockout) = (num("blurX", 5.0), num("blurY", 5.0), num("strength", 1.0), num("angle", 45.0), num("distance", 5.0), flag("knockout"));
-                    let stops = ramp(f);
-                    if glow {
-                        Filter::GradientGlow { blur_x, blur_y, strength, quality, angle, distance, stops: if stops.is_empty() { anicraft_doc::default_glow_ramp() } else { stops }, side: filter_side(f, FilterSide::Outer), knockout }
-                    } else {
-                        Filter::GradientBevel { blur_x, blur_y, strength, quality, angle, distance, stops: if stops.is_empty() { anicraft_doc::default_bevel_ramp() } else { stops }, side: filter_side(f, FilterSide::Inner), knockout }
+                Some(NativeFilterKind::AdjustColor) => Filter::AdjustColor {
+                    brightness: num(f.brightness(), 0.0),
+                    contrast: num(f.contrast(), 0.0),
+                    saturation: num(f.saturation(), 0.0),
+                    hue: num(f.hue(), 0.0),
+                },
+                Some(NativeFilterKind::Bevel) => Filter::Bevel {
+                    blur_x: num(f.blur_x(), 5.0),
+                    blur_y: num(f.blur_y(), 5.0),
+                    strength: num(f.strength(), 1.0),
+                    quality,
+                    angle: num(f.angle(), 45.0),
+                    distance: num(f.distance(), 5.0),
+                    shadow_color: rgba(f.shadow_color()),
+                    highlight_color: f.highlight_color().map(rgba).unwrap_or_else(|| Rgba::WHITE.with_alpha(num(f.highlight_alpha(), 1.0).clamp(0.0, 1.0))),
+                    side: filter_side(f.side(), FilterSide::Inner),
+                    knockout: flag(f.knockout()),
+                },
+                Some(NativeFilterKind::GradientGlow) => {
+                    let stops = ramp(&f);
+                    Filter::GradientGlow {
+                        blur_x: num(f.blur_x(), 5.0),
+                        blur_y: num(f.blur_y(), 5.0),
+                        strength: num(f.strength(), 1.0),
+                        quality,
+                        angle: num(f.angle(), 45.0),
+                        distance: num(f.distance(), 5.0),
+                        stops: if stops.is_empty() { anicraft_doc::default_glow_ramp() } else { stops },
+                        side: filter_side(f.side(), FilterSide::Outer),
+                        knockout: flag(f.knockout()),
                     }
                 }
-                _ => {
+                Some(NativeFilterKind::GradientBevel) => {
+                    let stops = ramp(&f);
+                    Filter::GradientBevel {
+                        blur_x: num(f.blur_x(), 5.0),
+                        blur_y: num(f.blur_y(), 5.0),
+                        strength: num(f.strength(), 1.0),
+                        quality,
+                        angle: num(f.angle(), 45.0),
+                        distance: num(f.distance(), 5.0),
+                        stops: if stops.is_empty() { anicraft_doc::default_bevel_ramp() } else { stops },
+                        side: filter_side(f.side(), FilterSide::Inner),
+                        knockout: flag(f.knockout()),
+                    }
+                }
+                None => {
                     self.report.skip("unknown filters");
                     continue;
                 }
