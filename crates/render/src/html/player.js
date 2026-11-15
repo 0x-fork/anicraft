@@ -551,6 +551,7 @@ var AniCraft = (function () {
   // Math.round as the Rust evaluator computes it.
   function round(x) {
     if (!Number.isFinite(x)) return x;
+    if (x >= -0.5 && x < 0) return -0;
     const f = Math.floor(x);
     return x - f >= 0.5 ? f + 1 : f;
   }
