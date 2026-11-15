@@ -143,7 +143,7 @@ This page is generated from the command registry, so it always matches the versi
   Parameters: `{layer?}`
 - **Add Camera** `camera.add` · Insert › Timeline · changes the document
   Parameters: `{} (a camera layer on top of the scene, at rest: it sees the stage as it is; nothing happens if there is one)`
-- **Scene** `scene.new` · changes the document
+- **New Scene** `scene.new` · changes the document
   Parameters: `{name?}`
 
 ## Modify

@@ -259,35 +259,98 @@ pub fn edit_bar(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal_centered(|ui| {
         // The scene being edited; the menu switches scenes and manages them.
         let name = app.s.doc.scenes.get(app.s.scene).map_or_else(|| tr!("Scene").to_string(), |s| s.name.clone());
-        egui::ComboBox::from_id_salt("scene").selected_text(text(Type::Body, name).strong()).height(480.0).show_ui(ui, |ui| {
-            ui.set_min_width(240.0);
-            let scenes: Vec<(String, u32)> = app.s.doc.scenes.iter().map(|s| (s.name.clone(), s.timeline.frame_count())).collect();
-            for (i, (n, frames)) in scenes.iter().enumerate() {
-                let r = ui.horizontal(|ui| {
-                    let r = ui.selectable_label(i == app.s.scene, n.as_str());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(text(Type::DataSmall, format!("{frames} f")).color(T.text_faint));
-                    });
-                    r
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 1.0;
+            let inside_symbol = !app.s.editing.is_empty();
+
+            if inside_symbol {
+                let label_response = ui.add(
+                    egui::Button::new(text(Type::Body, name.clone()).strong())
+                        .corner_radius(egui::CornerRadius {
+                            nw: 6,
+                            ne: 0,
+                            sw: 6,
+                            se: 0,
+                        })
+                );
+
+                #[cfg(test)]
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(
+                        egui::Id::new("test_scene_label_rect"),
+                        label_response.interact_rect,
+                    );
                 });
-                if r.inner.clicked() && i != app.s.scene {
-                    app.playing = false;
-                    app.frame_sel = None;
-                    app.run("scene.select", serde_json::json!({"scene": i}));
-                } else if r.inner.clicked() && !app.s.editing.is_empty() {
-                    // The scene itself, from inside a symbol: back to it (ADR 0045).
+
+                if label_response.clicked() {
                     app.playing = false;
                     app.frame_sel = None;
                     app.run("symbol.exit", serde_json::json!({"all": true}));
                 }
             }
-            ui.separator();
-            for id in ["scene.new", "scene.duplicate", "scene.rename", "scene.delete", "scene.move_up", "scene.move_down"] {
-                crate::menus::cmd_item(app, ui, id);
+
+            if inside_symbol {
+                let corners = egui::CornerRadius {
+                    nw: 0,
+                    ne: 6,
+                    sw: 0,
+                    se: 6,
+                };
+
+                let widgets = &mut ui.style_mut().visuals.widgets;
+                widgets.inactive.corner_radius = corners;
+                widgets.hovered.corner_radius = corners;
+                widgets.active.corner_radius = corners;
+                widgets.open.corner_radius = corners;
             }
-        })
-        .response
-        .set_name(tr!("Scene"));
+
+            let scene_caption = if inside_symbol { String::new() } else { name };
+
+            let scene_response = egui::ComboBox::from_id_salt("scene")
+                .width(if inside_symbol { 32.0 } else { ui.spacing().combo_width })
+                .selected_text(text(Type::Body, scene_caption).strong())
+                .height(480.0)
+                .show_ui(ui, |ui| {
+                ui.set_min_width(240.0);
+                let scenes: Vec<(String, u32)> = app.s.doc.scenes.iter().map(|s| (s.name.clone(), s.timeline.frame_count())).collect();
+                for (i, (n, frames)) in scenes.iter().enumerate() {
+                    let r = ui.add(
+                        egui::Button::selectable(i == app.s.scene, n.as_str())
+                            .right_text(text(Type::DataSmall, format!("{frames} f")).color(T.text_faint))
+                            .min_size(egui::vec2(ui.available_width(), ui.spacing().interact_size.y)),
+                    );
+                    if r.clicked() && i != app.s.scene {
+                        app.playing = false;
+                        app.frame_sel = None;
+                        app.run("scene.select", serde_json::json!({"scene": i}));
+                    } else if r.clicked() && !app.s.editing.is_empty() {
+                        // The scene itself, from inside a symbol: back to it (ADR 0045).
+                        app.playing = false;
+                        app.frame_sel = None;
+                        app.run("symbol.exit", serde_json::json!({"all": true}));
+                    }
+                }
+                ui.separator();
+                for id in ["scene.new", "scene.duplicate", "scene.rename", "scene.delete", "scene.move_up", "scene.move_down"] {
+                    crate::menus::cmd_item(app, ui, id);
+                }
+            })
+            .response;
+
+            #[cfg(test)]
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    egui::Id::new("test_scene_arrow_rect"),
+                    scene_response.interact_rect,
+                );
+                data.insert_temp(
+                    egui::Id::new("test_scene_arrow_id"),
+                    scene_response.id,
+                );
+            });
+
+            scene_response.set_name(tr!("Scene"));
+        });
         // The symbols open for editing (ADR 0045), as in Animate's edit bar: a click on one
         // goes back to it; the last is the one being edited.
         // A group (ADR 0073) shows as "Group" and a drawing object (ADR 0080) as "Drawing
@@ -2989,5 +3052,154 @@ mod tests {
         for t in [Tool::Pen, Tool::Rect, Tool::Oval, Tool::Star, Tool::Brush, Tool::PaintBucket] {
             assert!(!stroke_only(t), "{t:?} fills");
         }
+    }
+
+    #[test]
+    fn scene_breadcrumb_padding_click_exits_symbol() {
+        let ctx = egui::Context::default();
+        let session = anicraft_engine::Session::new(
+            anicraft_engine::doc::sample::demo()
+        );
+        let mut app = App::with_context(
+            &ctx,
+            session,
+            Some(std::path::PathBuf::from("unused.png")),
+        );
+
+        // Open a REAL library symbol for editing.
+        let symbol = app.s.doc.library.first()
+            .expect("Demo should contain a symbol")
+            .id.0;
+
+        assert!(app.run("symbol.edit", json!({"symbol": symbol})).is_some());
+        assert_eq!(app.s.editing.len(), 1);
+
+        let input = |events| egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1200.0, 800.0),
+            )),
+            events,
+            ..Default::default()
+        };
+
+        // Draw the REAL edit bar so egui can measure its controls.
+        ctx.run_ui(input(vec![]), |ui| edit_bar(&mut app, ui))
+            .textures_delta.clear();
+
+        // Get the actual scene control's interaction rectangle.
+        let label_rect = ctx.data(|data| {
+            data.get_temp::<egui::Rect>(
+                egui::Id::new("test_scene_label_rect")
+            )
+        }).expect("Scene control rectangle should exist");
+
+        // Click near the scene button's left edge, away from the text.
+        let click = egui::pos2(
+            label_rect.left() + 2.0,
+            label_rect.center().y,
+        );
+        assert!(label_rect.contains(click));
+
+        // A real click involves a press and a release.
+        for pressed in [true, false] {
+            let events = vec![
+                egui::Event::PointerMoved(click),
+                egui::Event::PointerButton {
+                    pos: click,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ];
+
+            ctx.run_ui(input(events), |ui| edit_bar(&mut app, ui))
+                .textures_delta.clear();
+        }
+
+        // Clicking the arrow should open the menu without leaving the symbol.
+        assert!(
+            app.s.editing.is_empty(),
+            "Clicking scene-label padding should return to the scene"
+        );
+    }
+
+    #[test]
+    fn scene_breadcrumb_arrow_opens_menu_without_exiting_symbol() {
+        let ctx = egui::Context::default();
+        let session = anicraft_engine::Session::new(
+            anicraft_engine::doc::sample::demo()
+        );
+        let mut app = App::with_context(
+            &ctx,
+            session,
+            Some(std::path::PathBuf::from("unused.png")),
+        );
+
+        // Open a REAL library symbol for editing.
+        let symbol = app.s.doc.library.first()
+            .expect("Demo should contain a symbol")
+            .id.0;
+
+        assert!(app.run("symbol.edit", json!({"symbol": symbol})).is_some());
+        assert_eq!(app.s.editing.len(), 1);
+
+        let input = |events| egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1200.0, 800.0),
+            )),
+            events,
+            ..Default::default()
+        };
+
+        // Draw the edit bar once so egui can measure the dropdown arrow.
+        ctx.run_ui(input(vec![]), |ui| edit_bar(&mut app, ui))
+            .textures_delta.clear();
+
+        // Get the actual dropdown arrow's rectangle and widget ID.
+        let arrow_rect = ctx.data(|data| {
+            data.get_temp::<egui::Rect>(
+                egui::Id::new("test_scene_arrow_rect")
+            )
+        }).expect("Scene arrow rectangle should exist");
+
+        let arrow_id = ctx.data(|data| {
+            data.get_temp::<egui::Id>(
+                egui::Id::new("test_scene_arrow_id")
+            )
+        }).expect("Scene arrow ID should exist");
+
+        // Click the centre of the arrow control.
+        let click = arrow_rect.center();
+        assert!(arrow_rect.contains(click));
+
+        // A real click involves a press and a release.
+        for pressed in [true, false] {
+            let events = vec![
+                egui::Event::PointerMoved(click),
+                egui::Event::PointerButton {
+                    pos: click,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ];
+
+            ctx.run_ui(input(events), |ui| edit_bar(&mut app, ui))
+                .textures_delta.clear();
+        }
+
+        // Clicking the scene name should leave symbol-editing mode.
+        assert_eq!(
+            app.s.editing.len(),
+            1,
+            "Clicking the arrow must not exit symbol-editing mode"
+        );
+
+        assert!(
+            egui::ComboBox::is_open(&ctx, arrow_id),
+            "Clicking the arrow should open the scene dropdown"
+        );
     }
 }

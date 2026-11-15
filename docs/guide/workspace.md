@@ -242,7 +242,7 @@ exactly as the movie will frame it. While the preview is on you can't edit artwo
 A movie can be split into scenes that play one after another. Each scene has its own
 timeline. Use the scene menu at the left of the edit bar to switch scenes and to manage them:
 
-* **Insert › Scene** adds a new scene.
+* **Insert › New Scene** adds a new scene.
 * **Modify › Scene** has **Duplicate Scene**, **Rename Scene**, **Delete Scene**, **Move
   Scene Earlier** and **Move Scene Later**.
 * **Control › Previous Scene** (**Shift+Page Up**) and **Control › Next Scene**
