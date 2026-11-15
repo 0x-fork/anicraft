@@ -451,6 +451,9 @@ pub struct App {
     pub width_sel: Option<(anicraft_engine::doc::ElementId, usize)>,
     /// Opens the Tools bar's fill swatch picker on the next frame (the `swatches` screenshot).
     pub open_fill_swatch: bool,
+    /// The zoom edit-bar field's draft while it has the keyboard (view state, not undoable):
+    /// `None` shows the current zoom, `Some` is what is being typed.
+    pub zoom_text: Option<String>,
     /// The bone picked on the stage (ADR 0043; view state).
     pub bone_sel: Option<anicraft_engine::doc::BoneId>,
     /// The Bind tool's options: Paint Weights, the brush, the focused point (ADR 0090).
@@ -727,6 +730,7 @@ impl App {
             points: Vec::new(),
             width_sel: None,
             open_fill_swatch: false,
+            zoom_text: None,
             bone_sel: None,
             bind: crate::bind_tool::BindOptions::default(),
             warp_pin: None,

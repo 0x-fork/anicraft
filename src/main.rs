@@ -429,3 +429,5 @@ mod rulers_tests;
 mod retime_ui_tests;
 #[cfg(test)]
 mod tilt_ui_tests;
+#[cfg(test)]
+mod zoom_tests;

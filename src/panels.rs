@@ -321,18 +321,48 @@ pub fn edit_bar(app: &mut App, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let z = app.view.zoom;
             let canvas = app.stage_cache.canvas;
-            egui::ComboBox::from_id_salt("zoom").width(84.0).selected_text(text(Type::Data, format!("{:>4.0}%", z * 100.0))).show_ui(ui, |ui| {
+            // The presets arrow alone opens the menu (Flash parity): clicking the text never does.
+            let arrow = ui.menu_button("▾", |ui| {
                 if ui.selectable_label(false, tr!("Fit in window")).clicked() {
+                    ui.close();
                     app.view.fit = true;
                 }
                 for pct in [25.0f32, 50.0, 100.0, 200.0, 400.0, 800.0] {
                     if ui.selectable_label((z * 100.0 - pct).abs() < 0.5, text(Type::Data, format!("{pct:>4.0}%"))).clicked() {
+                        ui.close();
                         app.zoom_about(canvas, canvas.center(), pct / 100.0);
                     }
                 }
-            })
-            .response
-            .set_name(tr!("Zoom"));
+            });
+            arrow.response.set_name(tr!("Zoom presets"));
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("zoom_arrow"), arrow.response.rect));
+            // The percentage itself is typed here: focus to type a value, Enter or focus loss applies it.
+            let was_editing = app.zoom_text.is_some();
+            let mut value = app.zoom_text.take().unwrap_or_else(|| format!("{:>4.0}%", z * 100.0));
+            let field = with_type(ui, Type::Data, |ui| ui.add(egui::TextEdit::singleline(&mut value).desired_width(56.0).char_limit(7)).named(tr!("Zoom")));
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("zoom_field"), field.rect));
+            if !was_editing && field.gained_focus() {
+                // Type digits over digits, not over the percent sign.
+                value = format!("{:.0}", z * 100.0);
+            }
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if field.lost_focus() || (enter && field.has_focus()) {
+                let typed = value.trim();
+                let typed = typed.strip_suffix('%').unwrap_or(typed).trim();
+                if let Ok(pct) = typed.parse::<f32>()
+                    && pct.is_finite()
+                {
+                    app.zoom_about(canvas, canvas.center(), pct.clamp(5.0, 6400.0) / 100.0);
+                }
+                app.zoom_text = None;
+                if enter {
+                    ui.memory_mut(|m| m.surrender_focus(field.id));
+                }
+            } else if field.has_focus() {
+                app.zoom_text = Some(value);
+            } else {
+                app.zoom_text = None;
+            }
             // Beside the zoom, as in Animate (#251): a toggle, on = the pasteboard is hidden.
             let clip = app.view.clip_to_stage;
             if crate::timeline::icon_button(ui, tr!("Clip content outside the stage"), Some(clip), Icon::ClipStage).clicked() {
