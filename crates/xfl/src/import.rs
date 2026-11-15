@@ -610,19 +610,21 @@ impl<'a> Builder<'a> {
     /// channel's multiplier other than 1 or an offset, −255..255), or alpha alone. Values are
     /// clamped into Animate's ranges.
     fn color_effect(&mut self, c: &X) -> ColorEffect {
-        let mul = |k: &str| c.f32(k).filter(|v| v.is_finite()).unwrap_or(1.0);
-        let off = |k: &str| c.f32(k).filter(|v| v.is_finite()).unwrap_or(0.0) / 255.0;
-        let alpha = mul("alphaMultiplier");
-        let fx = if let Some(t) = c.f32("tintMultiplier") {
-            let tint = ColorEffect::Tint { color: color(c, "tintColor", "__none").with_alpha(1.0), amount: t };
+        let native = craft_xfl::shape::NativeColorEffect::new(c);
+        let multipliers = native.multipliers();
+        let alpha = multipliers[3];
+        let fx = if let Some(t) = native.tint_multiplier() {
+            let tint_color = native.tint_color();
+            let tint = ColorEffect::Tint { color: Rgba::hex(tint_color.rgb).with_alpha(1.0), amount: t };
             if alpha != 1.0 { tint.with_alpha(alpha) } else { tint }
-        } else if let Some(b) = c.f32("brightness").filter(|b| *b != 0.0) {
+        } else if let Some(b) = native.brightness().filter(|b| *b != 0.0) {
             let bright = ColorEffect::Brightness(b);
             if alpha != 1.0 { bright.with_alpha(alpha) } else { bright }
         } else {
+            let offsets = native.offsets().map(|value| value / 255.0);
             let t = ColorTransform {
-                mul: [mul("redMultiplier"), mul("greenMultiplier"), mul("blueMultiplier"), alpha],
-                add: [off("redOffset"), off("greenOffset"), off("blueOffset"), off("alphaOffset")],
+                mul: multipliers,
+                add: offsets,
             };
             if t.changes_colour() || t.add[3] != 0.0 {
                 ColorEffect::Advanced(t)
