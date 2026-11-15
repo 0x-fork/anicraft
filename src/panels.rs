@@ -3117,7 +3117,7 @@ mod tests {
                 .textures_delta.clear();
         }
 
-        // Clicking the arrow should open the menu without leaving the symbol.
+        // Clicking the scene name should leave symbol-editing mode.
         assert!(
             app.s.editing.is_empty(),
             "Clicking scene-label padding should return to the scene"
@@ -3190,7 +3190,7 @@ mod tests {
                 .textures_delta.clear();
         }
 
-        // Clicking the scene name should leave symbol-editing mode.
+        // Clicking the arrow should open the menu without leaving the symbol.
         assert_eq!(
             app.s.editing.len(),
             1,
