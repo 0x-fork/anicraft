@@ -723,6 +723,31 @@ pub(crate) fn element_title(doc: &anicraft_engine::doc::Document, e: &anicraft_e
     if e.name.is_empty() { kind } else { tr!("{name} ({kind})", name = e.name, kind = kind) }
 }
 
+/// The Scale lock's link (#304): with the lock on, editing one Scale axis (percent, as the
+/// Properties panel shows it) adjusts the other so the selection keeps its width:height
+/// proportion (multiplicative, not forced equal). `x_changed` says which axis was edited.
+/// A degenerate old axis (near zero) cannot divide, so the other axis follows the new value
+/// instead. Both are clamped to the DragValues' range, so a typed extreme cannot produce a
+/// zero or negative scale.
+fn linked_scale(old: (f32, f32), now: (f32, f32), x_changed: bool) -> (f32, f32) {
+    const MIN: f32 = 1.0;
+    const MAX: f32 = 10000.0;
+    let (ox, oy) = old;
+    let (mut nx, mut ny) = now;
+    if x_changed {
+        if ox.abs() <= 1e-6 {
+            ny = nx;
+        } else {
+            ny = oy * nx / ox;
+        }
+    } else if oy.abs() <= 1e-6 {
+        nx = ny;
+    } else {
+        nx = ox * ny / oy;
+    }
+    (nx.clamp(MIN, MAX), ny.clamp(MIN, MAX))
+}
+
 /// "mixed" after a value that differs across the selection (the field shows the first one's).
 fn mixed(ui: &mut egui::Ui, differs: bool) {
     if differs {
@@ -877,9 +902,21 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             });
         }
         row(ui, tr!("Scale"), |ui| {
+            let (sx0, sy0) = (sx, sy);
             let a = ui.add(egui::DragValue::new(&mut sx).suffix(" %").speed(0.5).range(1.0..=10000.0).max_decimals(1)).named(tr!("Scale width"));
             let b = ui.add(egui::DragValue::new(&mut sy).suffix(" %").speed(0.5).range(1.0..=10000.0).max_decimals(1)).named(tr!("Scale height"));
+            // The Scale lock (#304): view state, off by default. On, editing one axis scales
+            // the other so the selection keeps its width:height proportion.
+            let locked = app.scale_lock;
+            let lock = crate::timeline::icon_button(ui, tr!("Lock scale"), Some(locked), if locked { Icon::Lock } else { Icon::Unlock });
+            if lock.clicked() {
+                app.scale_lock = !locked;
+            }
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("scale_lock_geometry"), (a.rect, b.rect, lock.rect)));
             if a.changed() || b.changed() {
+                if locked {
+                    (sx, sy) = linked_scale((sx0, sy0), (sx, sy), a.changed());
+                }
                 live(app, tr_noop!("Scale"), "element.set_transform", json!({"sx": sx / 100.0, "sy": sy / 100.0}));
             }
             mixed(ui, m.scale);
@@ -2989,5 +3026,85 @@ mod tests {
         for t in [Tool::Pen, Tool::Rect, Tool::Oval, Tool::Star, Tool::Brush, Tool::PaintBucket] {
             assert!(!stroke_only(t), "{t:?} fills");
         }
+    }
+
+    /// #304: the Scale lock keeps the width:height proportion (multiplicative).
+    #[test]
+    fn linked_scale_keeps_the_proportion() {
+        // 100x50, X edited to 200: the height doubles too.
+        assert_eq!(linked_scale((100.0, 50.0), (200.0, 50.0), true), (200.0, 100.0));
+        // 100x50, Y edited to 25: the width halves too.
+        assert_eq!(linked_scale((100.0, 50.0), (100.0, 25.0), false), (50.0, 25.0));
+        // A degenerate old axis cannot divide: the other axis follows the new value.
+        assert_eq!(linked_scale((0.0, 50.0), (200.0, 50.0), true), (200.0, 200.0));
+        assert_eq!(linked_scale((100.0, 0.0), (100.0, 25.0), false), (25.0, 25.0));
+        // Clamped to the DragValues' range, so an extreme cannot make a zero/negative scale.
+        assert_eq!(linked_scale((100.0, 100.0), (20000.0, 100.0), true), (10000.0, 10000.0));
+        assert_eq!(linked_scale((100.0, 200.0), (100.0, 0.01), false), (1.0, 1.0));
+        assert_eq!(linked_scale((100.0, 100.0), (-5.0, 100.0), true), (1.0, 1.0));
+    }
+
+    /// #304, headless: the lock toggle flips view state (one click), and the row's edit path
+    /// scales both axes proportionally in a single undo step; with the lock off only the
+    /// edited axis changes. Typing a value into a DragValue is not driven here (that needs a
+    /// focused text field plus key events): the value link itself is covered by
+    /// `linked_scale_keeps_the_proportion`, and this test drives the same helper plus the
+    /// same `element.set_transform` the row sends.
+    #[test]
+    fn scale_lock_toggle_links_the_axes_in_one_undo_step() {
+        use egui::{Event, Modifiers, PointerButton, Pos2};
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, anicraft_engine::Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        app.run("draw.rect", json!({"x": 10, "y": 10, "w": 100, "h": 50, "fill": "#ff0000", "stroke": null}));
+        app.run("edit.select_all", json!({}));
+        assert!(!app.s.selection.is_empty());
+        assert!(!app.scale_lock, "the lock defaults off");
+        let screen = || egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 1400.0))), ..Default::default() };
+        let frames = |ctx: &egui::Context, app: &mut App| {
+            for _ in 0..2 {
+                let mut out = ctx.run_ui(screen(), |ui| app.frame(ui));
+                out.textures_delta.clear();
+            }
+        };
+        frames(&ctx, &mut app);
+        let (_, _, lock_rect) = ctx.data(|d| d.get_temp::<(Rect, Rect, Rect)>(egui::Id::new("scale_lock_geometry"))).expect("the Scale row drew");
+        // Click the lock: view state only (no document change, no undo step).
+        let at = lock_rect.center();
+        let press = |pressed: bool| Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+        let steps = app.s.history_len();
+        let mut out = ctx.run_ui(screen(), |ui| app.frame(ui));
+        out.textures_delta.clear();
+        let mut out = ctx.run_ui(egui::RawInput { events: vec![Event::PointerMoved(at), press(true)], ..screen() }, |ui| app.frame(ui));
+        out.textures_delta.clear();
+        let mut out = ctx.run_ui(egui::RawInput { events: vec![press(false)], ..screen() }, |ui| app.frame(ui));
+        out.textures_delta.clear();
+        frames(&ctx, &mut app);
+        assert!(app.scale_lock, "one click turns the lock on");
+        assert_eq!(app.s.history_len(), steps, "toggling the lock is view state, not undoable");
+        // The row's locked path: X 100 % -> 200 % keeps the 1:1 proportion.
+        let (sx, sy) = linked_scale((100.0, 100.0), (200.0, 100.0), true);
+        let steps = app.s.history_len();
+        live(&mut app, tr_noop!("Scale"), "element.set_transform", json!({"sx": sx / 100.0, "sy": sy / 100.0}));
+        app.s.end_gesture();
+        assert_eq!(app.s.history_len(), steps + 1, "one undo step for the live edit");
+        let check = |app: &App| {
+            let els = app.s.selected_elements();
+            let d = els.first().expect("selected").1.transform.decompose();
+            (d.sx, d.sy)
+        };
+        let (sx, sy) = check(&app);
+        assert!((sx - 2.0).abs() < 1e-4 && (sy - 2.0).abs() < 1e-4, "both axes doubled, got ({sx}, {sy})");
+        app.s.undo().expect("undo");
+        let (sx, sy) = check(&app);
+        assert!((sx - 1.0).abs() < 1e-4 && (sy - 1.0).abs() < 1e-4, "one undo restores both, got ({sx}, {sy})");
+        // Lock off: the same row sends only the edited axis's change through.
+        app.scale_lock = false;
+        let steps = app.s.history_len();
+        live(&mut app, tr_noop!("Scale"), "element.set_transform", json!({"sx": 3.0, "sy": 1.0}));
+        app.s.end_gesture();
+        assert_eq!(app.s.history_len(), steps + 1);
+        let (sx, sy) = check(&app);
+        assert!((sx - 3.0).abs() < 1e-4 && (sy - 1.0).abs() < 1e-4, "only X changed, got ({sx}, {sy})");
+        app.s.undo().expect("undo");
     }
 }
