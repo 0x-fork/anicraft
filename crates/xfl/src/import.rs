@@ -440,16 +440,22 @@ impl<'a> Builder<'a> {
 
     /// Rectangle and oval primitives.
     fn primitive(&mut self, el: &X, parent: &Affine, out: &mut Vec<Arc<Element>>) {
-        let (x, y) = (el.f32("x").unwrap_or(0.0), el.f32("y").unwrap_or(0.0));
-        let (w, h) = (el.f32("objectWidth").unwrap_or(0.0), el.f32("objectHeight").unwrap_or(0.0));
+        let Some(primitive) = craft_xfl::shape::Primitive::new(el) else { return };
+        let (x, y) = (primitive.x().unwrap_or(0.0), primitive.y().unwrap_or(0.0));
+        let (w, h) = (primitive.width().unwrap_or(0.0), primitive.height().unwrap_or(0.0));
         if !(w > 0.0 && h > 0.0) {
             return;
         }
-        let path = if el.name == "DOMOvalObject" { Path::ellipse(x + w / 2.0, y + h / 2.0, w / 2.0, h / 2.0) } else { Path::rounded_rect(x, y, w, h, el.f32("topLeftRadius").unwrap_or(0.0).max(0.0)) };
-        let fill = el.child("fill").and_then(|f| f.children.first()).and_then(|d| paint(d, &self.bitmaps, &mut self.report));
-        let stroke = el.child("stroke").and_then(|s| s.children.first()).and_then(|d| stroke(d, &self.bitmaps, &mut self.report));
+        let path = if primitive.kind() == craft_xfl::shape::PrimitiveKind::Oval {
+            Path::ellipse(x + w / 2.0, y + h / 2.0, w / 2.0, h / 2.0)
+        } else {
+            Path::rounded_rect(x, y, w, h, primitive.top_left_radius().unwrap_or(0.0).max(0.0))
+        };
+        let fill = primitive.fill().and_then(|definition| paint(definition.element(), &self.bitmaps, &mut self.report));
+        let stroke = primitive.stroke().and_then(|definition| stroke(definition.element(), &self.bitmaps, &mut self.report));
         if fill.is_some() || stroke.is_some() {
-            let m = parent.mul(&matrix(el));
+            let native = primitive.matrix();
+            let m = parent.mul(&Affine { m: [native.a, native.b, native.c, native.d, native.tx, native.ty] });
             out.push(self.element(ElementKind::Shape(Shape { path: Arc::new(path), fill, stroke, fill_rule: FillRule::NonZero, merge: false, warp: None }), m, ColorEffect::default()));
         }
     }
