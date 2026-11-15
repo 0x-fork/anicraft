@@ -28,6 +28,7 @@ anicraft-audio = { path = "crates/audio" }
 anicraft-gpu = { path = "crates/gpu" }
 anicraft-guide = { path = "crates/guide" }
 craft-anicraft-format = { git = "https://github.com/storytold/craft-libs", rev = "f0f4758c01581d79577b9bf5046c06f4e77b1f18" }
+craft-mime = { git = "https://github.com/storytold/craft-libs", rev = "f0f4758c01581d79577b9bf5046c06f4e77b1f18" }
 craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "f0f4758c01581d79577b9bf5046c06f4e77b1f18", default-features = false, features = ["decode", "pcm-encode"] }
 craft-gif = { git = "https://github.com/storytold/craft-libs", rev = "f0f4758c01581d79577b9bf5046c06f4e77b1f18" }
 craft-image-codecs = { git = "https://github.com/storytold/craft-libs", rev = "f0f4758c01581d79577b9bf5046c06f4e77b1f18" }
