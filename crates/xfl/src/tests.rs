@@ -1,7 +1,7 @@
 //! Import tests on a small, self-authored XFL package.
 
 use crate::import::{XflError, import_with};
-use anicraft_doc::{ElementKind, LayerKind, LoopMode, Paint, Rgba, SymbolKind, evaluate};
+use anicraft_doc::{ColorEffect, ColorTransform, ElementKind, LayerKind, LoopMode, Paint, Rgba, SymbolKind, evaluate};
 use std::collections::HashMap;
 
 #[test]
@@ -209,6 +209,39 @@ fn symbols_instances_and_the_tween_between_them() {
     let ball = dl.items.iter().find(|i| matches!(i.fill, Some(Paint::Solid(c)) if c == Rgba::hex(0xff0000))).expect("the ball renders");
     let x = ball.transform.translation().x;
     assert!(x > 100.0 && x < 300.0, "{x}");
+}
+
+#[test]
+fn shared_native_color_effect_view_preserves_anicraft_style_mapping() {
+    let document = r##"<DOMDocument>
+      <symbols><Include href="Target.xml"/></symbols>
+      <timelines><DOMTimeline name="Scene 1"><layers><DOMLayer name="Layer 1"><frames><DOMFrame index="0"><elements>
+        <DOMSymbolInstance libraryItemName="Target" name="Tint"><color><Color tintMultiplier=".25" tintColor="#336699" brightness=".8" alphaMultiplier=".5"/></color></DOMSymbolInstance>
+        <DOMSymbolInstance libraryItemName="Target" name="Bright"><color><Color brightness="-.25" alphaMultiplier=".75"/></color></DOMSymbolInstance>
+        <DOMSymbolInstance libraryItemName="Target" name="Advanced"><color><Color redMultiplier="2" greenMultiplier="bad" blueMultiplier="-.5" alphaMultiplier=".5" redOffset="255" greenOffset="-127.5" alphaOffset="128"/></color></DOMSymbolInstance>
+      </elements></DOMFrame></frames></DOMLayer></layers></DOMTimeline></timelines>
+    </DOMDocument>"##;
+    let symbol = r#"<DOMSymbolItem name="Target"><timeline><DOMTimeline name="Target"/></timeline></DOMSymbolItem>"#;
+    let files = HashMap::from([("DOMDocument.xml", document), ("LIBRARY/Target.xml", symbol)]);
+    let (doc, _) = import(&files).unwrap();
+    let elements = &doc.timeline(0).layers[0].keyframes[0].elements;
+
+    let mut tint = ColorTransform::tint(Rgba::hex(0x336699), 0.25);
+    tint.mul[3] = 0.5;
+    assert_eq!(elements[0].name, "Tint");
+    assert_eq!(elements[0].color, ColorEffect::Advanced(tint).sanitized(), "tint keeps precedence over brightness and composes alpha");
+
+    let bright = ColorEffect::Brightness(-0.25).with_alpha(0.75);
+    assert_eq!(elements[1].name, "Bright");
+    assert_eq!(elements[1].color, bright.sanitized());
+
+    let advanced = ColorTransform { mul: [2.0, 1.0, -0.5, 0.5], add: [1.0, -0.5, 0.0, 128.0 / 255.0] };
+    assert_eq!(elements[2].name, "Advanced");
+    assert_eq!(
+        elements[2].color,
+        ColorEffect::Advanced(advanced).sanitized(),
+        "invalid multipliers default to identity and offsets stay in XFL byte units until mapping"
+    );
 }
 
 #[test]
