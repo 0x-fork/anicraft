@@ -622,10 +622,7 @@ impl<'a> Builder<'a> {
             if alpha != 1.0 { bright.with_alpha(alpha) } else { bright }
         } else {
             let offsets = native.offsets().map(|value| value / 255.0);
-            let t = ColorTransform {
-                mul: multipliers,
-                add: offsets,
-            };
+            let t = ColorTransform { mul: multipliers, add: offsets };
             if t.changes_colour() || t.add[3] != 0.0 {
                 ColorEffect::Advanced(t)
             } else if alpha != 1.0 {

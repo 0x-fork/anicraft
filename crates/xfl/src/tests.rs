@@ -226,7 +226,8 @@ fn shared_native_color_effect_view_preserves_anicraft_style_mapping() {
     let (doc, _) = import(&files).unwrap();
     let elements = &doc.timeline(0).layers[0].keyframes[0].elements;
 
-    let tint = ColorTransform { mul: [0.75, 0.75, 0.75, 0.5], add: [0.25 * 0x33 as f32 / 255.0, 0.25 * 0x66 as f32 / 255.0, 0.25 * 0x99 as f32 / 255.0, 0.0] };
+    let mut tint = ColorTransform::tint(Rgba::hex(0x336699), 0.25);
+    tint.mul[3] = 0.5;
     assert_eq!(elements[0].name, "Tint");
     assert_eq!(elements[0].color, ColorEffect::Advanced(tint).sanitized(), "tint keeps precedence over brightness and composes alpha");
 
@@ -236,7 +237,11 @@ fn shared_native_color_effect_view_preserves_anicraft_style_mapping() {
 
     let advanced = ColorTransform { mul: [2.0, 1.0, -0.5, 0.5], add: [1.0, -0.5, 0.0, 128.0 / 255.0] };
     assert_eq!(elements[2].name, "Advanced");
-    assert_eq!(elements[2].color, ColorEffect::Advanced(advanced).sanitized(), "invalid multipliers default to identity and offsets stay in XFL byte units until mapping");
+    assert_eq!(
+        elements[2].color,
+        ColorEffect::Advanced(advanced).sanitized(),
+        "invalid multipliers default to identity and offsets stay in XFL byte units until mapping"
+    );
 }
 
 #[test]
