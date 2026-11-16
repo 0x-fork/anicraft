@@ -203,3 +203,27 @@ fn whole_block_keys_restyle_every_run_and_hostile_runs_are_capped() {
     assert!(s.execute("text.edit", &json!({"runs": [{"size": 3}]})).is_err(), "a run needs its length");
     assert!(s.execute("text.edit", &json!({"runs": [{"chars": 1, "size": 1e9}]})).is_err());
 }
+
+#[test]
+fn every_export_draws_each_colour_and_svg_keeps_the_link() {
+    if !fonts() {
+        return;
+    }
+    let mut s = Session::default();
+    let id = hello(&mut s);
+    run(&mut s, "text.style", json!({"start": 0, "end": 5, "color": "#00aa00", "url": "https://example.org/?a=1&b=2"}));
+    let dl = anicraft_doc::evaluate(&s.doc, 0);
+    let svg = anicraft_render::svg::to_svg(&dl, &s.doc.stage);
+    assert!(svg.contains("<a href=\"https://example.org/?a=1&amp;b=2\">"), "the linked word is a link");
+    assert_eq!(svg.matches("</a>").count(), 1);
+    assert!(svg.contains("#00aa00") || svg.contains("rgb(0,170,0)"), "green piece");
+    let html = anicraft_render::html::to_html(&s.doc, &anicraft_render::html::HtmlOptions::default()).unwrap().html;
+    assert!(html.matches("{\"s\":").count() >= 2, "the page draws a paint per colour");
+    let lottie = anicraft_render::lottie::to_lottie(&s.doc, "t", 0, 0, false).json;
+    assert!(lottie.matches("\"ty\":\"fl\"").count() >= 2, "a fill per colour");
+    // A field's authored text keeps its colours in the page, as pieces.
+    run(&mut s, "element.select", json!({"ids": [id.0]}));
+    run(&mut s, "text.field", json!({"type": "dynamic"}));
+    let html = anicraft_render::html::to_html(&s.doc, &anicraft_render::html::HtmlOptions::default()).unwrap().html;
+    assert!(html.contains("\"pp\":"), "field pieces");
+}

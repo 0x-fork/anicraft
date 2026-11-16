@@ -79,8 +79,9 @@ pub fn to_svg(dl: &DisplayList, stage: &Stage) -> String {
     // Groups that fade as one become `<g opacity>` around their run of items.
     let chains = crate::group_chains(&dl.groups);
     let mut open: Vec<u32> = Vec::new();
-    for item in dl.items.iter().filter(|it| it.masks.is_none() && !it.guide) {
+    for (index, item) in dl.items.iter().enumerate().filter(|(_, it)| it.masks.is_none() && !it.guide) {
         let Some(d) = stage_path(item) else { continue };
+        let link = dl.links.binary_search_by_key(&(index as u32), |l| l.0).ok().and_then(|i| dl.links.get(i)).and_then(|l| anicraft_doc::safe_url(&l.1));
         let want = item.group.and_then(|g| chains.get(g as usize)).map_or(&[][..], Vec::as_slice);
         let keep = open.iter().zip(want).take_while(|(o, g)| o == g).count();
         while open.len() > keep {
@@ -103,7 +104,14 @@ pub fn to_svg(dl: &DisplayList, stage: &Stage) -> String {
             open.push(g);
         }
         let clip = item.clip.filter(|&c| (c as usize) < dl.clip_parents.len()).map(|c| clip_attrs(dl, c)).unwrap_or_default();
+        // Characters with a link (ADR 0085) are a link in the SVG.
+        if let Some(url) = &link {
+            let _ = write!(body, "<a href=\"{}\">", attr_escape(url));
+        }
         draw(item, &d, &clip, &mut body, &mut defs, &mut grad, &mut images);
+        if link.is_some() {
+            body.push_str("</a>");
+        }
     }
     for _ in open {
         body.push_str("</g>");
@@ -759,4 +767,21 @@ mod group_tests {
         let order: Vec<&str> = svg.split('<').filter_map(|t| t.split([' ', '>']).next()).filter(|t| ["path", "g", "/g"].contains(t)).collect();
         assert_eq!(order, ["path", "g", "path", "g", "path", "/g", "path", "/g", "path"], "{svg}");
     }
+}
+
+/// `s` safe inside a double-quoted XML attribute.
+fn attr_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
