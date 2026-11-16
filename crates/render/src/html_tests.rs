@@ -820,6 +820,7 @@ fn logic() -> Document {
         for (var i:int = 0; i < 5; i++) { if (i % 2 == 0) continue; total += i * 1.5; }\n\
         var k:int = 3; while (k > 0) { k--; } do { k += 2; } while (k < 5);\n\
         trace(total, k, Math.max(1, 7, 3), Math.min(), Math.round(-2.5), 1 / Math.round(-0.5), 1 / Math.round(-0.4), Math.abs(-0.25), int(\"42\") + uint(-1), 7 / 2, \"10\" < \"9\", 1 == \"1\", null == undefined);\n\
+        trace(1 / Math.max(Math.round(-0.4), 0), 1 / Math.max(0, Math.round(-0.4)), 1 / Math.min(Math.round(-0.4), 0), 1 / Math.min(0, Math.round(-0.4)));\n\
         trace(Math.floor(Math.random() * 100), Math.random() < 1, knob.x, knob.y, knob.alpha, knob.visible, knob.name, panel.currentFrame, panel.totalFrames);\n\
         addEventListener(Event.ENTER_FRAME, onTick);\n\
         stage.addEventListener(KeyboardEvent.KEY_DOWN, onKey);\n\
@@ -866,7 +867,7 @@ fn the_js_player_runs_small_logic_like_the_rust_player() {
     script.push((vec![Event::Move(at(10.0, 10.0)), Event::Leave], vec![Event::KeyDown(39)]));
     script.extend((0..20).map(|_| none()));
     let lines = compare(&doc, &script);
-    for want in ["start 0 go 0 1/33 null", "6 6 7 Infinity -2 -Infinity -Infinity 0.25 4294967337 3.5 true true true", "10 true 100 100 1 true knob 1 4", "frame 2: 2 go!", "Script on frame 4 of the main timeline stopped: line 4: no instance named “ghost” here", "stopped ticking", "up 39 true", "key 65"] {
+    for want in ["Infinity Infinity -Infinity -Infinity", "start 0 go 0 1/33 null", "6 6 7 Infinity -2 -Infinity -Infinity 0.25 4294967337 3.5 true true true", "10 true 100 100 1 true knob 1 4", "frame 2: 2 go!", "Script on frame 4 of the main timeline stopped: line 4: no instance named “ghost” here", "stopped ticking", "up 39 true", "key 65"] {
         assert!(lines.iter().any(|l| l == want), "the logic fixture never wrote {want:?}: {lines:?}");
     }
     assert!(lines.iter().any(|l| l == "click knob true 11"), "{lines:?}");
