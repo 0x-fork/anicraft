@@ -1700,6 +1700,31 @@ impl App {
                     crate::layer_props::open(self, Some(anicraft_engine::doc::LayerId(m)));
                 }
             }
+            Some("richtext") => {
+                // Styled text (ADR 0085): a title with bold, coloured and superscript runs and a
+                // centred paragraph, open for typing with a word selected, its style in
+                // Properties.
+                self.perform("file.new", json!({"width": 640, "height": 400}));
+                // i18n-exempt: document content
+                let made = self.run("text.create", json!({"text": "Energy E = mc2\nStyled runs in one block", "x": 60, "y": 90, "size": 44, "color": "#264653", "width": 520}));
+                if let Some(id) = made.and_then(|v| v["element"].as_u64()) {
+                    self.run("text.style", json!({"start": 0, "end": 6, "bold": true, "color": "#e76f51"}));
+                    self.run("text.style", json!({"start": 13, "end": 14, "shift": "superscript"}));
+                    self.run("text.style", json!({"start": 15, "end": 39, "size": 26, "italic": true, "color": "#2a9d8f"}));
+                    self.run("text.style", json!({"start": 22, "end": 26, "underline": true, "url": "https://example.org"}));
+                    self.run("text.paragraph", json!({"start": 15, "end": 39, "align": "center"}));
+                    let block = self.s.visible_elements().into_iter().find(|e| e.id.0 == id).and_then(|e| match &e.kind {
+                        anicraft_engine::doc::ElementKind::Text(t) => Some((e.transform.apply(anicraft_engine::geom::Vec2::ZERO), t.clone())),
+                        _ => None,
+                    });
+                    if let Some((at, t)) = block {
+                        self.tool = Tool::Text;
+                        let mut te = TextEditing::new(egui::pos2(at.x, at.y), Some(anicraft_engine::doc::ElementId(id)), Some(&t), &self.s.text_style);
+                        te.sel = (0, 6);
+                        self.text_edit = Some(te);
+                    }
+                }
+            }
             Some(which @ ("textfields" | "testtext")) => {
                 // Dynamic and input text fields (ADR 0066): a score a script sets, a name field
                 // and a multiline notes field. `textfields` selects the name field for its

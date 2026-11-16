@@ -1877,9 +1877,15 @@ fn text_editor(app: &mut App, ui: &mut egui::Ui, stage_origin: Pos2, zoom: f32) 
     crate::rich_edit::watch_clipboard(app, ui.ctx(), had_focus);
     let paper = crate::theme::stage_text_colour(anicraft_engine::doc::Rgba { a: 1.0, ..app.s.doc.stage.background });
     let held = app.text_props_rect.zip(ui.ctx().input(|i| i.pointer.interact_pos())).is_some_and(|(r, p)| r.contains(p)) || egui::Popup::is_any_open(ui.ctx());
+    // As wide as the block being edited (at the zoom), so its lines break as they do.
+    let block_w = app.text_edit.as_ref().and_then(|te| te.element).and_then(|id| app.s.visible_elements().into_iter().find(|e| e.id == id)).and_then(|e| match &e.kind {
+        anicraft_engine::doc::ElementKind::Text(t) => Some(t.width.unwrap_or(t.box_width)),
+        _ => None,
+    });
     let Some(te) = app.text_edit.as_mut() else { return };
     let at = stage_origin + vec2(te.at.x * zoom, te.at.y * zoom);
     let size = (rt_size(te) * zoom).clamp(12.0, 64.0);
+    let width = 260.0f32.max(size * 8.0).max(block_w.unwrap_or(0.0) * zoom + 8.0).min(4000.0);
     let mut done = false;
     let (runs, last) = (te.runs.clone(), te.last.clone());
     egui::Area::new(egui::Id::new("stage_text_edit")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
@@ -1889,12 +1895,18 @@ fn text_editor(app: &mut App, ui: &mut egui::Ui, stage_origin: Pos2, zoom: f32) 
                 ui.fonts_mut(|f| f.layout_job(job))
             };
             let r = ui
-                .add(egui::TextEdit::multiline(&mut te.text).id(focused_id).font(crate::theme::stage_text_font(size)).desired_rows(1).desired_width(260.0f32.max(size * 8.0)).hint_text(tr!("Type text")).layouter(&mut layouter))
+                .add(egui::TextEdit::multiline(&mut te.text).id(focused_id).font(crate::theme::stage_text_font(size)).desired_rows(1).desired_width(width).background_color(paper).hint_text(tr!("Type text")).layouter(&mut layouter))
                 .named(tr!("Text on the stage"));
             if let Some(range) = egui::text_edit::TextEditState::load(ui.ctx(), r.id).and_then(|s| s.cursor.char_range()) {
                 te.sel = (range.secondary.index.0 as u32, range.primary.index.0 as u32);
             }
             if te.focus {
+                // Back in the editor (after a style was picked): the selection as it was.
+                if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), r.id) {
+                    let (a, b) = te.sel;
+                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(a as usize), egui::text::CCursor::new(b as usize))));
+                    state.store(ui.ctx(), r.id);
+                }
                 r.request_focus();
                 te.focus = false;
             } else if r.lost_focus() && !held {

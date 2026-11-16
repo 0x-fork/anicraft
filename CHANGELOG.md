@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+* **Styled text: per-character and paragraph styles** (ADR 0085, M5).
+  * Select characters while typing on the stage and set their **font, size, colour, bold,
+    italic, letter spacing, superscript or subscript, underline and link** in Properties; the
+    section shows what the selection shares and marks the rest **mixed**.
+  * **Paragraph styles**: alignment, first-line indent, left and right margins and line spacing
+    per paragraph.
+  * Typing continues the style before the caret; copy and paste inside AniCraft keeps styles,
+    text from other apps pastes plain.
+  * Each run is shaped on its own and lines wrap across runs; outlines are stored as before, so
+    older files open and save unchanged. Every export draws each colour; SVG writes links.
+    Break Apart gives one shape per colour.
+  * **Animate files** keep their `DOMTextRun` styles in one block per field (they were split into
+    a block per style before), with superscripts, indents, margins and links.
+  * Headless: `text.style`, `text.paragraph`, `text.styles`; `text.create` and `text.edit` take
+    `runs` and `paragraphs`.
+* **Floating windows open below the menu bar**: no dialog (the Custom Ease window among them) can
+  cover File, Edit and View any more.
 * **Search the user guide, and help for what you are working on** (ADR 0096, M8).
   * **Search** in every page of the bundled guide, offline: results as you type with the
     chapter, heading and a passage with your words marked; `/` goes to the field, arrows move

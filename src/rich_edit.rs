@@ -218,7 +218,8 @@ pub fn selection_rows(app: &mut App, ui: &mut egui::Ui) {
         right_margin: para.0.right_margin,
         layout_mixed: para.2,
     };
-    let r = ui.scope(|ui| {
+    // Its own ids: the block's rows may show in the same panel.
+    let r = ui.push_id("text_selection_rows", |ui| {
         let edit = crate::panels::text_style_rows(app, ui, &mut st, None, Some(&mixed));
         let more = crate::panels::text_more_rows(ui, &mut extra);
         edit.or(more)
