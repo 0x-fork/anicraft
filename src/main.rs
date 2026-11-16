@@ -75,6 +75,7 @@ mod plugin_ui_tests;
 mod plugins_ui;
 mod prefs;
 mod recent;
+mod rich_edit;
 mod rulers;
 mod scale_grid;
 mod shape_envelope;
@@ -92,6 +93,7 @@ mod timeline;
 #[cfg(target_arch = "wasm32")]
 mod web;
 mod widthtool;
+mod windows;
 mod workspaces_window;
 
 #[cfg(not(target_arch = "wasm32"))]
