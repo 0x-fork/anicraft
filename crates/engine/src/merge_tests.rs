@@ -251,3 +251,18 @@ fn a_shape_tween_morphs_the_stroke_with_the_fill() {
         }
     }
 }
+
+#[test]
+fn chaining_a_long_chain_drawn_right_to_left_does_linear_work() {
+    use anicraft_geom::{Path, Vec2, morph::chain_counted};
+    let n = 4_000;
+    let mut p = Path::default();
+    for i in (0..n).rev() {
+        let x = i as f32;
+        p.move_to(Vec2::new(x, 0.0)).line_to(Vec2::new(x + 1.0, 0.0));
+    }
+    let (c, work) = chain_counted(&p, 0.01);
+    assert!(work <= 100 * n, "{work} work for {n} segments");
+    let moves = c.cmds.iter().filter(|m| matches!(m, anicraft_geom::PathCmd::MoveTo(_))).count();
+    assert_eq!(moves, 1);
+}

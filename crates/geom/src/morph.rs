@@ -18,7 +18,7 @@
 //! is kept), as are hints whose subpaths are already paired another way.
 
 use crate::{Path, PathCmd, Vec2};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 /// A cubic segment: control points and end point (the start is the previous end).
 type Seg = [Vec2; 3];
@@ -695,8 +695,8 @@ fn chain_find(grid: &mut HashMap<(i64, i64), Vec<usize>>, slots: &[Option<Sub>],
     best
 }
 
-/// [`chain`], and the number of lookup steps it took.
-fn chain_counted(p: &Path, tol: f32) -> (Path, usize) {
+/// [`chain`], and the work it took: endpoint lookup steps plus segments moved.
+pub fn chain_counted(p: &Path, tol: f32) -> (Path, usize) {
     let (mut out, mut open): (Vec<Sub>, Vec<Sub>) = subpaths(p).into_iter().partition(|s| s.closed);
     open.reverse(); // popped in drawing order
     let end = sub_end;
@@ -718,21 +718,31 @@ fn chain_counted(p: &Path, tol: f32) -> (Path, usize) {
             slots.pop();
             steps += 1;
         }
+        // The run grows at both ends in a deque, so a prepended piece costs its own length
+        // and never moves the segments already gathered.
+        let mut segs: VecDeque<Seg> = VecDeque::from(std::mem::take(&mut cur.segs));
+        steps += segs.len();
         loop {
-            let tail = end(&cur);
+            let tail = segs.back().map_or(cur.start, |g| g[2]);
             if let Some(next) = chain_find(&mut grid, &slots, tail, tol, cell, &mut steps).and_then(|j| slots.get_mut(j)?.take()) {
                 let next = if next.start.distance(tail) <= tol { next } else { reverse(&next) };
-                cur.segs.extend(next.segs);
+                steps += next.segs.len();
+                segs.extend(next.segs);
                 continue;
             }
             if let Some(prev) = chain_find(&mut grid, &slots, cur.start, tol, cell, &mut steps).and_then(|j| slots.get_mut(j)?.take()) {
-                let mut prev = if end(&prev).distance(cur.start) <= tol { prev } else { reverse(&prev) };
-                prev.segs.extend(cur.segs);
-                cur = prev;
+                let prev = if end(&prev).distance(cur.start) <= tol { prev } else { reverse(&prev) };
+                steps += prev.segs.len();
+                for g in prev.segs.into_iter().rev() {
+                    segs.push_front(g);
+                }
+                cur.start = prev.start;
                 continue;
             }
             break;
         }
+        cur.segs = Vec::from(segs);
+        steps += cur.segs.len();
         if cur.segs.len() > 1 && end(&cur).distance(cur.start) <= tol {
             if let Some(g) = cur.segs.last_mut() {
                 g[2] = cur.start;
