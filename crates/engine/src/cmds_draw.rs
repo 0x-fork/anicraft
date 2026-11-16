@@ -891,15 +891,17 @@ fn break_apart(s: &mut Session, _: &Value) -> Result<Value> {
             objects.push(c);
             continue;
         }
-        // Text breaks apart into a shape with the same outlines.
+        // Text breaks apart into shapes with the same outlines, one per colour (ADR 0085).
         if let ElementKind::Text(t) = &e.kind
             && sel.contains(&e.id)
         {
-            let mut c = (*e).clone();
-            c.id = ElementId(s.doc.alloc_id());
-            c.kind = ElementKind::Shape(crate::cmds_text::to_shape(t));
-            fresh_ids.push(c.id);
-            out.push(Arc::new(c));
+            for shape in crate::cmds_text::to_shapes(t) {
+                let mut c = (*e).clone();
+                c.id = ElementId(s.doc.alloc_id());
+                c.kind = ElementKind::Shape(shape);
+                fresh_ids.push(c.id);
+                out.push(Arc::new(c));
+            }
             continue;
         }
         // A group breaks apart into its members (Animate's Ctrl+B on a group ungroups it).
