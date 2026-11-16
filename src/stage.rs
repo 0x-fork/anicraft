@@ -1145,7 +1145,25 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
             let (fill_colour, stroke_colour) = selection_colours(item);
 
-            pattern_mesh(&mut pattern, &fills, fill_colour, gap);
+            // Sample gradient colours across the selected fill.
+            // Solid fills retain the existing uniform-colour path.
+            if !fills.is_empty() {
+                if let Some(gradient) = SelectionGradient::new(
+                    item,
+                    &to_px.mul(&item.transform),
+                ) {
+                    gradient_pattern_mesh(
+                        &mut pattern,
+                        &fills,
+                        &gradient,
+                        gap,
+                    );
+                } else {
+                    pattern_mesh(&mut pattern, &fills, fill_colour, gap);
+                }
+            }
+
+            // Stroke rendering remains unchanged.
             pattern_mesh(&mut pattern, &strokes, stroke_colour, gap);
         }
 
@@ -1677,6 +1695,57 @@ fn selection_colours(
 }
 
 
+struct SelectionGradient {
+    shader: anicraft_engine::render::paint::Shader,
+}
+
+impl SelectionGradient {
+    fn new(
+        item: &anicraft_engine::doc::DisplayItem,
+        to_screen: &Affine,
+    ) -> Option<Self> {
+        let mut paint = item.fill.as_ref()?.clone();
+
+        if !paint.is_gradient() {
+            return None;
+        }
+
+        // Selection dots use original RGB independently of alpha.
+        for stop in paint.stops_mut()? {
+            stop.color.a = 1.0;
+        }
+
+        let shader = anicraft_engine::render::paint::Shader::new(
+            &paint,
+            to_screen,
+            &item.color.without_alpha(),
+            None,
+        );
+
+        Some(Self { shader })
+    }
+
+
+    fn colour_at(&self, p: Pos2) -> Color32 {
+        let [r, g, b, _] = self.shader.at(
+            p.x.floor() as i32,
+            p.y.floor() as i32,
+        );
+
+        let rgb = anicraft_engine::doc::Rgba::new(
+            r, g, b, 1.0,
+        );
+
+        let original = to_color32(rgb);
+
+        crate::theme::artwork_rgb(
+            255 - original.r(),
+            255 - original.g(),
+            255 - original.b(),
+        )
+    }
+}
+
 /// Animate-style selection pattern: staggered two-point dots on an
 /// eight-point repeating tile. The other cells remain transparent.
 /// Four texels per screen point keep the dot edges crisp.
@@ -1738,6 +1807,52 @@ fn pattern_mesh(
     }
 }
 
+
+fn gradient_pattern_mesh(
+    mesh: &mut egui::Mesh,
+    spans: &[Rect],
+    gradient: &SelectionGradient,
+    gap: f32,
+) {
+    // Subdivide each scanline into manageable strips.
+    // Vertex colours interpolate across each strip.
+    const STRIP_GAPS: f32 = 16.0;
+    let strip_width = gap * STRIP_GAPS;
+
+    for span in spans {
+        let mut left = span.min.x;
+
+        while left < span.max.x {
+            let right = (left + strip_width).min(span.max.x);
+            if right <= left {
+                break;
+            }
+
+            let strip = Rect::from_min_max(
+                pos2(left, span.min.y),
+                pos2(right, span.max.y),
+            );
+
+            // Reuse the existing screen-anchored texture mapping.
+            let first_vertex = mesh.vertices.len();
+            pattern_mesh(
+                mesh,
+                std::slice::from_ref(&strip),
+                Color32::WHITE,
+                gap,
+            );
+
+            // Tint each corner using the gradient at that position.
+            // egui interpolates vertex colours across the rectangle.
+            for vertex in &mut mesh.vertices[first_vertex..] {
+                vertex.color = gradient.colour_at(vertex.pos);
+            }
+
+            left = right;
+        }
+    }
+}
+
 /// Animate-style selection stipple for raw fills and strokes (ADR 0031).
 /// `m` maps the item's path to screen space; `gap` keeps dot spacing
 /// consistent in physical pixels regardless of display scaling.
@@ -1778,13 +1893,13 @@ fn selection_pattern(
         pattern_spans(&outline.flatten(&Affine::IDENTITY, 0.5), FillRule::NonZero, clip, stroke_spans, gap);
         return;
     }
+    let stroke_colour = selection_colours(item).1;
     let mut dot = |p: Pos2| {
         if clip.contains(p) && *budget > 0 {
             *budget -= 1;
-            let dark = ((p.x / gap).round() as i64 + (p.y / gap).round() as i64).rem_euclid(2) == 0;
             mesh.add_colored_rect(
                 Rect::from_center_size(p, vec2(gap * 0.5, gap * 0.5)),
-                if dark { T.selection } else { Color32::WHITE },
+                stroke_colour,
             );
         }
         *budget > 0
@@ -2148,6 +2263,103 @@ mod pattern_tests {
         assert_eq!(mesh.vertices.last().map(|v| v.uv), Some(pos2(1.0, 0.5)));
     }
 
+    /// Hairline dots should invert the stroke's RGB, not alternate theme colours.
+    #[test]
+    fn hairline_strokes_use_inverted_stroke_colour() {
+        use anicraft_engine::doc::Rgba;
+
+        let mut shape = item(
+            Path::rect(100.0, 100.0, 200.0, 200.0),
+            false,
+            Some(0.5),
+        );
+
+        // A blue stroke should have orange selection dots.
+        shape.stroke.as_mut().unwrap().color =
+            Rgba::new(0.0, 102.0 / 255.0, 1.0, 1.0);
+
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(400.0, 400.0),
+        );
+        let gap = dot_gap_points(2.0);
+        let (mut fills, mut strokes, mut mesh, mut budget) = (
+            Vec::new(),
+            Vec::new(),
+            egui::Mesh::default(),
+            MAX_DOTS,
+        );
+
+        selection_pattern(
+            &mut fills,
+            &mut strokes,
+            &mut mesh,
+            &shape,
+            &Affine::IDENTITY,
+            clip,
+            &mut budget,
+            gap,
+        );
+
+        assert!(fills.is_empty() && strokes.is_empty());
+        assert!(!mesh.vertices.is_empty(), "hairline dots must be drawn");
+
+        let expected = crate::theme::artwork_rgb(255, 153, 0);
+        for vertex in &mesh.vertices {
+            assert_eq!(
+                vertex.color, expected,
+                "every blue hairline dot should be orange"
+            );
+        }
+    }
+
+
+    #[test]
+    fn black_and_white_hairlines_use_opposite_dot_colours() {
+        use anicraft_engine::doc::Rgba;
+
+        let cases = [
+            (Rgba::new(0.0, 0.0, 0.0, 1.0), Color32::WHITE),
+            (Rgba::new(1.0, 1.0, 1.0, 1.0), Color32::BLACK),
+        ];
+
+        for (stroke_colour, expected) in cases {
+            let mut shape = item(
+                Path::rect(100.0, 100.0, 200.0, 200.0),
+                false,
+                Some(0.5),
+            );
+            shape.stroke.as_mut().unwrap().color = stroke_colour;
+
+            let mut fills = Vec::new();
+            let mut strokes = Vec::new();
+            let mut mesh = egui::Mesh::default();
+            let mut budget = MAX_DOTS;
+
+            selection_pattern(
+                &mut fills,
+                &mut strokes,
+                &mut mesh,
+                &shape,
+                &Affine::IDENTITY,
+                Rect::from_min_max(
+                    pos2(0.0, 0.0),
+                    pos2(400.0, 400.0),
+                ),
+                &mut budget,
+                dot_gap_points(2.0),
+            );
+
+            assert!(fills.is_empty() && strokes.is_empty());
+            assert!(!mesh.vertices.is_empty());
+
+            assert!(
+                mesh.vertices.iter().all(|v| v.color == expected),
+                "hairline dots should use the inverse stroke colour"
+            );
+        }
+    }
+
     /// The whole window, headless, with a big selected raw shape zoomed in (`--open selectzoom`):
     /// the pattern is drawn with its texture, made once for the theme's colour.
     #[test]
@@ -2324,6 +2536,491 @@ mod pattern_tests {
         assert_eq!(
             selection_colours(&shape).1,
             crate::theme::artwork_rgb(0, 255, 255),
+        );
+    }
+
+    #[test]
+    fn gradient_selection_dots_follow_local_colours() {
+        use anicraft_engine::doc::{GradientStop, Paint, Rgba};
+
+        let mut shape = item(
+            Path::rect(0.0, 0.0, 100.0, 100.0),
+            true,
+            None,
+        );
+
+        // The gradient runs from black at x=20 to white at x=80.
+        shape.fill = Some(Paint::linear(
+            Vec2::new(20.0, 50.0),
+            Vec2::new(80.0, 50.0),
+            vec![
+                GradientStop {
+                    offset: 0.0,
+                    color: Rgba::BLACK,
+                },
+                GradientStop {
+                    offset: 1.0,
+                    color: Rgba::WHITE,
+                },
+            ],
+        ));
+
+        let gradient = SelectionGradient::new(
+            &shape,
+            &Affine::IDENTITY,
+        )
+        .expect("a linear gradient should have a sampler");
+
+        // Outside the gradient endpoints, Pad retains the end colours.
+        assert_eq!(
+            gradient.colour_at(pos2(10.0, 50.0)),
+            Color32::WHITE,
+            "black artwork should have white selection dots",
+        );
+
+        assert_eq!(
+            gradient.colour_at(pos2(90.0, 50.0)),
+            Color32::BLACK,
+            "white artwork should have black selection dots",
+        );
+    }
+
+    #[test]
+    fn gradient_pattern_mesh_varies_dot_colours_across_fill() {
+        use anicraft_engine::doc::{GradientStop, Paint, Rgba};
+
+        let mut shape = item(
+            Path::rect(0.0, 0.0, 100.0, 20.0),
+            true,
+            None,
+        );
+
+        shape.fill = Some(Paint::linear(
+            Vec2::new(20.0, 10.0),
+            Vec2::new(80.0, 10.0),
+            vec![
+                GradientStop {
+                    offset: 0.0,
+                    color: Rgba::BLACK,
+                },
+                GradientStop {
+                    offset: 1.0,
+                    color: Rgba::WHITE,
+                },
+            ],
+        ));
+
+        let gradient = SelectionGradient::new(
+            &shape,
+            &Affine::IDENTITY,
+        )
+        .expect("linear gradient should have a sampler");
+
+        let spans = [
+            Rect::from_min_max(
+                pos2(0.0, 0.0),
+                pos2(100.0, GAP),
+            ),
+        ];
+
+        let mut mesh = egui::Mesh::default();
+
+        gradient_pattern_mesh(
+            &mut mesh,
+            &spans,
+            &gradient,
+            GAP,
+        );
+
+        assert!(!mesh.vertices.is_empty());
+
+        assert!(
+            mesh.vertices.iter().any(|v|
+                v.pos.x < 20.0 && v.color == Color32::WHITE
+            ),
+            "the black end should have white dots",
+        );
+
+        assert!(
+            mesh.vertices.iter().any(|v|
+                v.pos.x > 80.0 && v.color == Color32::BLACK
+            ),
+            "the white end should have black dots",
+        );
+    }
+
+    /// Gradients use smooth RGB inversion, even at middle grey.
+    /// Applying the solid-colour contrast fallback here creates
+    /// abrupt bands and triangular interpolation artifacts.
+    #[test]
+    fn grey_gradients_use_pure_rgb_inversion() {
+        use anicraft_engine::doc::{GradientStop, Paint, Rgba};
+
+        let mut shape = item(
+            Path::rect(0.0, 0.0, 100.0, 20.0),
+            true,
+            None,
+        );
+
+        let grey = Rgba::new(
+            128.0 / 255.0,
+            128.0 / 255.0,
+            128.0 / 255.0,
+            0.4,
+        );
+
+        shape.fill = Some(Paint::linear(
+            Vec2::new(0.0, 10.0),
+            Vec2::new(100.0, 10.0),
+            vec![
+                GradientStop { offset: 0.0, color: grey },
+                GradientStop { offset: 1.0, color: grey },
+            ],
+        ));
+
+        let gradient = SelectionGradient::new(
+            &shape,
+            &Affine::IDENTITY,
+        )
+        .expect("gradient sampler");
+
+        let expected = crate::theme::artwork_rgb(127, 127, 127);
+
+        assert_eq!(
+            gradient.colour_at(pos2(50.0, 10.0)),
+            expected,
+            "middle-grey gradients should use pure inversion",
+        );
+
+        let mut mesh = egui::Mesh::default();
+
+        gradient_pattern_mesh(
+            &mut mesh,
+            &[Rect::from_min_max(
+                pos2(0.0, 0.0),
+                pos2(100.0, GAP),
+            )],
+            &gradient,
+            GAP,
+        );
+
+        assert!(!mesh.vertices.is_empty());
+        assert!(
+            mesh.vertices.iter().all(|v| v.color == expected),
+            "gradient mesh must not introduce the contrast fallback",
+        );
+    }
+
+    #[test]
+    fn radial_gradient_selection_dots_follow_distance_from_centre() {
+        use anicraft_engine::doc::{GradientStop, Paint, Rgba};
+
+        let mut shape = item(
+            Path::rect(0.0, 0.0, 120.0, 120.0),
+            true,
+            None,
+        );
+
+        shape.fill = Some(Paint::radial(
+            Vec2::new(50.5, 50.5),
+            30.0,
+            vec![
+                GradientStop {
+                    offset: 0.0,
+                    color: Rgba::BLACK,
+                },
+                GradientStop {
+                    offset: 1.0,
+                    color: Rgba::WHITE,
+                },
+            ],
+        ));
+
+        let gradient = SelectionGradient::new(
+            &shape,
+            &Affine::IDENTITY,
+        )
+        .expect("radial gradient should have a sampler");
+
+        assert_eq!(
+            gradient.colour_at(pos2(50.0, 50.0)),
+            Color32::WHITE,
+            "black centre should have white dots",
+        );
+
+        assert_eq!(
+            gradient.colour_at(pos2(90.0, 50.0)),
+            Color32::BLACK,
+            "outside the white edge should have black dots",
+        );
+
+        let middle = gradient.colour_at(pos2(65.0, 50.0));
+
+        for channel in [middle.r(), middle.g(), middle.b()] {
+            assert!(
+                channel.abs_diff(128) <= 3,
+                "midpoint should use pure RGB inversion: {middle:?}",
+            );
+        }
+    }
+
+
+    #[test]
+    fn rotated_elliptical_radial_selection_follows_gradient_axes() {
+        use anicraft_engine::doc::{GradientStop, Paint, Rgba};
+
+        let mut shape = item(
+            Path::rect(-50.0, -50.0, 100.0, 100.0),
+            true,
+            None,
+        );
+
+        let mut paint = Paint::radial(
+            Vec2::ZERO,
+            20.0,
+            vec![
+                GradientStop {
+                    offset: 0.0,
+                    color: Rgba::BLACK,
+                },
+                GradientStop {
+                    offset: 1.0,
+                    color: Rgba::WHITE,
+                },
+            ],
+        );
+
+        // An ellipse twice as wide as it is tall.
+        if let Paint::Radial { matrix, .. } = &mut paint {
+            *matrix = Affine::scale(2.0, 1.0);
+        }
+        shape.fill = Some(paint);
+
+        // Rotate the ellipse 90 degrees and place its centre
+        // at screen pixel centre (150.5, 150.5).
+        let to_screen = Affine::translate(150.5, 150.5)
+            .mul(&Affine::rotate(std::f32::consts::FRAC_PI_2));
+
+        let gradient = SelectionGradient::new(&shape, &to_screen)
+            .expect("rotated elliptical gradient should have a sampler");
+
+        assert_eq!(
+            gradient.colour_at(pos2(150.0, 150.0)),
+            Color32::WHITE,
+            "the black centre should produce white dots",
+        );
+
+        // Thirty pixels down is still inside the long axis.
+        let along_long_axis = gradient.colour_at(pos2(150.0, 180.0));
+
+        for channel in [
+            along_long_axis.r(),
+            along_long_axis.g(),
+            along_long_axis.b(),
+        ] {
+            assert!(
+                channel.abs_diff(64) <= 4,
+                "unexpected colour along long axis: {along_long_axis:?}",
+            );
+        }
+
+        // Thirty pixels right is beyond the short axis.
+        assert_eq!(
+            gradient.colour_at(pos2(180.0, 150.0)),
+            Color32::BLACK,
+            "outside the short axis should produce black dots",
+        );
+    }
+
+    /// #204: even a full-screen gradient should not require
+    /// drawing individual dots across the entire selected area.
+    #[test]
+    fn large_gradient_selection_remains_span_based() {
+        use anicraft_engine::doc::{GradientStop, Paint, Rgba};
+
+        // A 4K physical-pixel viewport at 200% display scaling.
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(1920.0, 1080.0),
+        );
+        let gap = dot_gap_points(2.0);
+
+        let mut shape = item(
+            Path::rect(-100.0, -100.0, 2200.0, 1400.0),
+            true,
+            None,
+        );
+
+        shape.fill = Some(Paint::linear(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1920.0, 0.0),
+            vec![
+                GradientStop {
+                    offset: 0.0,
+                    color: Rgba::BLACK,
+                },
+                GradientStop {
+                    offset: 1.0,
+                    color: Rgba::WHITE,
+                },
+            ],
+        ));
+
+        let mut spans = Vec::new();
+
+        pattern_spans(
+            &shape.path.flatten(&Affine::IDENTITY, 0.5),
+            shape.fill_rule,
+            clip,
+            &mut spans,
+            gap,
+        );
+
+        let gradient = SelectionGradient::new(
+            &shape,
+            &Affine::IDENTITY,
+        )
+        .expect("gradient sampler");
+
+        let mut mesh = egui::Mesh::default();
+
+        gradient_pattern_mesh(
+            &mut mesh,
+            &spans,
+            &gradient,
+            gap,
+        );
+
+        // The overlay must reach the bottom of the viewport.
+        let bottom = spans.iter()
+            .fold(0.0_f32, |b, r| b.max(r.max.y));
+
+        assert_eq!(bottom, clip.bottom());
+
+        let quads = mesh.vertices.len() / 4;
+        let estimated_dots = clip.area() / (2.0 * gap * gap);
+
+        assert!(
+            estimated_dots > MAX_DOTS as f32,
+            "individual dots would exceed the dot budget",
+        );
+
+        assert!(
+            quads < MAX_DOTS,
+            "gradient mesh generated {quads} rectangles",
+        );
+
+        println!(
+            "Large gradient: {} spans, {} rectangles, {} vertices",
+            spans.len(),
+            quads,
+            mesh.vertices.len(),
+        );
+    }
+
+    #[test]
+    fn translucent_gradient_selection_dots_use_interpolated_rgb() {
+        use anicraft_engine::doc::{GradientStop, Paint, Rgba};
+
+        let mut shape = item(
+            Path::rect(0.0, 0.0, 100.0, 100.0),
+            true,
+            None,
+        );
+
+        shape.fill = Some(Paint::linear(
+            Vec2::new(0.0, 50.0),
+            Vec2::new(100.0, 50.0),
+            vec![
+                GradientStop {
+                    offset: 0.0,
+                    color: Rgba::new(1.0, 0.0, 0.0, 0.2),
+                },
+                GradientStop {
+                    offset: 1.0,
+                    color: Rgba::new(0.0, 0.0, 1.0, 0.6),
+                },
+            ],
+        ));
+
+        let gradient = SelectionGradient::new(
+            &shape,
+            &Affine::IDENTITY,
+        )
+        .expect("linear gradient should have a sampler");
+
+        let midpoint = gradient.colour_at(pos2(50.0, 50.0));
+
+        // Red-to-blue produces purple at the midpoint.
+        // Its RGB inverse should be light green.
+        // Allow a few levels for the shader's 256-entry LUT.
+        assert!(
+            midpoint.r().abs_diff(128) <= 4,
+            "unexpected red channel: {midpoint:?}"
+        );
+        assert_eq!(midpoint.g(), 255);
+        assert!(
+            midpoint.b().abs_diff(128) <= 4,
+            "unexpected blue channel: {midpoint:?}"
+        );
+
+        // Selection dots remain fully opaque regardless
+        // of the gradient stops' alpha values.
+        assert_eq!(midpoint.a(), 255);
+    }
+
+
+    #[test]
+    fn gradient_selection_dots_follow_shape_transform() {
+        use anicraft_engine::doc::{GradientStop, Paint, Rgba};
+
+        let mut shape = item(
+            Path::rect(0.0, 0.0, 100.0, 100.0),
+            true,
+            None,
+        );
+
+        shape.fill = Some(Paint::linear(
+            Vec2::new(20.0, 50.0),
+            Vec2::new(80.0, 50.0),
+            vec![
+                GradientStop {
+                    offset: 0.0,
+                    color: Rgba::BLACK,
+                },
+                GradientStop {
+                    offset: 1.0,
+                    color: Rgba::WHITE,
+                },
+            ],
+        ));
+
+        // Move the artwork in stage space.
+        shape.transform = Affine::translate(20.0, 30.0);
+
+        // The stage is also translated and zoomed 200%.
+        let view = Affine::translate(100.0, 40.0)
+            .mul(&Affine::scale(2.0, 2.0));
+
+        let to_screen = view.mul(&shape.transform);
+
+        let gradient = SelectionGradient::new(
+            &shape,
+            &to_screen,
+        )
+        .expect("transformed gradient should have a sampler");
+
+        // These are SCREEN coordinates, after both transforms.
+        assert_eq!(
+            gradient.colour_at(pos2(160.0, 200.0)),
+            Color32::WHITE,
+            "black end should produce white dots",
+        );
+
+        assert_eq!(
+            gradient.colour_at(pos2(320.0, 200.0)),
+            Color32::BLACK,
+            "white end should produce black dots",
         );
     }
 
