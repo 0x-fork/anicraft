@@ -559,7 +559,9 @@ var AniCraft = (function () {
     let out = max ? -Infinity : Infinity;
     for (const v of vals) {
       if (Number.isNaN(v)) return Number.NaN;
-      if ((max && v > out) || (!max && v < out)) out = v;
+      // Equal zeros prefer +0 for max and -0 for min, regardless of argument order.
+      if ((max && v > out) || (!max && v < out) ||
+          (v === 0 && out === 0 && Object.is(v, max ? 0 : -0))) out = v;
     }
     return out;
   }
