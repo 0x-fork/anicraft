@@ -266,6 +266,7 @@ pub fn field(el: &X, fonts: &Fonts, faces: &mut HashMap<String, FaceMatch>, repo
             box_height: layout.height,
             field: None,
             on_path: None,
+            ..TextBlock::default()
         };
         out.push(Placed { block, offset: Vec2::new(origin.x + st.left_margin, origin.y + y) });
         y += layout.lines as f32 * layout.line_height;
@@ -377,6 +378,7 @@ fn text_field(
         box_height,
         field: Some(field),
         on_path: None,
+        ..TextBlock::default()
     };
     Some(Placed { block, offset: Vec2::new(native.left().unwrap_or(0.0), native.top().unwrap_or(0.0)) })
 }
