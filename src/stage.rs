@@ -1100,21 +1100,66 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let transforming = app.tool == Tool::Transform;
     // An open envelope (ADR 0080) shows its mesh instead of boxes.
     let enveloped = crate::shape_envelope::shown(app).is_some();
-    // Selected raw shapes (ADR 0031) show Animate's dot pattern over themselves, with no box.
+    // Selected raw fills and strokes (ADRs 0031, 0041) show an
+    // Animate-style stipple overlay instead of a bounding box.
     if app.tool == Tool::Select && !preview {
-        let to_px = Affine::translate(origin.x, origin.y).mul(&Affine::scale(zoom, zoom));
-        let (mut spans, mut dots) = (Vec::new(), egui::Mesh::default());
+        let gap = dot_gap_points(ppp);
+        let to_px = Affine::translate(origin.x, origin.y)
+            .mul(&Affine::scale(zoom, zoom));
+
+        let mut pattern = egui::Mesh::default();
+        let mut dots = egui::Mesh::default();
         let mut budget = MAX_DOTS;
-        for item in app.s.display_list().items.iter().filter(|i| app.s.selection.contains(i.layer, i.element) && raw.contains(&(i.layer, i.element))) {
-            selection_pattern(&mut spans, &mut dots, item, &to_px.mul(&item.transform), canvas, &mut budget);
+        let dl = app.s.display_list();
+
+        for (index, item) in dl.items.iter().enumerate().filter(|(_, i)|
+            app.s.selection.contains(i.layer, i.element)
+                && raw.contains(&(i.layer, i.element))
+        ) {
+            // Each item needs its own spans so its colours aren't
+            // accidentally shared with other selected shapes.
+            let (mut fills, mut strokes) = (
+                Vec::new(),
+                Vec::new(),
+            );
+
+            selection_pattern(
+                &mut fills,
+                &mut strokes,
+                &mut dots,
+                item,
+                &to_px.mul(&item.transform),
+                canvas,
+                &mut budget,
+                gap,
+            );
+
+            exclude_overlying_strokes(
+                &mut fills,
+                &dl.items[index + 1..],
+                item.layer,
+                &to_px,
+                canvas,
+                gap,
+            );
+
+            let (fill_colour, stroke_colour) = selection_colours(item);
+
+            pattern_mesh(&mut pattern, &fills, fill_colour, gap);
+            pattern_mesh(&mut pattern, &strokes, stroke_colour, gap);
         }
-        if !spans.is_empty() {
-            let mut mesh = egui::Mesh::with_texture(pattern_texture(&mut app.stage_cache.pattern, ui.ctx()));
-            pattern_mesh(&mut mesh, &spans);
-            painter.add(egui::Shape::mesh(mesh));
+
+        if !pattern.vertices.is_empty() {
+            pattern.texture_id = pattern_texture(
+                &mut app.stage_cache.pattern,
+                ui.ctx(),
+            );
+            painter.add(egui::Shape::mesh(pattern));
         }
+
         painter.add(egui::Shape::mesh(dots));
     }
+
     if multi {
         let hover = pointer.filter(|p| canvas.contains(*p) && !panning && !app.modal_open() && app.palette.is_none() && matches!(app.tool, Tool::Select | Tool::Transform)).map(to_stage);
         crate::onion::draw(app, &painter, to_screen, hover, zoom);
@@ -1519,16 +1564,122 @@ fn raw_ids(app: &App) -> std::collections::HashSet<(anicraft_engine::doc::LayerI
     layers.into_iter().flat_map(|l| app.s.elements_on(l).into_iter().filter(|e| matches!(&e.kind, anicraft_engine::doc::ElementKind::Shape(sh) if sh.merge)).map(move |e| (l, e.id))).collect()
 }
 
-/// Spacing of the selection pattern's dots (points).
-const GAP: f32 = 3.0;
+/// Spacing of the selection pattern's dots in physical screen pixels.
+const GAP: f32 = 4.0;
+/// Converts the selection pattern's physical-pixel spacing
+/// into egui logical points at the current display scale.
+fn dot_gap_points(pixels_per_point: f32) -> f32 {
+    GAP / pixels_per_point.max(0.25)
+}
 /// Most single dots drawn in a frame along hairline strokes (wider strokes and fills are spans).
 const MAX_DOTS: usize = 60_000;
 /// Most pattern spans in a frame: far more than a full-screen drawing needs (a 4K view is ~720
 /// rows), so the pattern never stops part way down a shape; it only bounds a pathological one.
 const MAX_SPANS: usize = 400_000;
 
-/// The selection pattern's tile: two by two dot cells, dark and light in a checker, at four
-/// texels a point so the 1.5-point dots stay crisp. Drawn repeating, on the screen grid.
+/// Minimum contrast ratio between selected artwork and its dots.
+/// A provisional visual-design threshold, to be tested against Animate.
+const MIN_SELECTION_DOT_CONTRAST: f32 = 2.0;
+
+/// Convert an sRGB channel to linear light for luminance calculations.
+fn linear_channel(value: u8) -> f32 {
+    let c = f32::from(value) / 255.0;
+
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Relative luminance, accounting for human brightness perception.
+fn relative_luminance(rgb: Color32) -> f32 {
+    0.2126 * linear_channel(rgb.r())
+        + 0.7152 * linear_channel(rgb.g())
+        + 0.0722 * linear_channel(rgb.b())
+}
+
+/// Contrast ratio between two colours (1:1 to 21:1).
+fn contrast_ratio(a: Color32, b: Color32) -> f32 {
+    let a = relative_luminance(a);
+    let b = relative_luminance(b);
+
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+/// Maximum RGB channel spread for a colour to be treated as near-neutral.
+/// Sixteen levels out of 255 allow slightly tinted greys.
+const MAX_NEUTRAL_CHANNEL_SPREAD: u8 = 16;
+
+/// Match Animate's inverted RGB selection dots, with a contrast fallback
+/// for colours whose inverses would be difficult to distinguish.
+fn selection_dot_colour(rgb: Color32) -> Color32 {
+    let inverted = crate::theme::artwork_rgb(
+        255 - rgb.r(),
+        255 - rgb.g(),
+        255 - rgb.b(),
+    );
+
+    let brightest = rgb.r().max(rgb.g()).max(rgb.b());
+    let darkest = rgb.r().min(rgb.g()).min(rgb.b());
+    let near_neutral = brightest - darkest <= MAX_NEUTRAL_CHANNEL_SPREAD;
+
+    // Saturated complementary colours can have similar luminance
+    // despite being visually distinct. Apply the contrast fallback
+    // only to near-neutral colours.
+    if !near_neutral
+        || contrast_ratio(rgb, inverted) >= MIN_SELECTION_DOT_CONTRAST
+    {
+        return inverted;
+    }
+
+    // Animate's inversion is nearly invisible on middle grey.
+    // Choose whichever neutral colour provides greater contrast.
+    if contrast_ratio(rgb, Color32::WHITE)
+        > contrast_ratio(rgb, Color32::BLACK)
+    {
+        Color32::WHITE
+    } else {
+        Color32::BLACK
+    }
+}
+
+
+/// The selection colours of an item's fill and stroke.
+/// Solid paints use their actual RGB; other fills retain the existing
+/// selection colour until their per-pixel sampling is implemented.
+fn selection_colours(
+    item: &anicraft_engine::doc::DisplayItem,
+) -> (Color32, Color32) {
+    use anicraft_engine::doc::{Paint, Rgba};
+
+    let dot = |c: Rgba| {
+        let shown = item.color.apply(c);
+
+        // Use the original RGB independently of opacity.
+        // Color32 stores premultiplied alpha, so make it opaque
+        // BEFORE converting it to Color32.
+        let opaque = Rgba { a: 1.0, ..shown };
+        selection_dot_colour(to_color32(opaque))
+    };
+
+    let fill = match item.fill.as_ref() {
+        Some(Paint::Solid(c)) => dot(*c),
+        _ => T.selection,
+    };
+
+    let stroke = item
+        .stroke
+        .as_ref()
+        .map_or(T.selection, |s| dot(s.color));
+
+    (fill, stroke)
+}
+
+
+/// Animate-style selection pattern: staggered two-point dots on an
+/// eight-point repeating tile. The other cells remain transparent.
+/// Four texels per screen point keep the dot edges crisp.
 fn pattern_image(dark: Color32) -> egui::ColorImage {
     const PER_PT: usize = 4;
     let cell = (GAP as usize) * PER_PT;
@@ -1539,9 +1690,8 @@ fn pattern_image(dark: Color32) -> egui::ColorImage {
             let (x, y) = (i % size, i / size);
             let inside = (lo..hi).contains(&(x % cell)) && (lo..hi).contains(&(y % cell));
             match inside {
-                false => Color32::TRANSPARENT,
                 true if (x / cell + y / cell).is_multiple_of(2) => dark,
-                true => Color32::WHITE,
+                _ => Color32::TRANSPARENT,
             }
         })
         .collect();
@@ -1556,7 +1706,7 @@ fn pattern_texture(cache: &mut Option<(Color32, egui::TextureHandle)>, ctx: &egu
     {
         return t.id();
     }
-    let t = ctx.load_texture("selection-pattern", pattern_image(dark), egui::TextureOptions::NEAREST_REPEAT);
+    let t = ctx.load_texture("selection-pattern", pattern_image(Color32::WHITE), egui::TextureOptions::NEAREST_REPEAT);
     let id = t.id();
     *cache = Some((dark, t));
     id
@@ -1565,44 +1715,82 @@ fn pattern_texture(cache: &mut Option<(Color32, egui::TextureHandle)>, ctx: &egu
 /// Adds the pattern over `spans` to `mesh` (textured with [`pattern_texture`]). The texture
 /// coordinates come from screen positions, so the dots sit on a fixed screen grid and don't
 /// crawl when the view pans; a dot's centre is on a multiple of [`GAP`].
-fn pattern_mesh(mesh: &mut egui::Mesh, spans: &[Rect]) {
-    let tile = 2.0 * GAP;
-    let uv = |p: Pos2| pos2((p.x + GAP * 0.5) / tile, (p.y + GAP * 0.5) / tile);
+fn pattern_mesh(
+    mesh: &mut egui::Mesh,
+    spans: &[Rect],
+    colour: Color32,
+    gap: f32,
+) {
+    let tile = 2.0 * gap;
+    let uv = |p: Pos2| {
+        pos2(
+            (p.x + gap * 0.5) / tile,
+            (p.y + gap * 0.5) / tile,
+        )
+    };
+
     for r in spans {
-        mesh.add_rect_with_uv(*r, Rect::from_min_max(uv(r.min), uv(r.max)), Color32::WHITE);
+        mesh.add_rect_with_uv(
+            *r,
+            Rect::from_min_max(uv(r.min), uv(r.max)),
+            colour,
+        );
     }
 }
 
-/// Animate's selection look for raw shapes: fine dots over the selected fill or stroke, light and
-/// dark in a checker so they show on any colour. `m` maps the item's path to the screen. Fills
-/// and strokes wider than the dot spacing become `spans` (one rectangle per row of dots per run
-/// inside them, for the pattern texture), so a shape filling the view costs a few hundred
-/// rectangles however far it is zoomed in (#204: single dots under one budget ran out part way
-/// down a big or zoomed-in shape, and the shading stopped there). Hairline strokes get one row of
-/// dots along them in `mesh`.
-fn selection_pattern(spans: &mut Vec<Rect>, mesh: &mut egui::Mesh, item: &anicraft_engine::doc::DisplayItem, m: &Affine, clip: Rect, budget: &mut usize) {
+/// Animate-style selection stipple for raw fills and strokes (ADR 0031).
+/// `m` maps the item's path to screen space; `gap` keeps dot spacing
+/// consistent in physical pixels regardless of display scaling.
+///
+/// Fills and wide strokes produce separate scanline spans, allowing
+/// each to use its own selection colour. Hairline strokes produce
+/// individual dots along their paths.
+///
+/// Scanline spans avoid exhausting the per-frame dot budget when
+/// large shapes fill the view (#204).
+/// Overlying strokes are excluded from fill spans separately.
+#[allow(clippy::too_many_arguments)]
+fn selection_pattern(
+    fill_spans: &mut Vec<Rect>,
+    stroke_spans: &mut Vec<Rect>,
+    mesh: &mut egui::Mesh,
+    item: &anicraft_engine::doc::DisplayItem,
+    m: &Affine,
+    clip: Rect,
+    budget: &mut usize,
+    gap: f32,
+) {
     use anicraft_engine::geom::FillRule;
     if item.fill.is_some() {
-        pattern_spans(&item.path.flatten(m, 0.5), item.fill_rule, clip, spans);
+        pattern_spans(
+            &item.path.flatten(m, 0.5),
+            item.fill_rule,
+            clip,
+            fill_spans,
+            gap,
+        );
     }
     let Some(st) = &item.stroke else { return };
     let half = (st.reach() * m.mean_scale()).max(0.5);
-    if half >= GAP {
+    if half >= gap {
         // The stroke's own outline (caps, joins and dashes as drawn), filled non-zero.
         let outline = anicraft_engine::render::stroke::stroke_outline(&item.path, m, st, 0.5);
-        pattern_spans(&outline.flatten(&Affine::IDENTITY, 0.5), FillRule::NonZero, clip, spans);
+        pattern_spans(&outline.flatten(&Affine::IDENTITY, 0.5), FillRule::NonZero, clip, stroke_spans, gap);
         return;
     }
     let mut dot = |p: Pos2| {
         if clip.contains(p) && *budget > 0 {
             *budget -= 1;
-            let dark = ((p.x / GAP).round() as i64 + (p.y / GAP).round() as i64).rem_euclid(2) == 0;
-            mesh.add_colored_rect(Rect::from_center_size(p, vec2(1.5, 1.5)), if dark { T.selection } else { Color32::WHITE });
+            let dark = ((p.x / gap).round() as i64 + (p.y / gap).round() as i64).rem_euclid(2) == 0;
+            mesh.add_colored_rect(
+                Rect::from_center_size(p, vec2(gap * 0.5, gap * 0.5)),
+                if dark { T.selection } else { Color32::WHITE },
+            );
         }
         *budget > 0
     };
     // Along the stroke; segments off the screen are skipped.
-    let near = clip.expand(half + GAP);
+    let near = clip.expand(half + gap);
     for pl in &item.path.flatten(m, 0.5) {
         let n = pl.points.len();
         let segs = if pl.closed { n } else { n.saturating_sub(1) };
@@ -1615,7 +1803,7 @@ fn selection_pattern(spans: &mut Vec<Rect>, mesh: &mut egui::Mesh, item: &anicra
                 continue;
             }
             if !near.intersects(Rect::from_two_pos(pos2(a.x, a.y), pos2(c.x, c.y))) {
-                carry = (carry - len).rem_euclid(GAP);
+                carry = (carry - len).rem_euclid(gap);
                 continue;
             }
             let dir = d * (1.0 / len);
@@ -1625,7 +1813,7 @@ fn selection_pattern(spans: &mut Vec<Rect>, mesh: &mut egui::Mesh, item: &anicra
                 if !dot(pos2(p.x, p.y)) {
                     return;
                 }
-                t += GAP;
+                t += gap;
             }
             carry = t - len;
         }
@@ -1636,7 +1824,13 @@ fn selection_pattern(spans: &mut Vec<Rect>, mesh: &mut egui::Mesh, item: &anicra
 /// of dots, as rectangles one row of dots tall, clipped to `clip`. Rows are scanned with an
 /// active edge list, so the cost follows the outline's edges and the rows on screen, not the
 /// area covered.
-pub(crate) fn pattern_spans(lines: &[anicraft_engine::geom::Polyline], rule: anicraft_engine::geom::FillRule, clip: Rect, out: &mut Vec<Rect>) {
+pub(crate) fn pattern_spans(
+    lines: &[anicraft_engine::geom::Polyline],
+    rule: anicraft_engine::geom::FillRule,
+    clip: Rect,
+    out: &mut Vec<Rect>,
+    gap: f32,
+) {
     use anicraft_engine::geom::FillRule;
     // Every non-horizontal edge near the view, as (top, bottom, x at top, dx/dy, winding).
     let mut edges: Vec<(f32, f32, f32, f32, i32)> = Vec::new();
@@ -1661,8 +1855,8 @@ pub(crate) fn pattern_spans(lines: &[anicraft_engine::geom::Polyline], rule: ani
         return;
     }
     edges.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let last = edges.iter().fold(f32::NEG_INFINITY, |m, e| m.max(e.1)).min(clip.bottom() + GAP * 0.5);
-    let mut y = (edges.first().map_or(0.0, |e| e.0).max(clip.top() - GAP * 0.5) / GAP).ceil() * GAP;
+    let last = edges.iter().fold(f32::NEG_INFINITY, |m, e| m.max(e.1)).min(clip.bottom() + gap * 0.5);
+    let mut y = (edges.first().map_or(0.0, |e| e.0).max(clip.top() - gap * 0.5) / gap).ceil() * gap;
     let inside = |w: i32| match rule {
         FillRule::NonZero => w != 0,
         FillRule::EvenOdd => w % 2 != 0,
@@ -1678,7 +1872,7 @@ pub(crate) fn pattern_spans(lines: &[anicraft_engine::geom::Polyline], rule: ani
         xs.clear();
         xs.extend(active.iter().filter_map(|&i| edges.get(i)).map(|e| (e.2 + (y - e.0) * e.3, e.4)));
         xs.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let (top, bottom) = ((y - GAP * 0.5).max(clip.top()), (y + GAP * 0.5).min(clip.bottom()));
+        let (top, bottom) = ((y - gap * 0.5).max(clip.top()), (y + gap * 0.5).min(clip.bottom()));
         let (mut w, mut from) = (0, 0.0);
         for &(x, d) in &xs {
             let was = inside(w);
@@ -1694,9 +1888,140 @@ pub(crate) fn pattern_spans(lines: &[anicraft_engine::geom::Polyline], rule: ani
                 _ => {}
             }
         }
-        y += GAP;
+        y += gap;
     }
 }
+
+
+/// Keep a selected fill's stipple out of opaque strokes painted
+/// above it on the same layer. `above` is already in drawing order.
+fn exclude_overlying_strokes(
+    fills: &mut Vec<Rect>,
+    above: &[anicraft_engine::doc::DisplayItem],
+    layer: anicraft_engine::doc::LayerId,
+    to_px: &Affine,
+    clip: Rect,
+    gap: f32,
+) {
+    use anicraft_engine::geom::FillRule;
+
+    if fills.is_empty() {
+        return;
+    }
+
+    let mut occluders = Vec::new();
+
+    for item in above {
+        if item.layer != layer
+            || item.guide
+            || item.masks.is_some()
+            || item.outline.is_some()
+        {
+            continue;
+        }
+
+        let Some(stroke) = &item.stroke else {
+            continue;
+        };
+
+        // Start with opaque strokes; translucent overlap needs
+        // its own visual treatment.
+        if item.color.apply(stroke.color).a < 0.999 {
+            continue;
+        }
+
+        let m = to_px.mul(&item.transform);
+        let outline = anicraft_engine::render::stroke::stroke_outline(
+            &item.path,
+            &m,
+            stroke,
+            0.5,
+        );
+
+        pattern_spans(
+            &outline.flatten(&Affine::IDENTITY, 0.5),
+            FillRule::NonZero,
+            clip,
+            &mut occluders,
+            gap,
+        );
+    }
+
+    subtract_spans(fills, &occluders);
+}
+
+/// Remove areas covered by `occluders` from a collection of rectangles.
+/// Each overlapping rectangle may produce up to four smaller rectangles.
+fn subtract_spans(spans: &mut Vec<Rect>, occluders: &[Rect]) {
+    let mut remaining = Vec::new();
+
+    for span in spans.drain(..) {
+        let mut pieces = vec![span];
+
+        for &occluder in occluders {
+            let mut next = Vec::new();
+
+            for piece in pieces {
+                let overlap = piece.intersect(occluder);
+
+                if overlap.width() <= 0.0 || overlap.height() <= 0.0 {
+                    next.push(piece);
+                    continue;
+                }
+
+                let rect = |left, top, right, bottom| {
+                    Rect::from_min_max(
+                        pos2(left, top),
+                        pos2(right, bottom),
+                    )
+                };
+
+                // Area above the overlap.
+                if piece.top() < overlap.top() {
+                    next.push(rect(
+                        piece.left(), piece.top(),
+                        piece.right(), overlap.top(),
+                    ));
+                }
+
+                // Area below the overlap.
+                if overlap.bottom() < piece.bottom() {
+                    next.push(rect(
+                        piece.left(), overlap.bottom(),
+                        piece.right(), piece.bottom(),
+                    ));
+                }
+
+                // Area to the left, within the overlap's vertical range.
+                if piece.left() < overlap.left() {
+                    next.push(rect(
+                        piece.left(), overlap.top(),
+                        overlap.left(), overlap.bottom(),
+                    ));
+                }
+
+                // Area to the right, within the overlap's vertical range.
+                if overlap.right() < piece.right() {
+                    next.push(rect(
+                        overlap.right(), overlap.top(),
+                        piece.right(), overlap.bottom(),
+                    ));
+                }
+            }
+
+            pieces = next;
+
+            if pieces.is_empty() {
+                break;
+            }
+        }
+
+        remaining.extend(pieces);
+    }
+
+    *spans = remaining;
+}
+
 
 #[cfg(test)]
 mod pattern_tests {
@@ -1714,13 +2039,19 @@ mod pattern_tests {
         let clip = Rect::from_min_max(pos2(0.0, 0.0), pos2(3840.0, 2160.0));
         let mut spans = Vec::new();
         let big = Path::rect(-5000.0, -4000.0, 20000.0, 15000.0);
-        pattern_spans(&big.flatten(&Affine::IDENTITY, 0.5), FillRule::NonZero, clip, &mut spans);
+        pattern_spans(&big.flatten(&Affine::IDENTITY, 0.5), FillRule::NonZero, clip, &mut spans, GAP);
         let bottom = spans.iter().fold(0.0f32, |m, r| m.max(r.max.y));
         assert_eq!(bottom, clip.bottom(), "the pattern reaches the bottom of the view");
         assert!((area(&spans) - clip.area()).abs() < 1.0, "the whole view is covered: {} of {}", area(&spans), clip.area());
-        assert_eq!(spans.len(), 721, "one span per row of dots");
-        // The single-dot overlay this replaced stopped after 60 000 dots: 46 rows of 1 280.
-        assert!(clip.area() / (GAP * GAP) > 60_000.0 * 10.0);
+        assert_eq!(spans.len(), (clip.height() / GAP) as usize + 1, "one span per row of dots");
+        // A dot-by-dot renderer would exceed MAX_DOTS on this large view.
+        // In the staggered pattern, only half the GAP-sized cells contain dots.
+        // Using spans instead ensures the selection reaches the bottom of the view.
+        let estimated_dots = clip.area() / (2.0 * GAP * GAP);
+        assert!(
+            estimated_dots > MAX_DOTS as f32,
+            "a dot-by-dot renderer would exceed its budget: {estimated_dots} dots"
+        );
     }
 
     /// Holes stay unshaded (even-odd and non-zero), and the spans follow the outline.
@@ -1731,7 +2062,7 @@ mod pattern_tests {
         ring.cmds.extend(Path::rect(100.0, 100.0, 100.0, 100.0).cmds);
         for rule in [FillRule::EvenOdd, FillRule::NonZero] {
             let mut spans = Vec::new();
-            pattern_spans(&ring.flatten(&Affine::IDENTITY, 0.5), rule, clip, &mut spans);
+            pattern_spans(&ring.flatten(&Affine::IDENTITY, 0.5), rule, clip, &mut spans, GAP);
             let in_hole = spans.iter().any(|r| r.contains(pos2(150.0, 150.0)));
             assert_eq!(in_hole, rule == FillRule::NonZero, "{rule:?}: both squares wind the same way");
             assert!(spans.iter().all(|r| r.min.x >= 0.0 && r.max.x <= 300.0 && r.max.y <= 301.5));
@@ -1768,21 +2099,51 @@ mod pattern_tests {
         let clip = Rect::from_min_max(pos2(0.0, 0.0), pos2(400.0, 400.0));
         let square = || Path::rect(100.0, 100.0, 200.0, 200.0);
         let (mut spans, mut dots, mut budget) = (Vec::new(), egui::Mesh::default(), MAX_DOTS);
-        selection_pattern(&mut spans, &mut dots, &item(square(), false, Some(20.0)), &Affine::IDENTITY, clip, &mut budget);
+        let mut fills = Vec::new();
+        selection_pattern(
+            &mut fills,
+            &mut spans,
+            &mut dots,
+            &item(square(), false, Some(20.0)),
+            &Affine::IDENTITY,
+            clip,
+            &mut budget,
+            GAP,
+        );
         assert!(spans.iter().any(|r| r.min.x < 100.0) && !spans.iter().any(|r| r.contains(pos2(200.0, 200.0))), "the outline only, its outer half included");
         assert!(dots.vertices.is_empty());
-        let mut spans = Vec::new();
-        selection_pattern(&mut spans, &mut dots, &item(square(), true, Some(0.5)), &Affine::IDENTITY, clip, &mut budget);
-        assert!(spans.iter().any(|r| r.contains(pos2(200.0, 200.0))), "the fill");
+        let mut fills = Vec::new();
+        selection_pattern(&mut fills, &mut spans, &mut dots, &item(square(), false, Some(20.0)), &Affine::IDENTITY, clip, &mut budget, GAP);
+        let mut fills = Vec::new();
+        selection_pattern(&mut fills, &mut spans, &mut dots, &item(square(), true, Some(0.5)), &Affine::IDENTITY, clip, &mut budget, GAP);
+        assert!(fills.iter().any(|r| r.contains(pos2(200.0, 200.0))), "the fill");
         let n = dots.vertices.len() / 4;
-        assert!((250..=290).contains(&n), "a dot every {GAP} along the 800-long hairline: {n}");
+        assert_eq!(n, (800.0 / GAP) as usize, "a dot every {GAP} along the 800-long hairline");
         // Wholly off the view: nothing.
-        let (mut spans, mut dots) = (Vec::new(), egui::Mesh::default());
-        selection_pattern(&mut spans, &mut dots, &item(Path::rect(900.0, 900.0, 50.0, 50.0), true, Some(0.5)), &Affine::IDENTITY, clip, &mut budget);
-        assert!(spans.is_empty() && dots.vertices.is_empty());
+        let (mut fills, mut spans, mut dots) = (
+            Vec::new(),
+            Vec::new(),
+            egui::Mesh::default(),
+        );
+
+        selection_pattern(
+            &mut fills,
+            &mut spans,
+            &mut dots,
+            &item(Path::rect(900.0, 900.0, 50.0, 50.0), true, Some(0.5)),
+            &Affine::IDENTITY,
+            clip,
+            &mut budget,
+            GAP,
+        );
+
+        assert!(fills.is_empty() && spans.is_empty() && dots.vertices.is_empty());
         // The pattern mesh maps each span to the repeating tile.
         let mut mesh = egui::Mesh::default();
-        pattern_mesh(&mut mesh, &[Rect::from_min_max(pos2(-1.5, -1.5), pos2(4.5, 1.5))]);
+        pattern_mesh(&mut mesh, &[Rect::from_min_max(
+            pos2(-GAP * 0.5, -GAP * 0.5),
+            pos2(GAP * 1.5, GAP * 0.5),
+        )], Color32::WHITE, GAP);
         assert_eq!(mesh.vertices.first().map(|v| v.uv), Some(pos2(0.0, 0.0)));
         assert_eq!(mesh.vertices.last().map(|v| v.uv), Some(pos2(1.0, 0.5)));
     }
@@ -1808,22 +2169,382 @@ mod pattern_tests {
         assert_eq!(app.stage_cache.pattern.as_ref().map(|(c, t)| (*c, t.id())), first, "made once");
     }
 
-    /// The tile's dots sit on the screen grid in the old checker: dark where the row and column
-    /// numbers add up to an even number.
+    /// Match Animate's inverted colours, except where inversion has poor contrast.
     #[test]
-    fn the_pattern_tile_is_a_checker_of_dots() {
+    fn selection_dot_colour_matches_animate_with_a_midgrey_fallback() {
+        let colour = |r, g, b| selection_dot_colour(crate::theme::artwork_rgb(r, g, b));
+
+        // Adobe Animate's observed RGB inversion.
+        assert_eq!(colour(0, 0, 0), Color32::WHITE);
+        assert_eq!(colour(255, 255, 255), Color32::BLACK);
+        assert_eq!(colour(255, 0, 0), crate::theme::artwork_rgb(0, 255, 255));
+        assert_eq!(colour(0, 102, 255), crate::theme::artwork_rgb(255, 153, 0));
+
+        // Our improvement: mid-grey should remain visibly selected.
+        assert_eq!(colour(128, 128, 128), Color32::BLACK);
+        assert_eq!(colour(112, 112, 112), Color32::WHITE);
+        assert_eq!(colour(144, 144, 144), Color32::BLACK);
+
+        // A saturated blue may have a low luminance contrast with its
+        // inverse, but its complementary orange is still clearly visible.
+        assert_eq!(
+            colour(61, 139, 253),
+            crate::theme::artwork_rgb(194, 116, 2),
+        );
+
+        // Near-neutral colours should continue using the contrast fallback.
+        assert_eq!(
+            colour(128, 128, 128),
+            Color32::BLACK,
+        );
+    }
+
+
+    /// Animate's selection dots form a staggered pattern rather than a checkerboard.
+    #[test]
+    fn selection_pattern_uses_staggered_two_pixel_dots() {
         let img = pattern_image(Color32::BLUE);
         let size = img.size[0];
+
         let at = |pt: (f32, f32)| {
-            // Screen point → texel, as `pattern_mesh` maps it.
             let u = ((pt.0 + GAP * 0.5) / (2.0 * GAP)).rem_euclid(1.0);
             let v = ((pt.1 + GAP * 0.5) / (2.0 * GAP)).rem_euclid(1.0);
-            img.pixels[(v * size as f32) as usize * size + (u * size as f32) as usize]
+            img.pixels[(v * size as f32) as usize * size
+                + (u * size as f32) as usize]
         };
+
+        // Dots repeat diagonally, every four screen points.
         assert_eq!(at((0.0, 0.0)), Color32::BLUE);
-        assert_eq!(at((3.0, 0.0)), Color32::WHITE);
-        assert_eq!(at((3.0, 3.0)), Color32::BLUE);
-        assert_eq!(at((1.4, 0.0)), Color32::TRANSPARENT, "space between dots");
+        assert_eq!(at((4.0, 4.0)), Color32::BLUE);
+
+        // The other two positions in the 8x8 tile are empty.
+        assert_eq!(at((4.0, 0.0)), Color32::TRANSPARENT);
+        assert_eq!(at((0.0, 4.0)), Color32::TRANSPARENT);
+
+        // A dot occupies two screen points, not the full cell.
+        assert_eq!(at((2.0, 0.0)), Color32::TRANSPARENT);
+    }
+
+    /// The same white-dot texture can be tinted for different artwork colours.
+    #[test]
+    fn pattern_mesh_accepts_a_dot_colour() {
+        let mut mesh = egui::Mesh::default();
+        let blue = crate::theme::artwork_rgb(0, 102, 255);
+        let expected = selection_dot_colour(blue);
+
+        pattern_mesh(
+            &mut mesh,
+            &[Rect::from_min_max(pos2(0.0, 0.0), pos2(8.0, 8.0))],
+            expected,
+            GAP,
+        );
+
+        assert_eq!(mesh.vertices.len(), 4);
+        assert!(mesh.vertices.iter().all(|v| v.color == expected));
+    }
+
+    #[test]
+    fn fill_and_stroke_have_separate_pattern_spans() {
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(400.0, 400.0),
+        );
+
+        let shape = item(
+            Path::rect(100.0, 100.0, 200.0, 200.0),
+            true,
+            Some(20.0),
+        );
+
+        let (mut fills, mut strokes, mut dots, mut budget) = (
+            Vec::new(),
+            Vec::new(),
+            egui::Mesh::default(),
+            MAX_DOTS,
+        );
+
+        selection_pattern(
+            &mut fills,
+            &mut strokes,
+            &mut dots,
+            &shape,
+            &Affine::IDENTITY,
+            clip,
+            &mut budget,
+            GAP,
+        );
+
+        assert!(
+            fills.iter().any(|r| r.contains(pos2(200.0, 200.0))),
+            "fill covers the centre"
+        );
+
+        assert!(
+            strokes.iter().any(|r| r.min.x < 100.0),
+            "stroke extends outside the fill boundary"
+        );
+
+        assert!(
+            !strokes.iter().any(|r| r.contains(pos2(200.0, 200.0))),
+            "stroke pattern does not cover the fill's centre"
+        );
+    }
+
+    #[test]
+    fn solid_fills_and_strokes_get_independent_selection_colours() {
+        use anicraft_engine::doc::{ColorTransform, Paint, Rgba};
+
+        let mut shape = item(
+            Path::rect(100.0, 100.0, 200.0, 200.0),
+            true,
+            Some(20.0),
+        );
+
+        // 25%-opaque blue fill, black stroke.
+        shape.fill = Some(Paint::Solid(Rgba::new(
+            0.0, 102.0 / 255.0, 1.0, 0.25,
+        )));
+
+        let (fill, stroke) = selection_colours(&shape);
+        assert_eq!(fill, crate::theme::artwork_rgb(255, 153, 0));
+        assert_eq!(stroke, Color32::WHITE);
+
+        // A different fill must get a different dot colour.
+        shape.fill = Some(Paint::Solid(Rgba::new(1.0, 0.0, 0.0, 1.0)));
+        assert_eq!(
+            selection_colours(&shape).0,
+            crate::theme::artwork_rgb(0, 255, 255),
+        );
+
+        // Instance colour effects must also affect the dot colour.
+        shape.color = ColorTransform::tint(
+            Rgba::new(1.0, 0.0, 0.0, 1.0),
+            1.0,
+        );
+        assert_eq!(
+            selection_colours(&shape).1,
+            crate::theme::artwork_rgb(0, 255, 255),
+        );
+    }
+
+    #[test]
+    fn selection_dot_spacing_accounts_for_display_scaling() {
+        assert_eq!(dot_gap_points(1.0), 4.0);
+        assert_eq!(dot_gap_points(2.0), 2.0);
+        assert!((dot_gap_points(1.25) - 3.2).abs() < 0.00001);
+    }
+
+    /// One texture tile should cover eight physical pixels at any display scale.
+    #[test]
+    fn pattern_mesh_respects_display_scaling() {
+        for ppp in [1.0, 2.0] {
+            let gap = dot_gap_points(ppp);
+            let mut mesh = egui::Mesh::default();
+
+            pattern_mesh(
+                &mut mesh,
+                &[Rect::from_min_max(
+                    pos2(-gap * 0.5, -gap * 0.5),
+                    pos2(gap * 1.5, gap * 0.5),
+                )],
+                Color32::WHITE,
+                gap,
+            );
+
+            assert_eq!(
+                mesh.vertices.first().map(|v| v.uv),
+                Some(pos2(0.0, 0.0)),
+            );
+            assert_eq!(
+                mesh.vertices.last().map(|v| v.uv),
+                Some(pos2(1.0, 0.5)),
+            );
+        }
+    }
+
+    #[test]
+    fn pattern_spans_cover_the_view_at_different_display_scales() {
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(400.0, 400.0),
+        );
+        let big = Path::rect(-100.0, -100.0, 600.0, 600.0);
+        let lines = big.flatten(&Affine::IDENTITY, 0.5);
+
+        for ppp in [1.0, 2.0] {
+            let gap = dot_gap_points(ppp);
+            let mut spans = Vec::new();
+
+            pattern_spans(
+                &lines,
+                FillRule::NonZero,
+                clip,
+                &mut spans,
+                gap,
+            );
+
+            assert_eq!(
+                spans.len(),
+                (clip.height() / gap) as usize + 1,
+                "one row every {gap} points at {ppp}x scaling"
+            );
+
+            assert!(
+                (area(&spans) - clip.area()).abs() < 1.0,
+                "the pattern covers the entire view at {ppp}x"
+            );
+        }
+    }
+
+    /// A selected raw fill must not stipple an unselected stroke
+    /// painted over it. Raw fills and strokes are separate elements.
+    #[test]
+    fn selected_fill_excludes_an_overlying_stroke() {
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(400.0, 400.0),
+        );
+
+        // Two separate elements sharing the same outline.
+        let fill = item(
+            Path::rect(100.0, 100.0, 200.0, 200.0),
+            true,
+            None,
+        );
+
+        let stroke = item(
+            Path::rect(100.0, 100.0, 200.0, 200.0),
+            false,
+            Some(32.0),
+        );
+
+        let mut fills = Vec::new();
+        let mut ignored_strokes = Vec::new();
+        let mut dots = egui::Mesh::default();
+        let mut budget = MAX_DOTS;
+
+        selection_pattern(
+            &mut fills,
+            &mut ignored_strokes,
+            &mut dots,
+            &fill,
+            &Affine::IDENTITY,
+            clip,
+            &mut budget,
+            GAP,
+        );
+
+        let mut ignored_fills = Vec::new();
+        let mut strokes = Vec::new();
+
+        selection_pattern(
+            &mut ignored_fills,
+            &mut strokes,
+            &mut dots,
+            &stroke,
+            &Affine::IDENTITY,
+            clip,
+            &mut budget,
+            GAP,
+        );
+
+        let near_edge = pos2(108.0, 200.0);
+        let centre = pos2(200.0, 200.0);
+
+        let contains = |spans: &[Rect], p: Pos2| {
+            spans.iter().any(|r| r.contains(p))
+        };
+
+        // Confirm the problematic overlap exists initially.
+        assert!(contains(&fills, near_edge));
+        assert!(contains(&strokes, near_edge));
+
+        // Remove the area covered by the overlying stroke.
+        subtract_spans(&mut fills, &strokes);
+
+        // The fill should no longer stipple the black stroke.
+        assert!(
+            !contains(&fills, near_edge),
+            "fill stipple must stop at the stroke's inner edge"
+        );
+
+        // But the interior of the fill must remain selected.
+        assert!(
+            contains(&fills, centre),
+            "fill stipple must remain visible in the centre"
+        );
+    }
+
+    #[test]
+    fn overlying_strokes_clip_fills_only_on_the_same_layer() {
+        use anicraft_engine::doc::LayerId;
+
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(400.0, 400.0),
+        );
+
+        let fill = item(
+            Path::rect(100.0, 100.0, 200.0, 200.0),
+            true,
+            None,
+        );
+
+        let stroke = item(
+            Path::rect(100.0, 100.0, 200.0, 200.0),
+            false,
+            Some(32.0),
+        );
+
+        let make_fills = || {
+            let mut spans = Vec::new();
+            pattern_spans(
+                &fill.path.flatten(&Affine::IDENTITY, 0.5),
+                fill.fill_rule,
+                clip,
+                &mut spans,
+                GAP,
+            );
+            spans
+        };
+
+        let contains = |spans: &[Rect], point: Pos2| {
+            spans.iter().any(|r| r.contains(point))
+        };
+
+        let edge = pos2(108.0, 200.0);
+        let centre = pos2(200.0, 200.0);
+
+        // An overlying stroke excludes the covered part of the fill.
+        let mut fills = make_fills();
+        exclude_overlying_strokes(
+            &mut fills,
+            std::slice::from_ref(&stroke),
+            fill.layer,
+            &Affine::IDENTITY,
+            clip,
+            GAP,
+        );
+
+        assert!(!contains(&fills, edge));
+        assert!(contains(&fills, centre));
+
+        // A stroke on another layer is not treated as part of
+        // this raw drawing's fill/stroke boundary.
+        let mut other_layer = stroke;
+        other_layer.layer = LayerId(1);
+
+        let mut fills = make_fills();
+        exclude_overlying_strokes(
+            &mut fills,
+            &[other_layer],
+            fill.layer,
+            &Affine::IDENTITY,
+            clip,
+            GAP,
+        );
+
+        assert!(contains(&fills, edge));
     }
 }
 
