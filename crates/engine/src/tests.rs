@@ -610,6 +610,12 @@ fn panic_hunt_every_command() {
         json!({"id": 3, "cmd": 1, "slot": 2, "dx": 1e30, "dy": 0, "x": 30, "y": 30, "to_x": 31, "to_y": 30, "with": [[30, 30], [1e30, 0]]}),
         json!({"id": 5, "cmd": u64::MAX, "slot": 9, "dx": 1, "dy": 1, "with": "x", "x0": 0, "y0": 0, "x1": 1e9, "y1": 1e9}),
         json!({"id": 4, "cmd": 2, "slot": 1, "dx": -3, "dy": 2, "x": 60, "y": 60, "to_x": 61, "to_y": 61, "with": [[60, 60], [30, 90], [90, 30]], "merge": false}),
+        // Styled text (ADR 0085): thousands of runs, hostile sizes, ranges and links.
+        json!({"text": "ab
+cd", "start": 1, "end": 99_999, "runs": (0..12_000).map(|i| json!({"chars": i % 3, "size": 10 + i % 5})).collect::<Vec<_>>(), "paragraphs": [{"indent": 1e9}], "shift": "superscript", "url": "javascript:x", "underline": "y"}),
+        json!({"start": u64::MAX, "end": 0, "size": 12, "shift": "sub", "runs": "x", "paragraphs": 3}),
+        json!({"text": "Hi
+there", "runs": [{"chars": 1, "bold": true, "shift": "superscript", "color": "#ff0000", "url": "https://a.b"}, {"chars": u32::MAX, "size": 2000, "letter_spacing": -1000}], "paragraphs": [{"align": "right", "left_margin": 1000, "right_margin": 1000}, {"indent": -1000}, {}], "start": 0, "end": 1, "underline": true, "indent": -1000}),
         // Kept scripts (ADR 0013 tier 1): odd text, unknown languages, class names that aren't.
         json!({"text": "\u{0}\r\n]]>\u{202e}stop();", "language": "other", "class": "a.b", "base": "c", "symbol": 1}),
         json!({"text": "x".repeat(1 << 20), "language": 3, "class": "not a class", "base": ""}),

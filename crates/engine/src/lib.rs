@@ -1196,6 +1196,8 @@ mod view_tests;
 #[cfg(test)]
 mod path_text_tests;
 #[cfg(test)]
+mod rich_text_tests;
+#[cfg(test)]
 mod group_tests;
 #[cfg(test)]
 mod swatch_tests;
