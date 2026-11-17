@@ -509,6 +509,9 @@ pub struct App {
     pub me_vscroll: f32,
     /// Colour effect styles the Motion Editor lists besides those the tween uses (ADR 0056).
     pub me_styles: Vec<anicraft_engine::doc::ColorStyle>,
+    /// The filter colours whose channels the Motion Editor lists (ADR 0099): filter slot and
+    /// colour. View state; it starts afresh on another span.
+    pub me_open: Vec<(u8, anicraft_engine::doc::FilterColor)>,
     /// The frame grid was clicked more recently than the stage: Ctrl+X/C/V act on frames.
     pub timeline_focus: bool,
     /// A destructive command waiting for the user's decision (ADR 0004).
@@ -686,6 +689,7 @@ impl App {
         session.recent = prefs.recent.clone();
         session.brushes = prefs.brushes.clone();
         session.filter_presets = prefs.filter_presets.clone();
+        session.filter_presets.restore_hidden(&prefs.filter_presets_hidden);
         // Whether rulers, grid and guides show and snap carries over between sessions (ADR 0076).
         session.aids = prefs.aids;
         // The editor draws as Animate does: merge drawing, until Object Drawing (J) is switched on.
@@ -782,6 +786,7 @@ impl App {
             me_drag: None,
             me_vscroll: 0.0,
             me_styles: Vec::new(),
+            me_open: Vec::new(),
             timeline_focus: false,
             confirm: None,
             skip_confirm: HashSet::new(),
@@ -2738,6 +2743,56 @@ impl App {
                     self.me_vscroll = 6.0;
                     self.run("timeline.goto", json!({"frame": mid / 2}));
                     let _ = self.s.execute("edit.deselect", &json!({}));
+                }
+            }
+            Some("motioncolour") => {
+                // A glow's colour tweening in the Motion Editor (ADR 0099): the Star becomes a
+                // movie clip with a glow that goes from gold to magenta and is knocked out for
+                // the last third; the editor lists the colour's channels and shows the red one.
+                self.run("layer.select", json!({"index": 1}));
+                self.run("timeline.goto", json!({"frame": 0}));
+                self.run("edit.select_all", json!({}));
+                self.run("symbol.set_kind", json!({"kind": "movie_clip"}));
+                self.run("element.set_filters", json!({"filters": [{"type": "glow", "color": "#ffd54a", "blur_x": 18, "blur_y": 18, "strength": 2, "quality": 2}]}));
+                if self.run("timeline.create_motion_tween", json!({"frame": 0})).is_some() {
+                    let frames = self.s.active_layer().and_then(|l| l.keyframes.first()).map_or(24, |k| k.duration);
+                    let (mid, end) = (frames / 2, frames.saturating_sub(1));
+                    self.run("motion.set_key", json!({"property": "filter.0.color", "frame": mid, "color": "#ff3ea5"}));
+                    self.run("motion.set_key", json!({"property": "filter.0.color", "frame": end, "color": "#5b8cff"}));
+                    self.run("motion.set_ease", json!({"property": "filter.0.color", "frame": 1, "easing": "CubicOut"}));
+                    self.run("motion.set_key", json!({"property": "filter.0.knockout", "frame": end.saturating_sub(frames / 3), "value": 1}));
+                    self.s.mark_saved();
+                    self.show_panel(crate::dock::Panel::MotionEditor);
+                    // The colour's channels listed (the editor starts a span with them closed).
+                    let start = self.s.active_layer().and_then(|l| l.keyframes.first()).map_or(0, |k| k.start);
+                    self.me_sel_at = (self.s.layer.0, start);
+                    self.me_open = vec![(0, anicraft_engine::doc::FilterColor::Color)];
+                    self.me_prop = anicraft_engine::doc::Property::from_key("filter.0.color_red").unwrap_or(anicraft_engine::doc::Property::X);
+                    self.me_key = Some(0);
+                    // The filter rows in view.
+                    self.me_vscroll = 7.0;
+                    self.run("timeline.goto", json!({"frame": mid / 2}));
+                    let _ = self.s.execute("edit.deselect", &json!({}));
+                }
+            }
+            Some("textshadow") => {
+                // A dynamic text field with a drop shadow and a glow switched off, selected:
+                // Properties › Filters lists them on text as on a movie clip (ADR 0099), and the
+                // stage draws the field (box, border and text) through them.
+                if self.run("text.create", json!({"text": "Score 0042", "type": "dynamic", "x": 760, "y": 520, "size": 64, "bold": true, "color": "#1b2a4a"})).is_some() {
+                    self.run("text.field", json!({"border": true, "background": true, "background_color": "#fff6d8"}));
+                    self.run("instance.set_name", json!({"name": "score_txt"}));
+                    self.run(
+                        "element.set_filters",
+                        json!({"filters": [
+                            {"type": "drop_shadow", "blur_x": 12, "blur_y": 12, "distance": 14, "strength": 0.6, "quality": 2, "color": "#1b2a4a"},
+                            {"type": "glow", "blur_x": 8, "blur_y": 8, "color": "#ff3ea5", "enabled": false},
+                        ]}),
+                    );
+                    for p in [crate::dock::Panel::Align, crate::dock::Panel::Library, crate::dock::Panel::MovieExplorer, crate::dock::Panel::History] {
+                        self.dock.close(p);
+                    }
+                    self.s.mark_saved();
                 }
             }
             Some("motionstretch") => {

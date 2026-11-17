@@ -1172,6 +1172,55 @@ fn gpu_matches_the_oracle_on_the_filtered_sample() {
 }
 
 
+/// ADR 0099: text with filters reaches the renderers as a filtered group like a movie clip's
+/// (no pass changed), so the GPU stage draws it as the oracle does: static text with a bevel,
+/// and a half-transparent dynamic field (box, clipped text and border) with a shadow and a
+/// glow.
+#[test]
+fn gpu_matches_the_oracle_on_filtered_text() {
+    use anicraft_doc::{Filter as F, FilterSide, TextBlock, TextField, TextKind};
+    let Some(g) = gpu() else { return };
+    let mut glyphs = Path::ellipse(30.0, 22.0, 18.0, 14.0);
+    glyphs.cmds.extend(Path::rect(56.0, 8.0, 14.0, 30.0).cmds);
+    glyphs.cmds.extend(Path::rect(78.0, 8.0, 60.0, 9.0).cmds);
+    let block = |field: Option<TextField>, filters: Vec<F>| TextBlock {
+        text: "Hi".into(),
+        font: "Test".into(),
+        size: 30.0,
+        bold: false,
+        italic: false,
+        color: Rgba::new(0.1, 0.2, 0.5, 1.0),
+        align: Default::default(),
+        letter_spacing: 0.0,
+        line_spacing: 0.0,
+        width: None,
+        outline: Arc::new(glyphs.clone()),
+        box_width: 120.0,
+        box_height: 44.0,
+        field,
+        on_path: None,
+        filters: filters.into_iter().map(anicraft_doc::FilterEntry::from).collect(),
+        ..TextBlock::default()
+    };
+    let mut field = TextField::new(TextKind::Dynamic);
+    (field.border, field.background, field.background_color) = (true, true, Rgba::new(1.0, 0.95, 0.8, 1.0));
+    let shadow = F::DropShadow { blur_x: 6.0, blur_y: 6.0, strength: 0.8, quality: 2, angle: 45.0, distance: 8.0, color: Rgba::BLACK, inner: false, knockout: false, hide_object: false };
+    let glow = F::Glow { blur_x: 10.0, blur_y: 10.0, strength: 1.5, quality: 2, color: Rgba::new(1.0, 0.3, 0.1, 1.0), inner: false, knockout: false };
+    let bevel = F::Bevel { blur_x: 4.0, blur_y: 4.0, strength: 1.2, quality: 2, angle: 45.0, distance: 3.0, shadow_color: Rgba::BLACK, highlight_color: Rgba::WHITE, side: FilterSide::Inner, knockout: false };
+    let mut doc = anicraft_doc::Document { stage: anicraft_doc::Stage { width: 220, height: 160, fps: 24.0, background: Rgba::new(0.9, 0.95, 1.0, 1.0) }, ..Default::default() };
+    let text = |id: u64, at: (f32, f32), color: ColorEffect, block: TextBlock| Arc::new(anicraft_doc::Element { id: ElementId(id), name: String::new(), transform: Affine::translate(at.0, at.1).mul(&Affine::rotate(0.08)), color, kind: ElementKind::Text(Arc::new(block)) });
+    let els = vec![text(1, (20.0, 12.0), ColorEffect::default(), block(None, vec![bevel])), text(2, (40.0, 84.0), ColorEffect::Alpha(0.5), block(Some(field), vec![shadow, glow]))];
+    if let Some(k) = Arc::make_mut(&mut doc.timeline_mut(0).layers[0]).keyframe_mut(0) {
+        k.elements = els;
+    }
+    let dl = anicraft_doc::evaluate(&doc, 0);
+    assert_eq!(dl.groups.iter().map(|g| g.filters.len()).collect::<Vec<_>>(), [1, 2], "each text is a filtered group");
+    for s in [1.0f32, 0.5, 1.7] {
+        let d = assert_parity(g, "filtered text", &dl, &View::stage(&doc, s));
+        eprintln!("filtered text at {s}: mean {:.5} / max {} / {} of {} px differ", d.mean, d.max, d.differing, d.pixels);
+    }
+}
+
 // ----- binning on the GPU (ADR 0048) ----------------------------------------------------------
 
 /// Scenes the GPU bins (no fill in a mask or a group): the analytic ones, the sample, stress
