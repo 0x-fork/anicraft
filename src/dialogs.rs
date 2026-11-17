@@ -390,7 +390,7 @@ fn preferences(app: &mut App, ctx: &egui::Context) {
     let mut about_act: Option<crate::desktop_ui::Act> = None;
     let to_about = std::mem::take(&mut app.prefs_to_about);
     let title = if crate::platform::OS == crate::platform::Os::Mac { tr!("Settings") } else { tr!("Preferences") };
-    let shown = egui::Window::new(title)
+    let shown = crate::windows::new(ctx, title)
         // An id of its own: the window keeps its place when the language changes.
         .id(egui::Id::new("prefs_window"))
         .open(&mut open)
@@ -697,7 +697,7 @@ fn licenses(app: &mut App, ctx: &egui::Context) {
     }
     let mut open = true;
     let title = tr!("Licenses & Notices");
-    let shown = egui::Window::new(title)
+    let shown = crate::windows::new(ctx, title)
         .id(egui::Id::new("licenses_window"))
         .open(&mut open)
         .collapsible(false)
@@ -850,6 +850,20 @@ fn take_key_press(ctx: &egui::Context) -> Option<(egui::Modifiers, Key)> {
     })
 }
 
+/// Opens the shortcut editor filtered to `filter` and waiting for a new key for `id` (Manage
+/// Saved Commands' Shortcut…, ADR 0097).
+pub(crate) fn shortcuts_for(app: &mut App, ctx: &egui::Context, filter: &str, id: &'static str) {
+    let state_id = egui::Id::new("shortcut_editor");
+    let mut st: SheetState = ctx.data_mut(|d| d.get_temp(state_id).unwrap_or_default());
+    st.filter = filter.to_string();
+    st.notice = None;
+    st.steal = None;
+    ctx.data_mut(|d| d.insert_temp(state_id, st));
+    app.show_shortcuts = true;
+    let replace = (!app.keymap.keys(id).is_empty()).then_some(0);
+    app.key_capture = Some(KeyCapture { id, replace });
+}
+
 fn shortcut_sheet(app: &mut App, ctx: &egui::Context) {
     if !app.show_shortcuts {
         app.key_capture = None;
@@ -890,7 +904,7 @@ fn shortcut_sheet(app: &mut App, ctx: &egui::Context) {
     let capture = app.key_capture;
     let changed = app.prefs.shortcuts.len();
     let title = tr!("Keyboard Shortcuts");
-    let shown = egui::Window::new(title)
+    let shown = crate::windows::new(ctx, title)
         .id(egui::Id::new("shortcuts_window"))
         .open(&mut open)
         .collapsible(false)

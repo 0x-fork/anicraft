@@ -512,6 +512,18 @@ pub fn stage_text_font(size: f32) -> egui::FontId {
     egui::FontId::proportional(size.clamp(12.0, 64.0))
 }
 
+/// The editor's face for a run of stage text at `size` screen pixels (within what the editor
+/// can show legibly).
+pub fn stage_text_run_font(size: f32) -> egui::FontId {
+    egui::FontId::proportional(if size.is_finite() { size.clamp(6.0, 96.0) } else { 14.0 })
+}
+
+/// A run's own colour (document data) as the editor shows it, at least faintly visible.
+pub fn stage_text_colour(c: anicraft_engine::doc::Rgba) -> Color32 {
+    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    Color32::from_rgba_unmultiplied(b(c.r), b(c.g), b(c.b), b(c.a.max(0.25)))
+}
+
 /// The typefaces embedded at build time (Inter, JetBrains Mono), for text on the stage.
 pub fn embedded_fonts() -> Vec<std::sync::Arc<[u8]>> {
     [craft_fonts::UI_FONT, craft_fonts::MONO_FONT].into_iter().flatten().map(std::sync::Arc::from).collect()

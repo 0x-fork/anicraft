@@ -168,9 +168,21 @@ pub struct TextEditing {
     /// The text element being edited, or `None` for new text.
     pub element: Option<anicraft_engine::doc::ElementId>,
     pub text: String,
-    /// The text when editing started (unchanged text commits nothing).
+    /// The text when editing started, or when its styles were last applied (unchanged text
+    /// commits nothing).
     pub original: String,
-    /// Focus the field on its first frame.
+    /// The text as the runs last saw it (a change since is followed by [`TextEditing::sync`]).
+    pub last: String,
+    /// Its styled runs and one style per paragraph (ADR 0085).
+    pub runs: Vec<anicraft_engine::doc::TextRun>,
+    pub paras: Vec<anicraft_engine::doc::ParagraphStyle>,
+    /// The selected characters (anchor, caret), as the editor last reported them.
+    pub sel: (u32, u32),
+    /// A style picked at a caret, for what is typed there next.
+    pub pending: Option<anicraft_engine::doc::CharStyle>,
+    /// Styled text being pasted this frame (copied from this editor).
+    pub paste: Option<crate::rich_edit::StyledClip>,
+    /// Focus the field on its next frame.
     pub focus: bool,
 }
 
@@ -390,6 +402,11 @@ pub struct App {
     pub library: crate::library::LibraryView,
     /// Text being typed on the stage.
     pub text_edit: Option<TextEditing>,
+    /// Styled text last copied from the stage editor (ADR 0085).
+    pub text_clip: Option<crate::rich_edit::StyledClip>,
+    /// Where Properties showed the styles of the text being typed (last frame): a click there
+    /// keeps the editor open.
+    pub text_props_rect: Option<egui::Rect>,
     /// Attach to Path is waiting for a click on a shape (ADR 0070): the text to set along it.
     pub path_pick: Option<anicraft_engine::doc::ElementId>,
     /// Font families on this computer, listed once on first need.
@@ -584,6 +601,8 @@ pub struct App {
     pub thumbs: crate::recent::Thumbs,
     /// Templates: their pictures, the user's list and the Save as Template dialog (ADR 0065).
     pub templates: crate::templates::Templates,
+    /// Saved commands (ADR 0097): the folder's list, the History panel's picks, their windows.
+    pub macros: crate::macros_ui::Macros,
 }
 
 /// How often (seconds) the system's contrast and light or dark setting are asked again (ADR 0064).
@@ -700,6 +719,8 @@ impl App {
             library_sel,
             library: Default::default(),
             text_edit: None,
+            text_clip: None,
+            text_props_rect: None,
             path_pick: None,
             font_families: None,
             polystar: PolyStarOptions::default(),
@@ -804,6 +825,7 @@ impl App {
             drop: Default::default(),
             thumbs: Default::default(),
             templates: Default::default(),
+            macros: Default::default(),
         };
         app.apply_prefs(ctx);
         app.decode_sounds();
@@ -812,6 +834,7 @@ impl App {
             app.status_err(e);
         }
         crate::plugins_ui::load_at_start(&mut app);
+        crate::macros_ui::rescan(&mut app);
         #[cfg(not(target_arch = "wasm32"))]
         crate::desktop_ui::at_start(&mut app);
         app
@@ -908,8 +931,7 @@ impl App {
         ctx.set_zoom_factor(self.prefs.ui_scale);
         theme::apply_palette(ctx, self.prefs.palette(self.system_look));
         crate::onion::refresh_colors(self);
-        self.keymap = keymap::Keymap::new(&self.prefs.shortcuts);
-        self.shortcuts = self.keymap.table();
+        self.refresh_keymap();
         let wants_system = [&self.prefs.ui_font, &self.prefs.data_font].iter().any(|f| matches!(f, prefs::FontChoice::System(_)));
         if wants_system && self.system_fonts.is_none() {
             self.scan_system_fonts();
@@ -992,6 +1014,12 @@ impl App {
 
     /// Changes preferences: applies them live and saves them.
     /// Writes the preferences as they are (a setting changed in place, such as the volume).
+    /// The shortcut map again, from the preferences and the saved commands listed (ADR 0097).
+    pub fn refresh_keymap(&mut self) {
+        self.keymap = keymap::Keymap::new(&self.prefs.shortcuts);
+        self.shortcuts = self.keymap.table();
+    }
+
     pub fn save_prefs(&mut self) {
         if self.shot.is_none()
             && let Err(e) = self.prefs.save()
@@ -1173,6 +1201,39 @@ impl App {
             }
             Some("palette") => self.palette = Some(dialogs::Palette { query: "key".into(), ..Default::default() }),
             Some("shortcuts") => self.show_shortcuts = true,
+            Some("savecommand") | Some("managecommands") => {
+                // Saved commands (ADR 0097): three edits on the sample's selection, picked in the
+                // History panel with Save As Command open; or a few saved commands, managed.
+                self.tool = Tool::Select;
+                self.run("edit.select_all", json!({}));
+                self.run("modify.rotate_cw", json!({}));
+                self.run("element.set_color_effect", json!({"style": "alpha", "alpha": 60}));
+                self.run("element.translate", json!({"dx": 24, "dy": -12}));
+                if !self.panel_visible(crate::dock::Panel::History) {
+                    self.toggle_panel(crate::dock::Panel::History);
+                }
+                let n = self.s.history_len();
+                for i in n.saturating_sub(3)..n {
+                    crate::macros_ui::pick(self, i, true, false);
+                }
+                if which == Some("savecommand") {
+                    crate::macros_ui::open_save(self);
+                    if let Some(d) = self.macros.save.as_mut() {
+                        d.name = "Turn, Fade and Nudge".into(); // i18n-exempt: a sample name a user would type
+                    }
+                } else if let Some(folder) = crate::macros_ui::folder(self) {
+                    let f = folder.display().to_string();
+                    // i18n-exempt: sample names a user would type
+                    for (name, steps) in [("Turn, Fade and Nudge", json!([n.saturating_sub(3), n.saturating_sub(2), n.saturating_sub(1)])), ("Quarter Turn", json!([n.saturating_sub(3)])), ("Fade to 60 %", json!([n.saturating_sub(2)]))] {
+                        let _ = self.s.execute("macro.save", &json!({"folder": f, "name": name, "history": steps, "confirm": true}));
+                    }
+                    crate::macros_ui::clear_picks(self);
+                    // i18n-exempt: a sample name
+                    let id = crate::keymap::macro_id("Quarter Turn");
+                    self.prefs.shortcuts.insert(id, vec!["Ctrl+Alt+R".into()]);
+                    crate::macros_ui::open_manage(self);
+                }
+            }
             Some("lastscene") => {
                 let last = self.s.doc.scenes.len().saturating_sub(1);
                 self.run("scene.select", json!({"scene": last}));
@@ -1680,6 +1741,31 @@ impl App {
                     && let Some(m) = mask
                 {
                     crate::layer_props::open(self, Some(anicraft_engine::doc::LayerId(m)));
+                }
+            }
+            Some("richtext") => {
+                // Styled text (ADR 0085): a title with bold, coloured and superscript runs and a
+                // centred paragraph, open for typing with a word selected, its style in
+                // Properties.
+                self.perform("file.new", json!({"width": 640, "height": 400}));
+                // i18n-exempt: document content
+                let made = self.run("text.create", json!({"text": "Energy E = mc2\nStyled runs in one block", "x": 60, "y": 90, "size": 44, "color": "#264653", "width": 520}));
+                if let Some(id) = made.and_then(|v| v["element"].as_u64()) {
+                    self.run("text.style", json!({"start": 0, "end": 6, "bold": true, "color": "#e76f51"}));
+                    self.run("text.style", json!({"start": 13, "end": 14, "shift": "superscript"}));
+                    self.run("text.style", json!({"start": 15, "end": 39, "size": 26, "italic": true, "color": "#2a9d8f"}));
+                    self.run("text.style", json!({"start": 22, "end": 26, "underline": true, "url": "https://example.org"}));
+                    self.run("text.paragraph", json!({"start": 15, "end": 39, "align": "center"}));
+                    let block = self.s.visible_elements().into_iter().find(|e| e.id.0 == id).and_then(|e| match &e.kind {
+                        anicraft_engine::doc::ElementKind::Text(t) => Some((e.transform.apply(anicraft_engine::geom::Vec2::ZERO), t.clone())),
+                        _ => None,
+                    });
+                    if let Some((at, t)) = block {
+                        self.tool = Tool::Text;
+                        let mut te = TextEditing::new(egui::pos2(at.x, at.y), Some(anicraft_engine::doc::ElementId(id)), Some(&t), &self.s.text_style);
+                        te.sel = (0, 6);
+                        self.text_edit = Some(te);
+                    }
                 }
             }
             Some(which @ ("textfields" | "testtext")) => {
@@ -2728,7 +2814,14 @@ impl App {
 
     /// The single entry point for user-initiated commands: asks first when the engine says the
     /// command needs confirmation (ADR 0004), otherwise runs it.
-    pub fn request(&mut self, id: &str, params: Value) {
+    pub fn request(&mut self, id: &str, mut params: Value) {
+        // A saved command from a file goes into the user's commands folder (ADR 0097).
+        if id == "macro.import"
+            && params.get("folder").is_none()
+            && let (Some(o), Some(f)) = (params.as_object_mut(), crate::macros_ui::folder(self))
+        {
+            o.insert("folder".into(), json!(f.display().to_string()));
+        }
         if let Some(c) = self.s.confirmation(id, &params)
             && (c.irreversible || !self.skip_confirm.contains(id))
         {
@@ -2933,6 +3026,7 @@ impl App {
                 });
             }
             "plugin.run" | "plugin.install" | "plugin.remove" | "plugin.reload" => crate::plugins_ui::status(self, id, v),
+            id if id.starts_with("macro.") => crate::macros_ui::done(self, id, v),
             "timeline.remove_frame" => {
                 let n = v["removed"].as_u64().unwrap_or(1);
                 self.status_ok(if n == 1 { tr!("Removed frame — {undo} to undo", undo = self.undo_key()).to_string() } else { trn!("Removed {n} frame — {undo} to undo", "Removed {n} frames — {undo} to undo", n, undo = self.undo_key()) });
@@ -3021,6 +3115,16 @@ impl App {
             self.show_plugins = true;
             return;
         }
+        if id == "macro.list" {
+            // Commands › Manage Saved Commands (ADR 0097; headless, the command lists them).
+            crate::macros_ui::open_manage(self);
+            return;
+        }
+        if id == "macro.save" {
+            // Save As Command, for the steps picked in the History panel.
+            crate::macros_ui::open_save(self);
+            return;
+        }
         if id == "layer.set_properties" {
             // Modify › Timeline › Layer Properties: the dialog for the active layer.
             crate::layer_props::open(self, None);
@@ -3079,6 +3183,9 @@ impl App {
             "file.import_to_library" => Some((tr_noop!("Import to library (WAV, OGG or MP3 sound; PNG or JPEG image)"), "path", "sound.wav".to_string())),
             "file.import" => Some((tr_noop!("Import to stage (SVG, PNG or JPEG; WAV, OGG or MP3 onto a new layer)"), "path", "drawing.svg".to_string())),
             "plugin.install" => Some((tr_noop!("Install plug-in (.wasm file)"), "path", "plugin.wasm".to_string())),
+            // Saved commands (ADR 0097): run a file, or copy one into your commands.
+            "macro.run" => Some((tr_noop!("Run a saved command (a .json file)"), "path", "command.json".to_string())),
+            "macro.import" => Some((tr_noop!("Add a saved command (a .json file)"), "path", "command.json".to_string())),
             // A brush set (ADR 0068): your brushes as a small JSON file.
             "brush.preset_export" => Some((tr_noop!("Export your brushes (a brush set file)"), "path", "brushes.json".to_string())),
             "brush.preset_import" => Some((tr_noop!("Import brushes (a brush set file)"), "path", "brushes.json".to_string())),
@@ -3091,7 +3198,7 @@ impl App {
             _ => None,
         };
         if let Some((title, key, text)) = prompt {
-            let is_file = matches!(key, "path" | "dir") && (id.starts_with("file.") || matches!(id, "plugin.install" | "brush.preset_export" | "brush.preset_import" | "filter.preset_export" | "filter.preset_import" | "swatch.export" | "swatch.import"));
+            let is_file = matches!(key, "path" | "dir") && (id.starts_with("file.") || matches!(id, "plugin.install" | "macro.run" | "macro.import" | "brush.preset_export" | "brush.preset_import" | "filter.preset_export" | "filter.preset_import" | "swatch.export" | "swatch.import"));
             if is_file && platform::WEB && platform::reads_file(id) {
                 // The browser's file picker (ADR 0036). The file arrives on a later frame
                 // (`open_picked`); a save or export asks for the download's name below.
@@ -3426,6 +3533,8 @@ impl App {
                 "view.brush_smaller" => crate::brushtool::resize(self, false),
                 "view.brush_larger" => crate::brushtool::resize(self, true),
                 id if id.starts_with("tool.") => tool = keymap::tool_for(id).or(tool),
+                // A saved command's own key (ADR 0097).
+                id if keymap::macro_name(id).is_some() => crate::macros_ui::run_saved(self, keymap::macro_name(id).unwrap_or("")),
                 _ => self.invoke(id),
             }
         }
@@ -3513,7 +3622,7 @@ impl App {
         let mut submit = false;
         let mut cancel = false;
         let title = crate::i18n::t(p.title);
-        egui::Window::new(title).id(egui::Id::new(("prompt", p.title))).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, -80.0]).show(ctx, |ui| {
+        crate::windows::new(ctx, title).id(egui::Id::new(("prompt", p.title))).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, -80.0]).show(ctx, |ui| {
             ui.set_min_width(360.0);
             let r = ui.add(egui::TextEdit::singleline(&mut p.text).desired_width(f32::INFINITY)).named(title);
             if p.focus {
@@ -3550,7 +3659,7 @@ impl App {
 
     fn about_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_about;
-        let shown = egui::Window::new(tr!("About AniCraft")).id(egui::Id::new("about_window")).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+        let shown = crate::windows::new(ctx, tr!("About AniCraft")).id(egui::Id::new("about_window")).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
             ui.add(egui::Image::new((app_mark(ctx).id(), egui::vec2(64.0, 64.0))));
             ui.heading("AniCraft");
             ui.label(tr!("Version {version} · {stage}", version = env!("CARGO_PKG_VERSION"), stage = crate::i18n::t(RELEASE_STAGE)));
@@ -3582,7 +3691,7 @@ impl App {
             (tr!("Screenshots"), root.join("shots")),
         ];
         let mut opened: Option<Result<(), String>> = None;
-        let shown = egui::Window::new(tr!("Project Files")).id(egui::Id::new("files_window")).open(&mut open).collapsible(false).resizable(false).default_width(620.0).show(ctx, |ui| {
+        let shown = crate::windows::new(ctx, tr!("Project Files")).id(egui::Id::new("files_window")).open(&mut open).collapsible(false).resizable(false).default_width(620.0).show(ctx, |ui| {
             ui.label(theme::text(theme::Type::Label, tr!("Where AniCraft's documents and files are on this computer")));
             ui.add_space(4.0);
             egui::Grid::new("files").num_columns(3).spacing([10.0, 6.0]).striped(true).show(ui, |ui| {
@@ -3827,7 +3936,9 @@ impl App {
 
         let bar = |fill| egui::Frame::NONE.fill(fill).inner_margin(egui::Margin::symmetric(8, 2));
         crate::drop::begin_frame(self);
-        egui::Panel::top("menu_bar").frame(bar(T.chrome)).show(ui, |ui| menus::bar(self, ui));
+        let menu = egui::Panel::top("menu_bar").frame(bar(T.chrome)).show(ui, |ui| menus::bar(self, ui));
+        // Floating windows stay below the menu bar (crate::windows).
+        crate::windows::set_work_area(&ctx, menu.response.rect.max.y);
         if self.start.is_some() {
             // The start screen takes the workspace's place (ADR 0059); the menus stay.
             egui::Panel::bottom("status_bar").exact_size(28.0).frame(bar(T.chrome)).show(ui, |ui| panels::status_bar(self, ui));
@@ -3864,6 +3975,7 @@ impl App {
         crate::plugin_export_ui::show(self, &ctx);
         crate::dock_float::floating(self, &ctx);
         crate::workspaces_window::show(self, &ctx);
+        crate::macros_ui::show(self, &ctx);
         crate::find_panel::show(self, &ctx);
         crate::brush_panel::show(self, &ctx);
         crate::publish_panel::show(self, &ctx);
