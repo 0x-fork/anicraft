@@ -289,8 +289,13 @@ pub fn paste_params(app: &App) -> Option<serde_json::Value> {
 /// An icon button: a full-size target around a Lucide glyph, named by its tooltip.
 /// `on` is a toggle's state (`None` for a plain button); a toggle that is on is filled.
 pub fn icon_button(ui: &mut egui::Ui, tip: &str, on: Option<bool>, icon: Icon) -> egui::Response {
+    icon_button_wide(ui, tip, on, icon, TARGET + 4.0)
+}
+
+/// [`icon_button`] at another width: narrower at the end of a row of fields in a narrow panel.
+pub fn icon_button_wide(ui: &mut egui::Ui, tip: &str, on: Option<bool>, icon: Icon, width: f32) -> egui::Response {
     let active = on == Some(true);
-    let (rect, resp) = ui.allocate_exact_size(vec2(TARGET + 4.0, TARGET), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, TARGET), Sense::click());
     // Same language as the tools: a toggle that is on is a lighter gray block, icon white.
     let bg = if active {
         T.active

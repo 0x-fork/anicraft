@@ -388,8 +388,9 @@ pub fn edit_bar(app: &mut App, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let z = app.view.zoom;
             let canvas = app.stage_cache.canvas;
-            // The presets arrow alone opens the menu (Flash parity): clicking the text never does.
-            let arrow = ui.menu_button("▾", |ui| {
+            // The presets arrow alone opens the menu, as in Animate: clicking the text never does.
+            // The arrow is an icon drawn over a blank button (the fonts may lack an arrow glyph).
+            let arrow = ui.menu_button("   ", |ui| {
                 if ui.selectable_label(false, tr!("Fit in window")).clicked() {
                     ui.close();
                     app.view.fit = true;
@@ -401,6 +402,7 @@ pub fn edit_bar(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
             });
+            crate::icons::paint(ui.painter(), Rect::from_center_size(arrow.response.rect.center(), vec2(12.0, 12.0)), Icon::ChevronDown, if arrow.response.hovered() { T.icon_hot } else { T.icon });
             arrow.response.set_name(tr!("Zoom presets"));
             ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("zoom_arrow"), arrow.response.rect));
             // The percentage itself is typed here: focus to type a value, Enter or focus loss applies it.
@@ -1053,7 +1055,9 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             // The Scale lock (#304): view state, off by default. On, editing one axis scales
             // the other so the selection keeps its width:height proportion.
             let locked = app.scale_lock;
-            let lock = crate::timeline::icon_button(ui, tr!("Lock scale"), Some(locked), if locked { Icon::Lock } else { Icon::Unlock });
+            // Narrow and close to the fields, so the row still fits beside its label in the dock.
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let lock = crate::timeline::icon_button_wide(ui, tr!("Lock scale"), Some(locked), if locked { Icon::Lock } else { Icon::Unlock }, 20.0);
             if lock.clicked() {
                 app.scale_lock = !locked;
             }
