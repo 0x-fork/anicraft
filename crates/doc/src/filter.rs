@@ -402,7 +402,7 @@ impl Filter {
     }
 }
 
-//// A colour of a filter a motion tween can animate (ADR 0099), channel by channel.
+/// A colour of a filter a motion tween can animate (ADR 0099), channel by channel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum FilterColor {
     /// The colour of a Drop Shadow or a Glow.
@@ -861,7 +861,7 @@ pub fn pairs_up(a: &[FilterEntry], b: &[FilterEntry]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| std::mem::discriminant(&x.filter) == std::mem::discriminant(&y.filter))
 }
 
-//// The classic tween between two filter lists (ADR 0081, 0091, 0099). Every filter's numbers
+/// The classic tween between two filter lists (ADR 0081, 0091, 0099). Every filter's numbers
 /// and colours travel to its partner's; quality, the switches (Inner, Knockout, Hide object,
 /// the Type) and whether the filter is on stay the first keyframe's, and ramps travel stop by
 /// stop when they have as many stops.

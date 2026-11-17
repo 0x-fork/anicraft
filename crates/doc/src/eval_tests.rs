@@ -663,7 +663,7 @@ fn text_with_filters_draws_in_a_filtered_group() {
         let dl = evaluate(&d, 0);
         assert_eq!(dl.groups.len(), 1, "one group for the text");
         let g = &dl.groups[0];
-        assert_eq!(&*g.filters, &[shadow.filter.clone()], "only the filter that is on");
+        assert_eq!(&*g.filters, std::slice::from_ref(&shadow.filter), "only the filter that is on");
         assert_eq!(g.alpha, 0.5, "the text's alpha fades the group, after the filters");
         assert!(!dl.items.is_empty() && dl.items.iter().all(|i| i.group == Some(0)), "every item of the text is in it");
         assert!(dl.items.iter().all(|i| i.color.mul[3] == 1.0), "and none fades on its own");

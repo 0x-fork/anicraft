@@ -739,7 +739,7 @@ fn colour_row(app: &mut App, ui: &mut egui::Ui, painter: &egui::Painter, row: Re
     let four = channels(slot, c);
     let open = app.me_open.contains(&(slot, c));
     let any_track = four.iter().any(|p| m.track(*p).is_some());
-    painter.rect_filled(row, 0.0, if r % 2 == 0 { T.panel } else { T.panel_alt });
+    painter.rect_filled(row, 0.0, if r.is_multiple_of(2) { T.panel } else { T.panel_alt });
     // The mark: pointing right when closed, down when its channels show.
     let tip = pos2(row.left() + 16.0, row.center().y);
     let tri = if open { vec![tip + vec2(-4.0, -2.5), tip + vec2(4.0, -2.5), tip + vec2(0.0, 3.5)] } else { vec![tip + vec2(-2.5, -4.0), tip + vec2(3.5, 0.0), tip + vec2(-2.5, 4.0)] };
