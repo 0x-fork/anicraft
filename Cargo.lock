@@ -418,6 +418,7 @@ dependencies = [
  "craft-image-codecs 0.1.0 (git+https://github.com/storytold/craft-libs?rev=f0f4758c01581d79577b9bf5046c06f4e77b1f18)",
  "craft-xfl",
  "miniz_oxide 0.8.9",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
