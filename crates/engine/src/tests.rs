@@ -725,7 +725,7 @@ Exec=evil", "data_home": "relative/share", "refresh": false}),
     // A mixed armature (ADR 0098): bones inside a body shape, an instance head on its neck
     // joint, a plume shape on the head with a bone of its own; posed at frame 8.
     let (mut mixed, mr) = crate::tests_mixed_bone::character();
-    for (id, p) in [("bone.pose", json!({"bone": mr.spine2, "angle": 40, "frame": 8})), ("bone.set_spring", json!({"bone": mr.neck, "strength": 60, "damping": 10})), ("bone.set_translation", json!({"bone": mr.neck, "axis": "y"}))] {
+    for (id, p) in [("bone.pose", json!({"bone": mr.spine2, "angle": 40, "frame": 8})), ("bone.set_spring", json!({"bone": mr.neck, "strength": 60, "damping": 10})), ("bone.set_translation", json!({"bone": mr.neck, "axis": "y", "enabled": true}))] {
         mixed.execute(id, &p).unwrap();
     }
     assert_eq!((mr.spine1, mr.spine2, mr.neck, mr.crest, mr.feather), (100, 103, 105, 106, 107), "the hostile params name these");
