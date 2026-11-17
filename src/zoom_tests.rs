@@ -47,10 +47,13 @@ fn select_all(ctx: &egui::Context, app: &mut App) {
 
 fn clear_field(ctx: &egui::Context, app: &mut App) {
     select_all(ctx, app);
-    // Selection or not, this leaves the field empty (the seed is 3-4 digits).
-    for _ in 0..8 {
-        frame(ctx, app, vec![Event::Key { key: egui::Key::Backspace, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }], Modifiers::NONE);
-        frame(ctx, app, vec![Event::Key { key: egui::Key::Backspace, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE }], Modifiers::NONE);
+    // Selection or not (Select All is ⌘A on macOS, so Ctrl+A selects nothing there), this
+    // leaves the field empty: the seed is 3-4 digits, deleted on both sides of the cursor.
+    for key in [egui::Key::Backspace, egui::Key::Delete] {
+        for _ in 0..8 {
+            frame(ctx, app, vec![Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }], Modifiers::NONE);
+            frame(ctx, app, vec![Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE }], Modifiers::NONE);
+        }
     }
     settle(ctx, app);
 }
