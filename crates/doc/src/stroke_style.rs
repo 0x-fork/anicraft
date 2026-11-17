@@ -237,7 +237,7 @@ impl Dash {
             (Some(Dash::Dashed { lengths: la, offset: oa }), Some(Dash::Dashed { lengths: lb, offset: ob })) if la.len() == lb.len() => {
                 Dash::Dashed { lengths: la.iter().zip(lb.iter()).map(|(&x, &y)| mix(x, y)).collect(), offset: mix(*oa, *ob) }.sanitized()
             }
-            (Some(Dash::Dotted { spacing: sa }), Some(Dash::Dotted { spacing: sb })) => Some(Dash::Dotted { spacing: mix(*sa, *sb) }),
+            (Some(Dash::Dotted { spacing: sa }), Some(Dash::Dotted { spacing: sb })) => Dash::Dotted { spacing: mix(*sa, *sb) }.sanitized(),
             _ => if t >= 1.0 { b.cloned() } else { a.cloned() },
         }
     }
@@ -356,6 +356,16 @@ mod tests {
         for t in [0.0, 0.5, 1.0] {
             assert_eq!(Dash::lerp(Some(&raw), Some(&raw), t), want, "t = {t}");
         }
+    }
+
+    #[test]
+    fn dotted_lerp_clamps_overshooting_spacing() {
+        let a = Dash::Dotted { spacing: 0.0 };
+        let b = Dash::Dotted { spacing: 10.0 };
+        assert_eq!(Dash::lerp(Some(&a), Some(&b), -0.5), Some(Dash::Dotted { spacing: 0.0 }));
+        let c = Dash::Dotted { spacing: MAX_DASH_LENGTH };
+        let d = Dash::Dotted { spacing: MAX_DASH_LENGTH * 2.0 };
+        assert_eq!(Dash::lerp(Some(&c), Some(&d), 1.5), Some(Dash::Dotted { spacing: MAX_DASH_LENGTH }));
     }
 
     #[test]
