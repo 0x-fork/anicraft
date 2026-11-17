@@ -423,6 +423,7 @@ dependencies = [
  "craft-video",
  "craft-xfl",
  "miniz_oxide 0.8.9",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
