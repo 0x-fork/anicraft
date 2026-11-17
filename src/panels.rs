@@ -270,12 +270,7 @@ pub fn edit_bar(app: &mut App, ui: &mut egui::Ui) {
             if inside_symbol {
                 let label_response = ui.add(
                     egui::Button::new(text(Type::Body, name.clone()).strong())
-                        .corner_radius(egui::CornerRadius {
-                            nw: 6,
-                            ne: 0,
-                            sw: 6,
-                            se: 0,
-                        })
+                        .corner_radius(egui::CornerRadius { nw: T.radius_control, ne: 0, sw: T.radius_control, se: 0 }),
                 );
 
                 #[cfg(test)]
@@ -294,12 +289,7 @@ pub fn edit_bar(app: &mut App, ui: &mut egui::Ui) {
             }
 
             if inside_symbol {
-                let corners = egui::CornerRadius {
-                    nw: 0,
-                    ne: 6,
-                    sw: 0,
-                    se: 6,
-                };
+                let corners = egui::CornerRadius { nw: 0, ne: T.radius_control, sw: 0, se: T.radius_control };
 
                 let widgets = &mut ui.style_mut().visuals.widgets;
                 widgets.inactive.corner_radius = corners;
