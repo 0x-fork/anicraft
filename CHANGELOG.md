@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+* **Mixed armatures: symbols and shapes in one armature** (ADR 0098, M7).
+  * A body drawn as a shape that bends can carry a head, hands or props that are symbol
+    instances, and an instance's bone can end on a shape that then gets bones of its own. One
+    armature can hold several shapes with bones.
+  * With the **Bone tool**, drag from a shape's bone end onto a symbol instance, or from an
+    instance onto a shape and on inside it. The **Selection tool** poses the whole chain by IK;
+    poses tween, and springs and joint translation act across both kinds.
+  * The **Bind tool** binds and paints the points of the shape the picked bone is inside.
+  * **Remove Bone** frees the instances and shapes the bone moved, as they look.
+  * Headless: `bone.add` takes `parent` (a bone to continue from) and shapes as `to`;
+    `bone.info` lists `members`, `shapes` and whether the armature is `mixed`.
+  * Files: a document with a mixed armature is saved as format version 4, which earlier
+    versions refuse with a clear message. Every other document is saved exactly as before.
+  * Fixed: duplicating a symbol that holds a shape armature kept the copy's shape from bending.
 * **Search the user guide, and help for what you are working on** (ADR 0096, M8).
   * **Search** in every page of the bundled guide, offline: results as you type with the
     chapter, heading and a passage with your words marked; `/` goes to the field, arrows move

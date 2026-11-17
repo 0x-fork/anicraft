@@ -23,4 +23,3 @@ has to renumber because another PR merged first.
 | Number | Pull request | Topic |
 |---|---|---|
 | 0037 | #38 (outside contribution) | Interface languages |
-| 0098 | m7/mixed-armatures | Mixed armatures: instances and shapes in one armature |
