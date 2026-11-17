@@ -16,7 +16,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant};
 
@@ -34,8 +34,14 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Extra time the connection waits past the deadline: a call that started just before it
 /// still gets its real answer.
 const GRACE: Duration = Duration::from_secs(10);
+/// How long a new connection may take to send its first request with the right token. Past it
+/// the connection closes, so a program that connects and says nothing can't hold one of the
+/// [`MAX_CONNECTIONS`] places.
+pub const FIRST_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Overrides the generated token on both sides (CI, power users).
 pub const TOKEN_ENV: &str = "ANICRAFT_CONTROL_TOKEN";
+/// Where the bridge reads `control.json` from, when it isn't in the settings folder.
+pub const FILE_ENV: &str = "ANICRAFT_CONTROL_FILE";
 /// The port when `--control` isn't given.
 pub const PORT_ENV: &str = "ANICRAFT_CONTROL_PORT";
 /// The file the app writes in the settings folder while its control port is open.
@@ -55,9 +61,11 @@ pub fn settings_dir() -> Option<PathBuf> {
     }
 }
 
-/// Where `control.json` lives.
+/// Where the bridge looks for `control.json`: `ANICRAFT_CONTROL_FILE` when set (a portable
+/// install keeps the file in its own data folder, which this crate can't find), else the
+/// settings folder.
 pub fn control_file() -> Option<PathBuf> {
-    settings_dir().map(|d| d.join(CONTROL_FILE))
+    std::env::var_os(FILE_ENV).filter(|v| !v.is_empty()).map(PathBuf::from).or_else(|| settings_dir().map(|d| d.join(CONTROL_FILE)))
 }
 
 /// `ANICRAFT_CONTROL_TOKEN`, when set and not blank.
@@ -207,10 +215,20 @@ impl Request {
 /// Wakes the app's frame loop (`egui::Context::request_repaint`), from any thread.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
-/// An open control port.
+/// An open control port. Dropping it stops listening and frees the port (a window that opens
+/// again in the same run, ADR 0092, can then listen on it again).
 pub struct Server {
     pub port: u16,
     rx: Receiver<Request>,
+    stop: Arc<AtomicBool>,
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        // `accept` only returns for a connection: make one, so the listener thread sees the flag.
+        let _ = TcpStream::connect_timeout(&SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, self.port)), Duration::from_secs(1));
+    }
 }
 
 impl Server {
@@ -223,17 +241,28 @@ impl Server {
 /// Opens the control port on `127.0.0.1:port`. Tool calls arrive through [`Server::try_recv`];
 /// `wake` is called whenever one is waiting.
 pub fn listen(port: u16, token: String, wake: Wake) -> std::io::Result<Server> {
+    listen_with(port, token, wake, FIRST_REQUEST_TIMEOUT)
+}
+
+/// [`listen`], with the time a new connection has to send its first good request.
+pub fn listen_with(port: u16, token: String, wake: Wake, first_request: Duration) -> std::io::Result<Server> {
     let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))?;
     let port = listener.local_addr()?.port();
     let (tx, rx) = channel();
     let token: Arc<str> = token.into();
-    std::thread::Builder::new().name("anicraft-control".into()).spawn(move || accept_loop(&listener, &token, &tx, &wake))?;
-    Ok(Server { port, rx })
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopped = stop.clone();
+    std::thread::Builder::new().name("anicraft-control".into()).spawn(move || accept_loop(&listener, &token, &tx, &wake, &stopped, first_request))?;
+    Ok(Server { port, rx, stop })
 }
 
-fn accept_loop(listener: &TcpListener, token: &Arc<str>, tx: &Sender<Request>, wake: &Wake) {
+fn accept_loop(listener: &TcpListener, token: &Arc<str>, tx: &Sender<Request>, wake: &Wake, stop: &AtomicBool, first_request: Duration) {
     let active = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
+        // The server was dropped: stop, which closes the listener and frees the port.
+        if stop.load(Ordering::SeqCst) {
+            return;
+        }
         let Ok(mut stream) = stream else { continue };
         let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
         if active.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
@@ -243,7 +272,7 @@ fn accept_loop(listener: &TcpListener, token: &Arc<str>, tx: &Sender<Request>, w
         }
         let (token, tx, wake, active2) = (token.clone(), tx.clone(), wake.clone(), active.clone());
         let spawned = std::thread::Builder::new().name("anicraft-control-conn".into()).spawn(move || {
-            serve_connection(stream, &token, &tx, &wake);
+            serve_connection(stream, &token, &tx, &wake, first_request);
             active2.fetch_sub(1, Ordering::SeqCst);
         });
         if spawned.is_err() {
@@ -253,8 +282,11 @@ fn accept_loop(listener: &TcpListener, token: &Arc<str>, tx: &Sender<Request>, w
 }
 
 /// One connection: requests in order, until the client leaves or sends something it shouldn't.
-fn serve_connection(stream: TcpStream, token: &str, tx: &Sender<Request>, wake: &Wake) {
+fn serve_connection(stream: TcpStream, token: &str, tx: &Sender<Request>, wake: &Wake, first_request: Duration) {
     let Ok(read_half) = stream.try_clone() else { return };
+    // Until the first request with the right token, reads time out (see the constant).
+    let _ = read_half.set_read_timeout(Some(first_request));
+    let mut known = false;
     let mut reader = BufReader::new(read_half);
     let mut out = stream;
     loop {
@@ -276,6 +308,13 @@ fn serve_connection(stream: TcpStream, token: &str, tx: &Sender<Request>, wake: 
         let (reply, keep_open) = answer(&line, token, tx, wake);
         if writeln!(out, "{reply}").and_then(|()| out.flush()).is_err() || !keep_open {
             return;
+        }
+        // Only a request with the right token keeps the connection open: from here on the
+        // client may be idle for as long as it likes (an assistant between calls).
+        if !known {
+            known = true;
+            // On the reading handle itself: Windows keeps the timeout per handle, not per socket.
+            let _ = reader.get_ref().set_read_timeout(None);
         }
     }
 }

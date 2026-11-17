@@ -44,7 +44,9 @@ pub fn start(app: &mut App, ctx: &egui::Context, port: u16) {
             return;
         }
     };
-    let file = control::control_file();
+    // In the settings folder, which a portable install keeps beside the program (ADR 0094):
+    // nothing is written outside it.
+    let file = platform::config_dir().map(|d| d.join(control::CONTROL_FILE));
     let written = file.as_ref().map(|path| {
         let contents = control::ControlFile { port: server.port, token: token.clone(), pid: std::process::id(), version: env!("CARGO_PKG_VERSION").to_string() };
         platform::write_private_file(path, contents.to_json().to_string().as_bytes())

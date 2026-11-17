@@ -35,8 +35,15 @@ writes it to `control.json` in AniCraft's settings folder:
 ```
 
 On macOS and Linux the file is readable only by you; on Windows the settings folder already is.
-It is replaced when AniCraft starts with `--control` and removed when it closes. A program running
-as you finds the token there, with nothing to copy into its settings.
+It is made new when AniCraft starts with `--control` (an older file, or a link left under its
+name, is removed first and never written through) and removed when AniCraft closes. A program
+running as you finds the token there, with nothing to copy into its settings.
+
+A portable AniCraft keeps `control.json` in its own data folder, like its other settings. Tell
+the bridge where that is with `ANICRAFT_CONTROL_FILE=<path to control.json>`.
+
+A connection has 10 seconds to send its first request with the right token; after that it may
+stay idle. At most 16 connections are open at once. The port closes with the window.
 
 If `ANICRAFT_CONTROL_TOKEN` is set, it is the token instead (set it for both the app and the
 client: CI, power users).

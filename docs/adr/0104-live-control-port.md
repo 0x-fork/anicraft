@@ -86,6 +86,24 @@ must not depend on an environment variable reaching two unrelated processes.
    more. Hosts other than this computer are refused.
 10. **Visible.** While the port is open the status bar says "Remote control on (port N)" (through
     `tr!` and `theme::Type`), with a tooltip saying what that means.
+11. **Added in review (the batch that merged this, M8).**
+    * *The port closes with the window.* Dropping `control::Server` stops the listener thread
+      and frees the port. A run can open its window again (ADR 0092, after a lost graphics
+      device); without this the second window found its own port "in use".
+    * *A silent connection is let go.* A connection has 10 s to send its first request with the
+      right token, then may idle. Otherwise sixteen programs that connect and say nothing would
+      hold every place and lock the assistant out.
+    * *The token file is always a new file.* An existing `control.json` (or a link under that
+      name) is removed and the file created exclusively, owner-only from the start, instead of
+      opened and tightened afterwards.
+    * *Portable installs* (ADR 0094) keep `control.json` in their data folder: the app writes
+      through `platform::config_dir`, so nothing lands outside it. The bridge can't know that
+      folder, so `ANICRAFT_CONTROL_FILE` names the file (or `ANICRAFT_CONTROL_TOKEN` the token).
+    * *What the port may do* is what the headless MCP server may: every command, files
+      included, with the person's permissions and the ADR 0004 confirmations. It is not a
+      plug-in (ADR 0017's `plugin_may_call` limits don't apply): the person turned it on, on
+      their own computer, for an assistant they chose. It is off unless asked for, and there is
+      no preference that turns it on.
 
 ## Consequences
 

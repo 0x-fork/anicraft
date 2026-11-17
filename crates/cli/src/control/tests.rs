@@ -251,3 +251,37 @@ fn the_bridge_drives_the_app_and_says_when_it_has_gone() {
     assert!(r.as_ref().map_or(true, |v| v["isError"] == true), "{r:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A window that closes frees its port: the same run can open another window (ADR 0092) and
+/// listen on it again.
+#[test]
+fn dropping_the_server_frees_the_port() {
+    let server = listen(0, TOKEN.into(), Arc::new(|| {})).unwrap();
+    let port = server.port;
+    assert!(TcpListener::bind(("127.0.0.1", port)).is_err(), "the port is taken while the server lives");
+    drop(server);
+    let freed = (0..200).any(|_| {
+        std::thread::sleep(Duration::from_millis(10));
+        TcpListener::bind(("127.0.0.1", port)).is_ok()
+    });
+    assert!(freed, "port {port} is still taken after the server was dropped");
+}
+
+/// A program that connects and says nothing is let go, so it can't hold a connection's place;
+/// one that has sent the token may then be quiet for as long as it likes.
+#[test]
+fn a_silent_connection_is_closed_and_a_known_one_may_idle() {
+    let server = listen_with(0, TOKEN.into(), Arc::new(|| {}), Duration::from_millis(150)).unwrap();
+    let connect = || {
+        let s = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+        (BufReader::new(s.try_clone().unwrap()), s)
+    };
+    let mut silent = connect();
+    let mut known = connect();
+    let hello = format!(r#"{{"id":1,"token":"{TOKEN}","method":"hello"}}"#);
+    assert_eq!(send(&mut known, &hello)["ok"], true);
+    assert!(closed(&mut silent), "nothing sent: the app hangs up");
+    std::thread::sleep(Duration::from_millis(400));
+    assert_eq!(send(&mut known, &hello)["ok"], true, "a client that sent the token is not timed out");
+}
