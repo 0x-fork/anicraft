@@ -346,7 +346,8 @@ changes everywhere it's used.
 With the **Free Transform** tool (**Q**), drag a corner or edge to **scale** (**Shift** keeps
 the proportions, **Alt** scales from the centre), just outside a corner to **rotate**
 (**Shift** snaps to 15°), or inside the box to **move**. You can also type exact
-**Position**, **Scale** and **Rotation** values in Properties.
+**Position**, **Scale** and **Rotation** values in Properties. The lock beside **Scale** keeps
+width and height in proportion.
 
 | Command | Menu | Key |
 |---|---|---|
