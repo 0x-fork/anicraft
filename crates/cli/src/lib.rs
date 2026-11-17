@@ -2,6 +2,7 @@
 //! server (`mcp`). Every operation goes through the engine's command registry.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod control;
 pub mod mcp;
 
@@ -300,11 +301,19 @@ pub fn run(argv: &[String]) -> Result<String, String> {
                 if src.is_some() || a.flag("plugins").is_some() {
                     return Err("mcp --bridge acts on the open AniCraft window: it takes no file or --plugins".into());
                 }
-                let mut b = control::Bridge::new(control::parse_bridge_target(target)?);
-                let stdin = std::io::stdin();
-                let mut stdout = std::io::stdout();
-                mcp::serve(&mut b, stdin.lock(), &mut stdout).map_err(|e| e.to_string())?;
-                return Ok(String::new());
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = target;
+                    return Err("mcp --bridge needs sockets, which this build doesn't have".into());
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let mut b = control::Bridge::new(control::parse_bridge_target(target)?);
+                    let stdin = std::io::stdin();
+                    let mut stdout = std::io::stdout();
+                    mcp::serve(&mut b, stdin.lock(), &mut stdout).map_err(|e| e.to_string())?;
+                    return Ok(String::new());
+                }
             }
             let mut s = session(&a, src)?;
             let stdin = std::io::stdin();
