@@ -563,6 +563,11 @@ impl<'a> Bake<'a> {
         if f.max_chars > 0 {
             o["mx"] = json!(f.max_chars.min(MAX_FIELD_CHARS as u32));
         }
+        // Authored text in several colours: its pieces, each in its colour (ADR 0085).
+        if !t.fills.is_empty() {
+            let pieces: Vec<Value> = t.fill_paths().iter().map(|(c, _, p)| json!([self.path(p), self.paint(&Paint::Solid(*c))])).collect();
+            o["pp"] = json!(pieces);
+        }
         if f.background {
             o["bg"] = json!(self.paint(&Paint::Solid(f.background_color)));
         }
@@ -631,9 +636,12 @@ impl<'a> Bake<'a> {
                     let item = self.field(el, t, f);
                     out.push(item);
                 }
+                // One shape per colour piece (ADR 0085).
                 None => {
-                    let fill = Paint::Solid(t.color);
-                    out.push(self.shape(&t.outline, &el.transform, &el.color.transform(), Some(&fill), None, FillRule::NonZero));
+                    for (color, _, path) in t.fill_paths() {
+                        let fill = Paint::Solid(color);
+                        out.push(self.shape(&path, &el.transform, &el.color.transform(), Some(&fill), None, FillRule::NonZero));
+                    }
                 }
             },
             ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, events } => {

@@ -31,12 +31,40 @@ Animate.
 | **Style** | **B** for bold and **I** for italic, then **Left**, **Centre** or **Right** alignment. |
 | **Spacing** | **Letters** (letter spacing) and **Lines** (line spacing), in pixels. |
 | **Width** | Turn on **Wrap** to wrap lines at a fixed width, and set the width. With Wrap off, each paragraph stays on one line. |
+| **Position** | **Normal**, **Superscript** or **Subscript**, then **U** for underline. |
+| **Link** | A web address the characters link to in SVG exports. |
+| **Indent** | How far the first line of a paragraph starts in (negative hangs it out). |
+| **Margins** | Space kept clear at the left and right of each line, in pixels. |
 
 Bold and italic use the matching face of the font (for example, its Bold or Italic file). If a
 font has no bold or italic face, AniCraft doesn't fake one.
 
-A style applies to the whole text block. Different styles for single words in one block aren't
-there yet; use a separate block for each style.
+With the text selected (not being typed in), a change applies to the whole block. Where the
+characters differ, the row shows the first one's value and says **mixed**.
+
+## Styling words and characters
+
+One block can mix styles, as in Animate:
+
+1. Click into the text with the **Text** tool (or double-click it).
+2. Select the characters: drag across them, or hold **Shift** with the arrow keys.
+3. Set their style in **Properties**: the section at the top is named after your selection, for
+   example **Text: 6 characters selected**. Font, size, colour, bold, italic, letter spacing,
+   superscript and subscript, underline and link all apply to just those characters, and the
+   stage shows the change at once (each change is one undo step).
+
+Things to know:
+
+* **Typing continues the style before the caret.** Type after a red word and the new letters
+  are red. To start a new style, set it in Properties with nothing selected, then type.
+* **Paragraph settings** (alignment, indent, margins and line spacing) apply to every paragraph
+  your selection touches. Press **Enter** inside a paragraph and both halves keep its settings.
+* **Copy and paste keeps the styles inside AniCraft.** Text pasted from other apps comes in
+  plain, in the style of the text before it.
+* While you type, the box over the stage shows the colours, sizes, italics, underlines and
+  superscripts in AniCraft's interface font; the stage shows the real fonts and alignment.
+* **Superscript and subscript** use the size and offset the font itself suggests.
+* Text set by a script in a dynamic or input field uses the field's first style.
 
 ## Fonts on your computer
 
@@ -131,14 +159,15 @@ outlines like all text, so it looks the same on every computer.
 
 To reshape the letters themselves, select the text and choose **Modify › Break Apart**
 (**Ctrl+B**). The text becomes an ordinary shape that you can edit with the Subselection tool,
-recolour and morph. It is no longer editable as text, so keep a copy if you might want to change
-the words.
+recolour and morph. Text in several colours becomes one shape per colour. It is no longer
+editable as text, so keep a copy if you might want to change the words.
 
 ## Text in exports
 
 Because the letter shapes are saved with the document, text comes out exactly as you see it on
 the stage in every picture export: PNG, PNG sequences, GIF, animated PNG and WebP, video, sprite
-sheets, SVG and Lottie. Fields show their authored text, box and border there.
+sheets, SVG and Lottie. Fields show their authored text, box and border there. Each colour in a
+block is drawn in its colour, and in SVG, characters with a link are a link.
 
 In the **HTML canvas** export, the movie plays in a web browser:
 
@@ -158,9 +187,10 @@ See [Exporting and Publish](exporting-and-publish.md) for every format.
 ## Text in Animate files
 
 When you open an Animate document, its text comes across as text you can edit, with its font,
-size, colour, bold and italic, alignment, spacing, position and wrapping. Dynamic and input
-fields come across as fields, with their names, boxes, borders and line types. A block whose
-lines use different styles becomes one block per style, stacked as before. Fonts that aren't on
+size, colour, bold and italic, superscript and subscript, links, alignment, indents, margins,
+spacing, position and wrapping. Each Animate text block stays one block, with every run's style
+kept. Dynamic and input fields come across as fields, with their names, boxes, borders and line
+types. Fonts that aren't on
 your computer use the default font, and the status bar names them. See
 [Opening Animate files](opening-animate-files.md).
 
