@@ -1983,6 +1983,28 @@ pub(crate) fn pattern_spans(
     out: &mut Vec<Rect>,
     gap: f32,
 ) {
+    scan_spans(lines, rule, clip, out, gap, 0.0);
+}
+
+fn occlusion_spans(
+    lines: &[anicraft_engine::geom::Polyline],
+    rule: anicraft_engine::geom::FillRule,
+    clip: Rect,
+    out: &mut Vec<Rect>,
+    gap: f32,
+) {
+    let pixel = gap / GAP;
+    scan_spans(lines, rule, clip, out, pixel, pixel * 0.5);
+}
+
+fn scan_spans(
+    lines: &[anicraft_engine::geom::Polyline],
+    rule: anicraft_engine::geom::FillRule,
+    clip: Rect,
+    out: &mut Vec<Rect>,
+    gap: f32,
+    phase: f32,
+) {
     use anicraft_engine::geom::FillRule;
     // Every non-horizontal edge near the view, as (top, bottom, x at top, dx/dy, winding).
     let mut edges: Vec<(f32, f32, f32, f32, i32)> = Vec::new();
@@ -2008,7 +2030,9 @@ pub(crate) fn pattern_spans(
     }
     edges.sort_by(|a, b| a.0.total_cmp(&b.0));
     let last = edges.iter().fold(f32::NEG_INFINITY, |m, e| m.max(e.1)).min(clip.bottom() + gap * 0.5);
-    let mut y = (edges.first().map_or(0.0, |e| e.0).max(clip.top() - gap * 0.5) / gap).ceil() * gap;
+    let start = edges.first().map_or(0.0, |e| e.0)
+    .max(clip.top() - gap * 0.5);
+    let mut y = ((start - phase) / gap).ceil() * gap + phase;
     let inside = |w: i32| match rule {
         FillRule::NonZero => w != 0,
         FillRule::EvenOdd => w % 2 != 0,
@@ -2095,7 +2119,7 @@ fn exclude_overlying_artwork(
             if opaque {
                 let m = to_px.mul(&item.transform);
 
-                pattern_spans(
+                occlusion_spans(
                     &item.path.flatten(&m, 0.5),
                     item.fill_rule,
                     clip,
@@ -2123,7 +2147,7 @@ fn exclude_overlying_artwork(
             0.5,
         );
 
-        pattern_spans(
+       occlusion_spans(
             &outline.flatten(&Affine::IDENTITY, 0.5),
             FillRule::NonZero,
             clip,
@@ -2284,6 +2308,43 @@ mod pattern_tests {
             smooth: true,
             warp: None,
         }
+    }
+
+    /// A thin opaque foreground shape must hide the selection
+    /// backing of artwork behind it, even between stipple rows.
+    #[test]
+    fn thin_foreground_occludes_selected_backing() {
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(100.0, 100.0),
+        );
+
+        // A selected stroke has a backing span spanning y=46..50.
+        let mut selected = vec![Rect::from_min_max(
+            pos2(40.0, 46.0),
+            pos2(60.0, 50.0),
+        )];
+
+        // The foreground rectangle is only one pixel high,
+        // positioned between the sampling rows at y=48 and y=52.
+        let above = vec![item(
+            Path::rect(0.0, 49.0, 100.0, 1.0),
+            true,
+            None,
+        )];
+
+        exclude_overlying_artwork(
+            &mut selected,
+            &above,
+            &Affine::IDENTITY,
+            clip,
+            GAP,
+        );
+
+        assert!(
+            !selected.iter().any(|r| r.contains(pos2(50.0, 49.5))),
+            "the opaque foreground must hide the selected stroke backing"
+        );
     }
 
     /// Wide and thin strokes both use textured spans.
