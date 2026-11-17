@@ -2139,14 +2139,23 @@ fn exclude_overlying_artwork(
 /// Each overlapping rectangle may produce up to four smaller rectangles.
 fn subtract_spans(spans: &mut Vec<Rect>, occluders: &[Rect]) {
     let mut remaining = Vec::new();
+    let mut pieces = Vec::new();
+    let mut next = Vec::new();
 
     for span in spans.drain(..) {
-        let mut pieces = vec![span];
+        pieces.clear();
+        pieces.push(span);
 
         for &occluder in occluders {
-            let mut next = Vec::new();
+            // Skip occluders that cannot touch the original span.
+            let overlap = span.intersect(occluder);
+            if overlap.width() <= 0.0 || overlap.height() <= 0.0 {
+                continue;
+            }
 
-            for piece in pieces {
+            next.clear();
+
+            for piece in pieces.drain(..) {
                 let overlap = piece.intersect(occluder);
 
                 if overlap.width() <= 0.0 || overlap.height() <= 0.0 {
@@ -2194,14 +2203,14 @@ fn subtract_spans(spans: &mut Vec<Rect>, occluders: &[Rect]) {
                 }
             }
 
-            pieces = next;
+            std::mem::swap(&mut pieces, &mut next);
 
             if pieces.is_empty() {
                 break;
             }
         }
 
-        remaining.extend(pieces);
+        remaining.append(&mut pieces);
     }
 
     *spans = remaining;
