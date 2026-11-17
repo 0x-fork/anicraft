@@ -29,6 +29,13 @@ pub struct Remote {
 
 /// Opens the control port; failures go to the status bar (the window still opens).
 pub fn start(app: &mut App, ctx: &egui::Context, port: u16) {
+    // In the settings folder, which a portable install keeps beside the program (ADR 0094):
+    // nothing is written outside it.
+    start_at(app, ctx, port, platform::config_dir().map(|d| d.join(control::CONTROL_FILE)));
+}
+
+/// [`start`], with where `control.json` goes.
+fn start_at(app: &mut App, ctx: &egui::Context, port: u16, file: Option<PathBuf>) {
     let token = match control::token_from_env().map_or_else(control::new_token, Ok) {
         Ok(t) => t,
         Err(e) => {
@@ -44,9 +51,6 @@ pub fn start(app: &mut App, ctx: &egui::Context, port: u16) {
             return;
         }
     };
-    // In the settings folder, which a portable install keeps beside the program (ADR 0094):
-    // nothing is written outside it.
-    let file = platform::config_dir().map(|d| d.join(control::CONTROL_FILE));
     let written = file.as_ref().map(|path| {
         let contents = control::ControlFile { port: server.port, token: token.clone(), pid: std::process::id(), version: env!("CARGO_PKG_VERSION").to_string() };
         platform::write_private_file(path, contents.to_json().to_string().as_bytes())
@@ -134,6 +138,66 @@ impl mcp::Host for Live<'_> {
 #[cfg(test)]
 mod tests {
     use crate::platform;
+    use std::path::PathBuf;
+
+    /// The whole path an assistant's edit takes: the port opens and writes its token file, a
+    /// bridge finds the token there and runs a command, the frame loop makes the edit on the
+    /// window's document, and closing removes the file and frees the port.
+    #[test]
+    fn an_edit_through_the_port_lands_in_the_window_and_closing_cleans_up() {
+        let dir = std::env::temp_dir().join(format!("anicraft-remote-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("control.json");
+        // A file left by a run that crashed is replaced, not written through.
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&file, "stale").unwrap();
+        let ctx = egui::Context::default();
+        let mut app = crate::app::App::with_context(&ctx, anicraft_engine::Session::default(), Some(PathBuf::from("unused.png")));
+        assert_eq!(super::port(&app), None);
+        super::start_at(&mut app, &ctx, 0, Some(file.clone()));
+        let port = super::port(&app).expect("the port is open");
+        let written = anicraft_cli::control::ControlFile::parse(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!((written.port, written.token.len(), written.pid), (port, 64, std::process::id()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600, "only the owner reads the token");
+        }
+        // A second window asking for the same port says so and stays without one.
+        let mut other = crate::app::App::with_context(&ctx, anicraft_engine::Session::default(), Some(PathBuf::from("unused.png")));
+        super::start_at(&mut other, &ctx, port, None);
+        assert!(super::port(&other).is_none() && other.status.as_ref().is_some_and(|s| s.error));
+
+        let before = app.s.revision;
+        let token_file = file.clone();
+        let client = std::thread::spawn(move || {
+            let addr = anicraft_cli::control::parse_bridge_target(&port.to_string()).unwrap();
+            let mut bridge = anicraft_cli::control::Bridge::with_token_file(addr, Some(token_file));
+            let read = bridge.call_tool("anicraft_document", &serde_json::json!({}));
+            let edit = bridge.call_tool("anicraft_run", &serde_json::json!({"command": "draw.rect", "params": {"x": 10, "y": 10, "w": 40, "h": 30}}));
+            (read.is_ok(), edit)
+        });
+        while !client.is_finished() {
+            super::poll(&mut app, &ctx);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let (read, edit) = client.join().unwrap();
+        assert!(read, "a call that only reads answers");
+        assert!(edit.is_ok(), "{edit:?}");
+        assert!(app.s.revision > before, "the rectangle is in the window's document");
+        assert!(app.s.history().undo_len() >= 1, "and it undoes like the person's own edit");
+
+        super::finish(&mut app);
+        assert!(!file.exists(), "the token file goes when the window closes");
+        assert_eq!(super::port(&app), None);
+        // The port is free again: the same run can open another window on it (ADR 0092).
+        let freed = (0..200).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+        });
+        assert!(freed, "port {port} is still taken");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// The CLI finds `control.json` with its own copy of the settings-folder rule (it can't use
     /// the shell); they must agree, or the bridge looks in the wrong place.

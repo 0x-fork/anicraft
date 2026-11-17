@@ -606,6 +606,50 @@ pub fn draw_tip(painter: &egui::Painter, xf: Xf, o: &BrushOptions, at: Vec2) {
 mod tests {
     use super::*;
 
+    /// The pen-down ink of a see-through brush: one image at the alpha the stroke will keep,
+    /// in one texture that every frame reuses; opaque ink makes no image at all.
+    #[test]
+    fn a_wash_is_previewed_as_one_reused_image_and_opaque_ink_is_not() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, anicraft_engine::Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        app.tool = Tool::Brush;
+        app.drag = Drag::Brush;
+        // A stroke that crosses itself, with a dab's worth of pressure readings.
+        app.brush_samples = vec![(Vec2::new(40.0, 40.0), Some(0.8)), (Vec2::new(160.0, 120.0), Some(0.6)), (Vec2::new(40.0, 120.0), None), (Vec2::new(160.0, 40.0), Some(0.9))];
+        let xf = Xf { origin: egui::pos2(20.0, 20.0), zoom: 1.5 };
+        let sweep = egui::Id::new("anicraft.brush.sweep");
+        let texture = |ctx: &egui::Context| ctx.data(|d| d.get_temp::<egui::TextureHandle>(sweep));
+        let frame = |app: &App| {
+            let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0))), ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| draw_overlay(app, ui.painter(), xf, Some(Pos2::new(100.0, 100.0))));
+            out.textures_delta.clear(); // no renderer takes them here
+            out.shapes.len()
+        };
+        // Opaque: the convex sweep, no image.
+        app.s.style.set_fill_color(anicraft_engine::doc::Rgba::new(1.0, 0.0, 0.0, 1.0));
+        let opaque_shapes = frame(&app);
+        assert!(opaque_shapes > 1 && texture(&ctx).is_none(), "opaque ink needs no coverage image");
+        // A wash: one image for the whole stroke (plus the tip under the pointer).
+        app.s.style.set_fill_color(anicraft_engine::doc::Rgba::new(1.0, 0.0, 0.0, 0.5));
+        let wash_shapes = frame(&app);
+        let first = texture(&ctx).expect("the wash is drawn from a coverage image");
+        let [w, h] = first.size();
+        assert!(w > 100 && h > 100 && w <= MASK_MAX && h <= MASK_MAX, "{w} x {h}");
+        assert!(wash_shapes < opaque_shapes, "one image, not a piece per step: {wash_shapes} against {opaque_shapes}");
+        frame(&app);
+        assert_eq!(texture(&ctx).map(|t| t.id()), Some(first.id()), "the next frame reuses the texture");
+        // Pressure as opacity previews at the average, and a clear colour draws nothing.
+        options_mut(&mut app).pressure_opacity = true;
+        frame(&app);
+        app.s.style.set_fill_color(anicraft_engine::doc::Rgba::new(1.0, 0.0, 0.0, 0.0));
+        options_mut(&mut app).pressure_opacity = false;
+        assert!(frame(&app) < wash_shapes, "a clear fill has no ink to preview");
+        // A view so far in that the stroke is larger than the image may be: still bounded.
+        let hulls = sweep_hulls(Xf { origin: Pos2::ZERO, zoom: 400.0 }, options(&app), &app.brush_samples);
+        assert_eq!(hulls.len(), 4, "three steps and the tip at the end");
+        assert!(coverage(&hulls, Pos2::new(-1e9, f32::NAN), 1.0, 8, 8).iter().all(|c| *c == 0.0), "off-screen and non-finite input paints nothing");
+    }
+
     #[test]
     fn size_steps_are_round_and_bounded() {
         assert_eq!(step_size(10.0, true), 15.0);
