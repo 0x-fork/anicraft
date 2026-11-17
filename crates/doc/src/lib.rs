@@ -1996,6 +1996,12 @@ impl Document {
         }
         all.into_iter()
     }
+    /// Whether any armature of the document is mixed (ADR 0098): instances and shapes in one
+    /// armature, or several shapes with bones. Such a document is written as format version 4,
+    /// which earlier builds refuse by its number; every other document is written as before.
+    pub fn has_mixed_armatures(&self) -> bool {
+        self.timelines().flat_map(|tl| &tl.layers).any(|l| l.kind == LayerKind::Armature && l.armature.as_ref().is_some_and(|a| a.is_mixed()))
+    }
     /// Repairs a loaded document: ids, sizes and keyframe order.
     pub fn sanitize(&mut self) {
         let s = &mut self.stage;

@@ -728,6 +728,22 @@ Exec=evil", "data_home": "relative/share", "refresh": false}),
     }
     assert_eq!((tail, sb1, sb2), (3, 100, 103), "the hostile params name these");
     shaped.set_frame(4);
+    // A mixed armature (ADR 0098): bones inside a body shape, an instance head on its neck
+    // joint, a plume shape on the head with a bone of its own; posed at frame 8.
+    let (mut mixed, mr) = crate::tests_mixed_bone::character();
+    for (id, p) in [("bone.pose", json!({"bone": mr.spine2, "angle": 40, "frame": 8})), ("bone.set_spring", json!({"bone": mr.neck, "strength": 60, "damping": 10})), ("bone.set_translation", json!({"bone": mr.neck, "axis": "y", "enabled": true}))] {
+        mixed.execute(id, &p).unwrap();
+    }
+    assert_eq!((mr.spine1, mr.spine2, mr.neck, mr.crest, mr.feather), (100, 103, 105, 106, 107), "the hostile params name these");
+    mixed.set_frame(4);
+    let (body, head, plume) = (crate::tests_mixed_bone::BODY, crate::tests_mixed_bone::HEAD, crate::tests_mixed_bone::PLUME);
+    hostile.extend([
+        json!({"parent": 103, "to": head, "from": plume, "bone": 105, "shape": plume, "head": [200, 90], "tail": [1e30, -1e30], "points": [0, 9, 10, 17], "at": [[200, 140]], "weight": 50, "angle": 720, "x": 260, "y": 150, "frame": 3}),
+        json!({"bone": 107, "parent": 106, "to": body, "tail": [200, 40], "head": [200, 60], "mode": "auto", "confirm": true, "dx": 1e6, "x": -1e6, "y": 1e6}),
+        json!({"bone": 106, "parent": 107, "to": 108, "shape": body, "head": [200, 200], "tail": [200, 201.5], "confirm": true, "points": [0], "weight": 100, "at": [[200, 60], [200, 300]], "radius": 2000, "strength": 100, "mode": "subtract"}),
+        json!({"bone": 100, "from": 104, "to": plume, "parent": u64::MAX, "confirm": true, "axis": "x", "slide_x": 1e9, "strength": 100, "damping": 0, "local": [1e9, -1e9]}),
+        json!({"bone": 103, "from": head, "to": 101, "confirm": true, "layer": 102, "enabled": false, "pinned": true, "points": "all"}),
+    ]);
     // Asset Warp (ADR 0079): a warped rectangle and bitmap, a pin moved at frame 8 inside a
     // tween, the playhead mid-tween, the rectangle selected.
     let (mut warped, wr, wb) = crate::tests_warp::warped();
@@ -887,7 +903,7 @@ Exec=evil", "data_home": "relative/share", "refresh": false}),
     let inner = grouped.visible_elements().into_iter().find(|e| matches!(e.kind, anicraft_doc::ElementKind::Group { .. })).map(|e| e.id.0).unwrap();
     grouped.execute("symbol.edit", &json!({"id": inner})).unwrap();
     assert_eq!(grouped.editing.len(), 2, "the fuzz starts inside a group inside a group");
-    for start in [Session::default(), Session::new(sample::demo()), Session::new(with_sound), on_path, raw, rig, shaped, warped, layered, in_symbol, keyed, library, button, grouped, eased] {
+    for start in [Session::default(), Session::new(sample::demo()), Session::new(with_sound), on_path, raw, rig, shaped, mixed, warped, layered, in_symbol, keyed, library, button, grouped, eased] {
         let mut s = start;
         for spec in commands().iter().filter(|c| !skip(c.id)) {
             for p in &hostile {

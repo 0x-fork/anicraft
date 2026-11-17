@@ -142,7 +142,7 @@ impl Tool {
             Tool::PaintBrush => tr_noop!("Drag to draw a line in the stroke colour whose width follows the pen's pressure and the brush's tapers. Shape it afterwards with the Width tool. [ and ] change the size; the options set the brush and its pressure curve."),
             Tool::Eraser => tr_noop!("Drag to erase lines and fills drawn with Object Drawing off (drawing objects and symbols are kept). [ and ] change the size; the options set the shape and erase mode, and the Faucet deletes a whole fill or line with a click. Double-click the tool to erase everything on the stage."),
             Tool::Width => tr_noop!("Hover a stroke to see its width points. Drag a point's handle to widen or narrow the stroke there (Alt: one side only), drag its dot to slide it along, or drag anywhere on the stroke to add a point. Click a point and press Delete to remove it."),
-            Tool::Bone => tr_noop!("Drag from one symbol instance to another to join them with a bone (they move to an armature layer), or drag inside a shape to draw a bone in it (the shape bends with its bones); start on a bone's end to continue the chain. Click a bone to select it. Pose the armature by dragging bones or instances with the Selection tool."),
+            Tool::Bone => tr_noop!("Drag from one symbol instance to another to join them with a bone (they move to an armature layer), or drag inside a shape to draw a bone in it (the shape bends with its bones); start on a bone's end to continue the chain. Instances and shapes mix: from a shape's bone end, release over an instance to carry it; from an instance, release over a shape, then draw bones inside it from that bone's end. Click a bone to select it. Pose the armature by dragging bones or instances with the Selection tool."),
             Tool::Bind => tr_noop!("Shows the points of shapes with bones: a square follows one bone, a triangle several. Click a bone to see the points it moves (filled). Click a point, or drag a box around points, to make them follow only that bone; Shift shares the bone with the ones they follow, Ctrl takes them from it. Turn on Paint Weights in Properties to brush the bone's influence on, off or smooth, shown as a heat map."),
             Tool::Warp => tr_noop!("Click a shape or a bitmap to pin it (the first pin covers it with a warp mesh). Drag a pin to bend the artwork around the other pins; with one pin it moves. Click a pin and press Delete to remove it. A pin moved at another frame keys it, and pins tween."),
             Tool::GradientTransform => tr_noop!("Click a shape with a gradient or bitmap fill to show its handles. Drag the centre to move the fill, the square to change its width, the circle to change its size, the knob to rotate it (Shift: 15° steps) and, on a radial gradient, the triangle to move its focal point. A bitmap fill also has a square for its height and diamonds to skew it. Each drag is one undo step."),
@@ -265,8 +265,9 @@ pub enum Drag {
     CameraRotate { last: f32 },
     CameraWheel { until: f64 },
     /// Bone tool (ADR 0043): drawing a bone from instance `from` (or inside shape `from`, or on
-    /// from a shape bone's joint node, ADR 0071), joint `head` to `cur` (stage).
-    Bone { from: anicraft_engine::doc::ElementId, head: egui::Pos2, cur: egui::Pos2 },
+    /// from a shape bone's joint node, ADR 0071), joint `head` to `cur` (stage). `parent`: the
+    /// bone whose end the drag began on (ADR 0098).
+    Bone { from: anicraft_engine::doc::ElementId, parent: Option<anicraft_engine::doc::BoneId>, head: egui::Pos2, cur: egui::Pos2 },
     /// Bind tool (ADR 0071): a box from `start` to `cur` (stage) binding the points inside it.
     BindMarquee { start: egui::Pos2, cur: egui::Pos2 },
     /// Bind tool, Paint Weights (ADR 0090): a brush stroke whose last dab was at `last` (stage).
@@ -2482,6 +2483,62 @@ impl App {
                 self.run("timeline.goto", json!({"frame": 0}));
                 self.bone_sel = bones.get(1).copied().map(anicraft_engine::doc::BoneId);
                 self.tool = Tool::Bind;
+            }
+            Some("mixedbones") => {
+                // A mixed armature (ADR 0098): a character whose body is a shape with three
+                // bones inside it, its head a symbol instance on the body's neck joint, and a
+                // plume shape on the head with two bones of its own. Leaning at frame 1, the
+                // other way at frame 24; the head's bone picked.
+                self.run("layer.new", json!({"name": "Character"}));
+                let id = |v: Option<Value>, k: &str| v.and_then(|v| v[k].as_u64()).unwrap_or(0);
+                // The body: hips at y = 500, neck at y = 250, a point every 25 px up both sides.
+                let half = |y: f32| 34.0 + 14.0 * ((y - 250.0) / 250.0);
+                let ys: Vec<f32> = (0..=10).map(|i| 500.0 - 25.0 * i as f32).collect();
+                let mut d = String::new();
+                for (i, y) in ys.iter().enumerate() {
+                    d.push_str(&format!("{}{} {y} ", if i == 0 { "M" } else { "L" }, 540.0 - half(*y)));
+                }
+                for y in ys.iter().rev() {
+                    d.push_str(&format!("L{} {y} ", 540.0 + half(*y)));
+                }
+                d.push('Z');
+                let body = id(self.run("draw.path", json!({"d": d, "fill": "#5f8dd3", "stroke": "#1b2a4a", "stroke_width": 3, "object": true})), "element");
+                // The plume: a leaf from the top of the head up, a point every 10 px.
+                let wide = |y: f32| 3.0 + 9.0 * (1.0 - ((y - 105.0) / 45.0).powi(2)).max(0.0);
+                let ys: Vec<f32> = (0..=9).map(|i| 150.0 - 10.0 * i as f32).collect();
+                let mut d = String::new();
+                for (i, y) in ys.iter().enumerate() {
+                    d.push_str(&format!("{}{} {y} ", if i == 0 { "M" } else { "L" }, 540.0 - wide(*y)));
+                }
+                for y in ys.iter().rev() {
+                    d.push_str(&format!("L{} {y} ", 540.0 + wide(*y)));
+                }
+                d.push('Z');
+                let plume = id(self.run("draw.path", json!({"d": d, "fill": "#e8833a", "stroke": "#4a2c14", "stroke_width": 2, "object": true})), "element");
+                self.run("draw.rect", json!({"x": 496, "y": 150, "w": 88, "h": 96, "radius": 42, "fill": "#ffd9a8", "stroke": "#1b2a4a", "stroke_width": 3}));
+                let head = id(self.run("modify.convert_to_symbol", json!({"name": "Head"})), "instance");
+                self.run("timeline.insert_frame", json!({"frame": 23}));
+                self.run("timeline.goto", json!({"frame": 0}));
+                // Bones inside the body, from the hips up...
+                let mut bone = id(self.run("bone.add_in_shape", json!({"shape": body, "head": [540, 498], "tail": [540, 415]})), "bone");
+                let mut spine = vec![bone];
+                for y in [330, 252] {
+                    bone = id(self.run("bone.add_in_shape", json!({"parent": bone, "tail": [540, y]})), "bone");
+                    spine.push(bone);
+                }
+                // ...on from the neck joint to the head instance, from the head to the plume as
+                // a whole, and on inside the plume.
+                let neck = id(self.run("bone.add", json!({"parent": bone, "to": head, "tail": [540, 198]})), "bone");
+                let crest = id(self.run("bone.add", json!({"from": head, "to": plume, "tail": [540, 150]})), "bone");
+                let f1 = id(self.run("bone.add_in_shape", json!({"parent": crest, "tail": [540, 105]})), "bone");
+                let f2 = id(self.run("bone.add_in_shape", json!({"parent": f1, "tail": [540, 62]})), "bone");
+                for (b, (a, z)) in spine.iter().chain([&neck, &crest, &f1, &f2]).zip([(4, -3), (9, -8), (11, -10), (14, -12), (6, -4), (22, -18), (30, -26)]) {
+                    self.run("bone.pose", json!({"bone": b, "angle": a, "frame": 0}));
+                    self.run("bone.pose", json!({"bone": b, "angle": z, "frame": 23}));
+                }
+                self.run("timeline.goto", json!({"frame": 0}));
+                self.tool = Tool::Select;
+                crate::bone_tool::select(self, self.s.layer, Some(anicraft_engine::doc::BoneId(neck)));
             }
             Some("shapeweights") => {
                 // Painted weights (ADR 0090): the tail of `shapebones` at rest, a point added to

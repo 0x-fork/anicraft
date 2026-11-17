@@ -1257,6 +1257,8 @@ mod timeline_key_tests;
 #[cfg(test)]
 mod tests_bone_chain;
 #[cfg(test)]
+mod tests_mixed_bone;
+#[cfg(test)]
 mod view_tests;
 #[cfg(test)]
 mod path_text_tests;
