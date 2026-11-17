@@ -1325,7 +1325,7 @@ dependencies = [
 [[package]]
 name = "craft-media"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=3e0bb788a7ef48edc05285f05ee7b628c7b23bdd#3e0bb788a7ef48edc05285f05ee7b628c7b23bdd"
+source = "git+https://github.com/storytold/craft-libs?rev=fd91be74f078d7062945ff6512cf65afea0c73ac#fd91be74f078d7062945ff6512cf65afea0c73ac"
 
 [[package]]
 name = "craft-media"
@@ -1420,9 +1420,9 @@ dependencies = [
 [[package]]
 name = "craft-video"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=3e0bb788a7ef48edc05285f05ee7b628c7b23bdd#3e0bb788a7ef48edc05285f05ee7b628c7b23bdd"
+source = "git+https://github.com/storytold/craft-libs?rev=fd91be74f078d7062945ff6512cf65afea0c73ac#fd91be74f078d7062945ff6512cf65afea0c73ac"
 dependencies = [
- "craft-media 0.1.0 (git+https://github.com/storytold/craft-libs?rev=3e0bb788a7ef48edc05285f05ee7b628c7b23bdd)",
+ "craft-media 0.1.0 (git+https://github.com/storytold/craft-libs?rev=fd91be74f078d7062945ff6512cf65afea0c73ac)",
  "miniz_oxide 0.8.9",
  "thiserror 2.0.21",
 ]
