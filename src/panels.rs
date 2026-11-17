@@ -100,6 +100,10 @@ fn tool_items(app: &mut App, ui: &mut egui::Ui, area: Rect, flow: ToolFlow) {
         if active {
             a11y::anchor(ui, a11y::Region::Tools, area, &resp);
         }
+        // F1 over (or on) a tool's button: that tool's section of the guide (ADR 0096).
+        if resp.hovered() || resp.has_focus() {
+            crate::context_help::offer(app, ui.ctx(), crate::context_help::Subject::Tool(tool));
+        }
         let resp = resp.on_hover_text(format!("{name}
 {}", crate::i18n::t(tool.hint())));
         if resp.clicked() {
@@ -941,7 +945,7 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
         if !matches!(e.kind, ElementKind::Camera) {
             colour_effect_rows(app, ui, &e.color, m.color, EffectOf::Selection);
         }
-        // Blending and filters, on movie clips and buttons as in Animate.
+        // Blending and filters, on movie clips and buttons.
         if let ElementKind::Symbol { symbol, filters, .. } = &e.kind
             && app.s.doc.symbol(*symbol).is_some_and(|x| x.kind != SymbolKind::Graphic)
         {
@@ -2594,7 +2598,7 @@ fn tool_props(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     if app.tool == Tool::Text {
-        // What new text gets (the last style used, as in Animate).
+        // What new text gets (the last style used).
         let mut st = app.s.text_style.clone();
         if text_style_rows(app, ui, &mut st, None).is_some() {
             app.s.text_style = st;

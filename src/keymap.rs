@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const RESERVED: &[(&str, &str)] = &[
     ("Ctrl+K", tr_noop!("the command palette")),
     ("Ctrl+Shift+P", tr_noop!("the command palette")),
-    ("F1", tr_noop!("the shortcut editor")),
+    ("F1", tr_noop!("help for what you are pointing at")),
     ("Ctrl+Alt+Shift+K", tr_noop!("the shortcut editor")),
     ("Ctrl+U", tr_noop!("Preferences")),
     ("Ctrl+,", tr_noop!("Preferences")),

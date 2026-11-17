@@ -15,6 +15,17 @@
   * Saved commands are small JSON files in the settings folder's `Commands`, easy to share. They
     may do only what a plug-in may (no files, clipboard or preferences), and plug-ins can't run
     them. `anicraft-cli run` takes them; `macro.*` commands work headless and over MCP.
+* **Search the user guide, and help for what you are working on** (ADR 0096, M8).
+  * **Search** in every page of the bundled guide, offline: results as you type with the
+    chapter, heading and a passage with your words marked; `/` goes to the field, arrows move
+    through results, Enter opens one. `anicraft-cli guide search <words>` prints the same results.
+  * **F1** opens the guide at the section for the dialog in front, the panel or tool under the
+    pointer, the focused panel or the tool in hand (F1 on the Bone tool: building an armature).
+    Also **Help › Help for This**, **Help › Search the User Guide**, **? Help for…** in every
+    panel menu, and F1 on a command in the command palette.
+  * The keyboard shortcut editor moves from F1 to **Ctrl+Alt+Shift+K**, as in Animate.
+  * A new chapter, **Using this guide**.
+
 * **Sound output polish** (ADR 0095, M5).
   * The playhead follows the sound being **heard**: the device's latency is taken off and slow
     frames are dropped rather than drifting (within a frame over an hour of play in tests).
@@ -1436,7 +1447,7 @@
   play, go to a frame or label, button clicks) in Test Movie and HTML canvas export. Until
   then, opening an Animate document now says how many frame scripts it left out instead of
   dropping them silently.
-* **Filters** (Properties › Filters, on movie clip and button instances as in Animate): **Drop
+* **Filters** (Properties › Filters, on movie clip and button instances): **Drop
   Shadow**, **Blur**, **Glow** and **Adjust Color**, in any order and combination, with blur
   X/Y, quality (Low, Medium, High), strength, colour, angle and distance, and inner, knockout
   and hide object. They show on the stage and in every picture export; SVG export writes
@@ -1445,7 +1456,7 @@
   Animate. Animate documents keep their instances' filters (bevel and gradient filters are
   reported). Headless: `element.set_filters`.
 
-* **Blend modes** (Properties › Blending, on movie clip and button instances as in Animate):
+* **Blend modes** (Properties › Blending, on movie clip and button instances):
   Normal, Layer, Darken, Multiply, Lighten, Screen, Overlay, Hard Light, Add, Subtract,
   Difference, Invert, Alpha and Erase. The instance is composited on its own and then blended
   with what is below, on the stage and in every export. SVG export writes the CSS blend modes
@@ -1506,7 +1517,7 @@
   (loop, play once, single frame) and **First frame** (`symbol.set_kind`, `element.set_loop`).
 
 * **Symbols fade as one.** A symbol instance below full opacity now composites its contents
-  first and then fades the result, as in Animate, so overlapping parts no longer show through
+  first and then fades the result, so overlapping parts no longer show through
   each other. This applies on the stage and in PNG, GIF, sprite sheet and SVG exports (SVG
   uses `<g opacity>`). Fully opaque instances render exactly as before.
 
@@ -1548,7 +1559,7 @@
   Properties › Kind, and the easing is kept. Animate documents' shape tweens now import as
   shape tweens.
 
-* **Import to Stage** (File › Import, **Ctrl+R** as in Animate; `file.import`): SVG drawings
+* **Import to Stage** (File › Import, **Ctrl+R**; `file.import`): SVG drawings
   come in as editable shapes on a new layer named after the file, at the playhead, centred
   and selected, as one undo step. Supported: paths and basic shapes, groups, `use` and
   symbols, transforms, `viewBox`, inline and attribute styles, opacity, and linear and radial

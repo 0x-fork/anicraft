@@ -567,14 +567,7 @@ fn what_does_not_carry_across_is_reported() {
 #[test]
 fn bitmaps_and_sounds_are_embedded_once() {
     let mut doc = Document::default();
-    let png = {
-        let mut out = Vec::new();
-        let mut enc = png::Encoder::new(&mut out, 1, 1);
-        enc.set_color(png::ColorType::Rgba);
-        enc.set_depth(png::BitDepth::Eight);
-        enc.write_header().unwrap().write_image_data(&[255, 0, 0, 255]).unwrap();
-        out
-    };
+    let png = crate::encode_png(1, 1, &[255, 0, 0, 255]).unwrap();
     let bitmap = anicraft_doc::Bitmap::from_png(anicraft_doc::BitmapId(50), "dot", png).unwrap();
     doc.bitmaps.push(Arc::new(bitmap));
     let wav = anicraft_doc::audio::wav::encode(8000, 1, &[0.0; 80], anicraft_doc::audio::wav::Bits::Int16);
@@ -1448,4 +1441,33 @@ fn custom_and_per_property_eases_play_in_the_page_as_they_evaluate() {
     d.timeline_mut(0).layers = vec![layer(1, vec![Arc::new(k0), Arc::new(k1)]), layer(2, vec![kf(0, 24, vec![inst(3, 50, "", Affine::translate(100.0, 250.0), Vec::new())], vec![], "")])];
     d.sanitize();
     compare(&d, &vec![(vec![], vec![]); 30]);
+}
+
+// Frozen pre-cutover escaping oracle; original application behavior.
+fn previous_html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+#[test]
+fn shared_html_escape_preserves_all_unicode_scalars() {
+    for ch in (0..=0x10ffff).filter_map(char::from_u32) {
+        let mut buf = [0u8; 4];
+        let text = ch.encode_utf8(&mut buf);
+        assert_eq!(super::escape_html(text), previous_html_escape(text), "{ch:?}");
+    }
+    for text in ["<script>&\"'", "a\n\t\r\0z", "é 😀 &amp;", ""] {
+        assert_eq!(super::escape_html(text), previous_html_escape(text));
+    }
 }
