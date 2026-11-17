@@ -3550,19 +3550,8 @@ impl App {
             ui.set_min_width(360.0);
             let r = ui.add(egui::TextEdit::singleline(&mut p.text).desired_width(f32::INFINITY)).named(title);
             if p.focus {
-                r.request_focus();
-
-                if matches!(p.cmd, "layer.rename" | "scene.rename")
-                    && let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), r.id)
-                {
-                    let start = egui::text::CCursor::new(0);
-                    let end = egui::text::CCursor::new(p.text.chars().count());
-
-                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(start, end)));
-
-                    state.store(ui.ctx(), r.id);
-                }
-
+                // What the prompt offers (a name to change) is selected: typing replaces it.
+                crate::theme::focus_selected(ui, &r, &p.text);
                 p.focus = false;
             }
             if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {

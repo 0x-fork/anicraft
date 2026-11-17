@@ -7,7 +7,6 @@ use crate::app::App;
 use crate::theme::{FORM_LABEL_DOCK, Type, form_row, text};
 use anicraft_engine::doc::{Document, FolderId, LibraryEntry, SymbolKind};
 use egui::Key;
-use egui::text::{CCursor, CCursorRange};
 use serde_json::json;
 
 /// The dialog while it is open.
@@ -75,13 +74,7 @@ pub fn window(app: &mut App, ctx: &egui::Context) {
         form_row(ui, FORM_LABEL_DOCK, tr!("Name"), |ui| {
             let r = ui.add(egui::TextEdit::singleline(&mut d.name).desired_width(f32::INFINITY)).named(tr!("Symbol name"));
             if d.focus {
-                r.request_focus();
-                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), r.id) {
-                    let start = CCursor::new(0);
-                    let end = CCursor::new(d.name.chars().count());
-                    state.cursor.set_char_range(Some(CCursorRange::two(start, end)));
-                    state.store(ui.ctx(), r.id);
-                }
+                crate::theme::focus_selected(ui, &r, &d.name);
                 d.focus = false;
             }
             if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {

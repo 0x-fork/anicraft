@@ -103,17 +103,7 @@ pub fn window(app: &mut App, ctx: &egui::Context) {
         form_row(ui, FORM_LABEL_DIALOG, tr!("Name"), |ui| {
             let r = ui.add(egui::TextEdit::singleline(&mut d.name).desired_width(f32::INFINITY)).named(tr!("Layer name"));
             if d.focus {
-                r.request_focus();
-
-                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), r.id) {
-                    let start = egui::text::CCursor::new(0);
-                    let end = egui::text::CCursor::new(d.name.chars().count());
-
-                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(start, end)));
-
-                    state.store(ui.ctx(), r.id);
-                }
-
+                crate::theme::focus_selected(ui, &r, &d.name);
                 d.focus = false;
             }
             if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
@@ -285,7 +275,7 @@ mod tests {
         assert!(app.layer_props.is_some());
     }
 
-   #[test]
+    #[test]
     fn opening_layer_properties_selects_entire_name() {
         let ctx = egui::Context::default();
 
