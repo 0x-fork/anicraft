@@ -53,7 +53,7 @@ fn styling_a_range_splits_runs_and_colours_the_outline() {
     let px = anicraft_render::render_frame(&s.doc, 0, 1.0).unwrap();
     let count = |want: fn(u8, u8, u8) -> bool| {
         let raw = px.to_rgba8();
-        raw.chunks_exact(4).filter(|p| want(p[0], p[1], p[2])).count()
+        raw.as_chunks::<4>().0.iter().filter(|p| want(p[0], p[1], p[2])).count()
     };
     assert!(count(|r, g, b| r > 150 && g < 60 && b < 60) > 50, "red glyphs drawn");
     assert!(count(|r, g, b| r < 40 && g < 40 && b < 40) > 50, "black glyphs drawn");
