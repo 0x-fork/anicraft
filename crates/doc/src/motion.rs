@@ -2124,6 +2124,7 @@ mod tests {
             field: None,
             on_path: None,
             filters: vec![crate::Filter::new("drop_shadow").unwrap().into()],
+            ..crate::TextBlock::default()
         };
         let text = Arc::new(block);
         let base = Element { kind: ElementKind::Text(text.clone()), ..el(1, 0.0, 0.0) };

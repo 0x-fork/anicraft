@@ -377,9 +377,14 @@ var AniCraft = (function () {
       }
       if (e.tf) evalField(e.tf, e.n || "", xf, color, group, clip, masks, dl, child, v);
       else {
-        const it = { p: e.p, m: xf, f: e.f === undefined ? -1 : e.f, s: e.s || null, k: e.k || null, eo: !!e.eo, c: color, clip: clip, masks: masks, group: group };
-        dl.items.push(it);
-        if (v) v.item(it);
+        // Text in several colours with filters comes as one item of pieces (`pp`), so the
+        // pieces share one filter group (ADR 0085, ADR 0099).
+        const pieces = Array.isArray(e.pp) ? e.pp : [[e.p, e.f === undefined ? -1 : e.f]];
+        for (const pc of pieces) {
+          const it = { p: pc[0], m: xf, f: pc[1], s: e.s || null, k: e.k || null, eo: !!e.eo, c: color, clip: clip, masks: masks, group: group };
+          dl.items.push(it);
+          if (v) v.item(it);
+        }
       }
       if (filters && v) v.groupEnd(group, dl.groups[group]);
       return;
@@ -433,7 +438,11 @@ var AniCraft = (function () {
     dl.clips.push(clip);
     items.push(mk(tf.r, tf.kp, null, null, clip, inner));
     // Changed text has no outline here (it isn't laid out): the page draws it.
-    if (text === null) items.push(mk(tf.p, tf.f, null, null, inner, null));
+    // Authored text in several colours comes in pieces (ADR 0085).
+    if (text === null) {
+      if (tf.pp) for (const [pp, pf] of tf.pp) items.push(mk(pp, pf, null, null, inner, null));
+      else items.push(mk(tf.p, tf.f, null, null, inner, null));
+    }
     if (focused && fs && tf.k === "input" && fs.caret === fs.anchor) items.push(mk(tf.cr, tf.f, null, null, inner, null));
     if (tf.bd) items.push(mk(tf.r, -1, tf.bd, tf.bk || null, clip, null));
     for (const it of items) dl.items.push(it);

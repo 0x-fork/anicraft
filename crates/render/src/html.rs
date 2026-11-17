@@ -162,6 +162,16 @@ fn exact_color(c: Rgba) -> Value {
 /// `[r, g, b, a]`, ramps as `[offset, r, g, b, a]` stops, Adjust Color as its 4 × 5 matrix.
 /// The angle comes as the renderer's own `[cos, sin]` (`u`), so the page multiplies the same
 /// numbers and its whole-pixel offsets round as the renderer's do, at halves too.
+/// An item's filters, on a symbol instance or on text (ADR 0099): `fx` the list, `fm` how far
+/// they reach together (stage pixels); filters switched off are left out (ADR 0091).
+fn filters_json(filters: &[anicraft_doc::FilterEntry], item: &mut Map<String, Value>) {
+    let on = anicraft_doc::active_filters(filters);
+    if !on.is_empty() {
+        item.insert("fx".into(), Value::Array(on.iter().map(filter_json).collect()));
+        item.insert("fm".into(), exact(on.iter().map(anicraft_doc::Filter::margin).sum::<f32>()));
+    }
+}
+
 fn filter_json(f: &anicraft_doc::Filter) -> Value {
     use anicraft_doc::{Filter, FilterSide, GradientStop};
     let unit = |angle: f32| {
@@ -200,17 +210,6 @@ fn filter_json(f: &anicraft_doc::Filter) -> Value {
             let m = crate::filters::color_matrix(brightness, contrast, saturation, hue);
             json!({"k": "adjust", "m": m.iter().flatten().map(|v| exact(*v)).collect::<Vec<_>>()})
         }
-    }
-}
-
-/// An item's filters, on a symbol instance or on text (ADR 0099). Filters run in the page as
-/// the renderer runs them (ADR 0072): `fx` the list, `fm` how far they reach together (stage
-/// pixels). Filters switched off are left out, as the renderer leaves them (ADR 0091).
-fn filters_json(filters: &[anicraft_doc::FilterEntry], item: &mut Map<String, Value>) {
-    let on = anicraft_doc::active_filters(filters);
-    if !on.is_empty() {
-        item.insert("fx".into(), Value::Array(on.iter().map(filter_json).collect()));
-        item.insert("fm".into(), exact(on.iter().map(anicraft_doc::Filter::margin).sum::<f32>()));
     }
 }
 
@@ -577,6 +576,11 @@ impl<'a> Bake<'a> {
         if f.max_chars > 0 {
             o["mx"] = json!(f.max_chars.min(MAX_FIELD_CHARS as u32));
         }
+        // Authored text in several colours: its pieces, each in its colour (ADR 0085).
+        if !t.fills.is_empty() {
+            let pieces: Vec<Value> = t.fill_paths().iter().map(|(c, _, p)| json!([self.path(p), self.paint(&Paint::Solid(*c))])).collect();
+            o["pp"] = json!(pieces);
+        }
         if f.background {
             o["bg"] = json!(self.paint(&Paint::Solid(f.background_color)));
         }
@@ -590,10 +594,6 @@ impl<'a> Bake<'a> {
         }
         let mut item = Map::new();
         item.insert("tf".into(), o);
-        filters_json(&t.filters, &mut item);
-        if f.kind == anicraft_doc::TextKind::Input && anicraft_doc::any_active_filter(&t.filters) {
-            self.notes.entry(INPUT_FILTERS).or_default().insert(el.id.0);
-        }
         item.insert("id".into(), json!(el.id.0));
         if !el.name.is_empty() {
             item.insert("n".into(), json!(el.name));
@@ -603,6 +603,10 @@ impl<'a> Bake<'a> {
         }
         if let Some(c) = effect(&el.color.transform()) {
             item.insert("c".into(), c);
+        }
+        filters_json(&t.filters, &mut item);
+        if f.kind == anicraft_doc::TextKind::Input && anicraft_doc::any_active_filter(&t.filters) {
+            self.notes.entry(INPUT_FILTERS).or_default().insert(el.id.0);
         }
         Value::Object(item)
     }
@@ -649,14 +653,26 @@ impl<'a> Bake<'a> {
                     let item = self.field(el, t, f);
                     out.push(item);
                 }
-                None => {
-                    let fill = Paint::Solid(t.color);
+                // One shape per colour piece (ADR 0085); with filters, one item of pieces, so
+                // they draw in one filtered group as `evaluate` draws them (ADR 0099).
+                None if anicraft_doc::any_active_filter(&t.filters) => {
+                    let pieces = t.fill_paths();
+                    let fill = Paint::Solid(pieces.first().map_or(t.color, |p| p.0));
                     let mut item = self.shape(&t.outline, &el.transform, &el.color.transform(), Some(&fill), None, FillRule::NonZero);
-                    // Static text with filters draws in a group of its own, as a field does.
                     if let Some(o) = item.as_object_mut() {
+                        if pieces.len() > 1 {
+                            let pp: Vec<Value> = pieces.iter().map(|(c, _, p)| json!([self.path(p), self.paint(&Paint::Solid(*c))])).collect();
+                            o.insert("pp".into(), Value::Array(pp));
+                        }
                         filters_json(&t.filters, o);
                     }
                     out.push(item);
+                }
+                None => {
+                    for (color, _, path) in t.fill_paths() {
+                        let fill = Paint::Solid(color);
+                        out.push(self.shape(&path, &el.transform, &el.color.transform(), Some(&fill), None, FillRule::NonZero));
+                    }
                 }
             },
             ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, events } => {
@@ -697,6 +713,9 @@ impl<'a> Bake<'a> {
                 if !blend.is_normal() {
                     o.insert("bl".into(), json!(blend.key()));
                 }
+                // Filters run in the page as the renderer runs them (ADR 0072): `fx` the list,
+                // `fm` how far they reach together (stage pixels).
+                // Filters switched off are left out, as the renderer leaves them (ADR 0091).
                 filters_json(filters, &mut o);
                 if !events.is_empty() {
                     o.insert("ev".into(), Value::Array(events.iter().map(|h| json!([h.event.key(), actions(&h.actions)])).collect()));

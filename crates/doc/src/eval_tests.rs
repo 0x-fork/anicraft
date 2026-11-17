@@ -644,6 +644,7 @@ fn text_el(id: u64, filters: Vec<crate::FilterEntry>, field: Option<crate::TextF
         field,
         on_path: None,
         filters,
+        ..crate::TextBlock::default()
     };
     Element { id: ElementId(id), name: String::new(), transform: Affine::translate(50.0, 40.0), color: ColorEffect::Alpha(0.5), kind: ElementKind::Text(Arc::new(block)) }
 }
