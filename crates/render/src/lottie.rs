@@ -362,17 +362,12 @@ struct Track {
 
 /// Keep color sanitation and stop policy local; share only the flat Lottie wire order.
 fn gradient_values(stops: &[(f32, Rgba)]) -> Vec<f64> {
-    let gradient = craft_lottie::Gradient {
-        colors: stops
-            .iter()
-            .map(|(o, c)| {
-                let c = c.sanitized();
-                (f64::from(o.clamp(0.0, 1.0)), [f64::from(c.r), f64::from(c.g), f64::from(c.b)])
-            })
-            .collect(),
-        opacities: stops.iter().map(|(o, c)| (f64::from(o.clamp(0.0, 1.0)), f64::from(c.sanitized().a))).collect(),
-    };
-    gradient.flat_values().collect()
+    let colors = stops.iter().map(|(o, c)| {
+        let c = c.sanitized();
+        (f64::from(o.clamp(0.0, 1.0)), [f64::from(c.r), f64::from(c.g), f64::from(c.b)])
+    });
+    let opacities = stops.iter().map(|(o, c)| (f64::from(o.clamp(0.0, 1.0)), f64::from(c.sanitized().a)));
+    craft_lottie::flat_gradient_values(colors, opacities).collect()
 }
 
 fn rgb(c: Rgba) -> Vec<f64> {
