@@ -451,6 +451,9 @@ pub struct App {
     pub width_sel: Option<(anicraft_engine::doc::ElementId, usize)>,
     /// Opens the Tools bar's fill swatch picker on the next frame (the `swatches` screenshot).
     pub open_fill_swatch: bool,
+    /// The Properties panel's Scale lock (#304; view state, not undoable): while on, editing
+    /// one Scale axis adjusts the other so the selection keeps its width:height proportion.
+    pub scale_lock: bool,
     /// The bone picked on the stage (ADR 0043; view state).
     pub bone_sel: Option<anicraft_engine::doc::BoneId>,
     /// The Bind tool's options: Paint Weights, the brush, the focused point (ADR 0090).
@@ -733,6 +736,7 @@ impl App {
             points: Vec::new(),
             width_sel: None,
             open_fill_swatch: false,
+            scale_lock: false,
             bone_sel: None,
             bind: crate::bind_tool::BindOptions::default(),
             warp_pin: None,
