@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+* **Licences: the shared libraries' exceptions, and the licence check back in CI.** `symphonia` (MPL-2.0, sound decoding through `craft-audio`) and `jpeg-encoder` (IJG, JPEG export through `craft-image-codecs`) are accepted as crate-scoped exceptions, named in `NOTICE` and `ATTRIBUTION.md`, with the reasons in `docs/legal/compliance.md`. CI runs `cargo deny check licenses bans sources` in its own job again, since the shared gate doesn't.
 * **Filters: animated colours and switches, built-in presets, and filters on text** (ADR 0099,
   M5).
   * **Filter colours animate** in a motion tween: a glow's or shadow's colour, a bevel's shadow
