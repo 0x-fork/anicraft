@@ -1,7 +1,7 @@
 //! The Brush tool's command (ADR 0033): a stroke of the brush paints a filled shape, the area its
 //! tip sweeps, in the fill colour. Off Object Drawing an opaque stroke merges with the drawing
 //! (ADR 0031), placed by the paint mode. A fill that is not fully opaque stays its own shape and
-//! composites over what is behind it (ADR 0097).
+//! composites over what is behind it (ADR 0102).
 
 use crate::brush_library::{BUILTIN, BrushLibrary, BrushPreset, MAX_FILE_BYTES, MAX_USER_PRESETS, builtin, builtin_hint, clean_name};
 use crate::cmds_draw::{MAX_EXTENT, add_shape, object_param};
@@ -228,7 +228,7 @@ pub fn pressure_opacity(b: &BrushPreset, pts: &[Sample]) -> f32 {
 
 /// A fill that is not fully opaque has to stay its own shape. Merge drawing replaces what the
 /// new shape covers, so a wash would hide the colour behind it, and two washes of one colour
-/// would join instead of darkening where they cross (ADR 0097).
+/// would join instead of darkening where they cross (ADR 0102).
 fn paint_stacks(p: &Paint) -> bool {
     match p {
         Paint::Solid(c) => c.a < 1.0,
@@ -308,7 +308,7 @@ fn draw_brush(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) if p.get("color").is_none_or(Value::is_null) && color.a >= 1.0 => s.style.fill_paint_for(&Affine::translate(-c.x, -c.y), &local.bounds()),
         _ => Paint::Solid(color),
     };
-    // Opaque ink joins the drawing. A wash stays its own shape and composites (ADR 0097).
+    // Opaque ink joins the drawing. A wash stays its own shape and composites (ADR 0102).
     let own = object || paint_stacks(&fill);
     let id = ElementId(s.doc.alloc_id());
     let el = Element {
@@ -371,7 +371,7 @@ const PROFILE_TOLERANCE: f32 = 0.015;
 /// The Paint Brush (ADR 0068): the smoothed centre line as a stroke of the brush's size in the
 /// stroke colour, its width profile following the pressure and tapers, so the Width tool edits
 /// it afterwards. A stroke of one width is a plain line and merges like the Pencil's. A line
-/// that is not fully opaque stays its own shape (ADR 0097).
+/// that is not fully opaque stays its own shape (ADR 0102).
 fn paint_stroke(s: &mut Session, pts: &[Sample], b: &BrushPreset, smoothing: f32, tol: f32, color: Rgba, object: bool) -> Result<Value> {
     let (path, factors) = centre_stroke(pts, &b.shaping(), smoothing, tol * 0.25, PROFILE_SAMPLES);
     if !path.cmds.iter().any(|c| matches!(c, PathCmd::CubicTo(..) | PathCmd::LineTo(..))) {

@@ -388,7 +388,7 @@ pub fn draw_overlay(app: &App, painter: &egui::Painter, xf: Xf, hover: Option<Po
         let alpha = intended_alpha(&tip, paint.a, &app.brush_samples);
         // Opaque ink stays the convex sweep the Eraser shares. A wash is one coverage image
         // at the alpha the stroke will keep, so the pen-down ink matches the ink after you
-        // lift (ADR 0097).
+        // lift (ADR 0102).
         if (alpha * 255.0).round() >= 255.0 {
             let color = to_color32(anicraft_engine::doc::Rgba { a: 1.0, ..paint });
             draw_sweep(painter, xf, &tip, &app.brush_samples, color);

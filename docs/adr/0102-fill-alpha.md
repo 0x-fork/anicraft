@@ -1,4 +1,4 @@
-# ADR 0097: Fill alpha
+# ADR 0102: Fill alpha
 
 * Status: proposed
 * Relates to: ADR 0074 (the fill picker and gradients), ADR 0078 (swatches)
