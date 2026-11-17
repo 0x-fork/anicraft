@@ -1325,15 +1325,15 @@ dependencies = [
 [[package]]
 name = "craft-media"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=fd91be74f078d7062945ff6512cf65afea0c73ac#fd91be74f078d7062945ff6512cf65afea0c73ac"
-
-[[package]]
-name = "craft-media"
-version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=e2bf53f2bdba4828e21097774a568ed9c74b0004#e2bf53f2bdba4828e21097774a568ed9c74b0004"
 dependencies = [
  "thiserror 2.0.21",
 ]
+
+[[package]]
+name = "craft-media"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=fd91be74f078d7062945ff6512cf65afea0c73ac#fd91be74f078d7062945ff6512cf65afea0c73ac"
 
 [[package]]
 name = "craft-metadata"
