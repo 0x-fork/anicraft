@@ -2122,7 +2122,7 @@ fn bone_props(app: &mut App, ui: &mut egui::Ui, id: anicraft_engine::doc::BoneId
         }
     });
     // A bone inside a shape (ADR 0071): how many of the shape's points it moves.
-    let skin = layer.armature.as_ref().and_then(|a| a.skin.as_ref()).map(|k| (k.points.iter().filter(|p| p.weight(id) > 0.0).count(), k.points.len()));
+    let skin = layer.armature.as_ref().and_then(|a| a.skin_of(id).map(|k| (a.bound_count(id), k.points.len())));
     if let Some((mine, total)) = skin {
         row(ui, tr!("Points"), |ui| {
             ui.label(text(Type::Data, format!("{mine} / {total}"))).on_hover_text(tr!("How many of the shape's points this bone moves. Adjust them with the Bind tool"));
@@ -2138,7 +2138,7 @@ fn bone_props(app: &mut App, ui: &mut egui::Ui, id: anicraft_engine::doc::BoneId
                 app.run("bone.bind", json!({"bone": id.0, "mode": "auto"}));
             }
         }
-        let hint = if skin.is_some() { tr!("Removes the bone and the bones below it; the shape's points follow the bones that are left") } else { tr!("Removes the bone and the bones below it; their instances stay where they are, on a layer of their own") };
+        let hint = if skin.is_some() { tr!("Removes the bone and the bones below it; the shape's points follow the bones that are left") } else { tr!("Removes the bone and the bones below it; what they moved stays where it is, on a layer of its own") };
         if ui.button(tr!("Remove Bone")).named(tr!("Remove bone")).on_hover_text(hint).clicked() {
             app.request("bone.remove", json!({"bone": id.0}));
         }
@@ -2188,7 +2188,7 @@ fn bind_props(app: &mut App, ui: &mut egui::Ui, id: anicraft_engine::doc::BoneId
         }
     });
     let arm = layer.armature.as_ref();
-    let binding = arm.and_then(|a| a.skin.as_ref()).and_then(|k| k.points.get(point)).cloned().unwrap_or_default();
+    let binding = arm.and_then(|a| a.skin_of(id)).and_then(|k| k.points.get(point)).cloned().unwrap_or_default();
     let mut w = binding.weight(id) * 100.0;
     row(ui, tr!("Weight"), |ui| {
         let r = ui.add(egui::DragValue::new(&mut w).suffix(" %").speed(0.5).range(0.0..=100.0).max_decimals(1)).named(tr!("Bone weight at the point"));
