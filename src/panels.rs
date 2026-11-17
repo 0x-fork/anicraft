@@ -662,8 +662,15 @@ pub(crate) fn properties(app: &mut App, ui: &mut egui::Ui) {
     // The selection on every layer (ADR 0044).
     let sel: Vec<_> = app.s.selected_elements().into_iter().map(|(_, e)| e).collect();
 
+    // ---- while typing on the stage: the selected characters' style (ADR 0085) ----
+    app.text_props_rect = None;
+    if let Some(title) = app.text_edit.as_ref().map(crate::rich_edit::title) {
+        section(ui, "prop_text_selection", Section::Rule, &title, None, |ui| crate::rich_edit::selection_rows(app, ui));
+    }
     // ---- tool options first while a drawing tool is in hand: they're what you reach for ----
-    if matches!(app.tool, Tool::Rect | Tool::Oval | Tool::Star | Tool::Line | Tool::Pen | Tool::Text | Tool::Pencil | Tool::Brush | Tool::PaintBrush | Tool::Eraser | Tool::PaintBucket | Tool::InkBottle | Tool::Eyedropper) {
+    // (While typing, the selected characters' section above takes the Text tool's place.)
+    let typing = app.text_edit.is_some();
+    if (!typing || app.tool != Tool::Text) && matches!(app.tool, Tool::Rect | Tool::Oval | Tool::Star | Tool::Line | Tool::Pen | Tool::Text | Tool::Pencil | Tool::Brush | Tool::PaintBrush | Tool::Eraser | Tool::PaintBucket | Tool::InkBottle | Tool::Eyedropper) {
         let title = tr!("{tool} tool", tool = crate::i18n::t(app.tool.label()));
         section(ui, "prop_tool", Section::Rule, &title, None, |ui| tool_props(app, ui));
     }
@@ -945,11 +952,14 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
         if !matches!(e.kind, ElementKind::Camera) {
             colour_effect_rows(app, ui, &e.color, m.color, EffectOf::Selection);
         }
-        // Blending and filters, on movie clips and buttons.
+        // Blending and filters, on movie clips and buttons; filters on text too (ADR 0099).
         if let ElementKind::Symbol { symbol, filters, .. } = &e.kind
             && app.s.doc.symbol(*symbol).is_some_and(|x| x.kind != SymbolKind::Graphic)
         {
             filter_rows(app, ui, filters, m.filters);
+        }
+        if let ElementKind::Text(t) = &e.kind {
+            filter_rows(app, ui, &t.filters, m.filters);
         }
         if let ElementKind::Symbol { symbol, blend, .. } = &e.kind
             && app.s.doc.symbol(*symbol).is_some_and(|x| x.kind != SymbolKind::Graphic)
@@ -1058,13 +1068,32 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             // A field's lines wrap by its line type, at its box (rows above); static text by width.
             let mut width = t.width;
             let wrap = if t.field.is_some() { None } else { Some(&mut width) };
-            if let Some((label, p)) = text_style_rows(app, ui, &mut st, wrap) {
+            // The whole block's characters: what they share, and "mixed" where they differ.
+            let n = t.char_count();
+            let sum = anicraft_engine::doc::rich_text::summarize(&t.styled_runs(), 0, n);
+            let paras = t.paragraph_styles();
+            let p0 = paras.first().copied().unwrap_or_default();
+            let mx = TextMixed {
+                font: sum.font.is_none(),
+                size: sum.size.is_none(),
+                color: sum.color.is_none(),
+                bold: sum.bold.is_none(),
+                italic: sum.italic.is_none(),
+                letter_spacing: sum.letter_spacing.is_none(),
+                align: paras.iter().any(|p| p.align != p0.align),
+                line_spacing: paras.iter().any(|p| p.line_spacing != p0.line_spacing),
+            };
+            if let Some((label, p)) = text_style_rows(app, ui, &mut st, wrap, Some(&mx)) {
+                live(app, label, "text.edit", p);
+            }
+            let mut extra = TextExtra { shift: sum.shift, underline: sum.underline, url: sum.url.clone(), indent: p0.indent, left_margin: p0.left_margin, right_margin: p0.right_margin, layout_mixed: paras.iter().any(|p| p.indent != p0.indent || p.left_margin != p0.left_margin || p.right_margin != p0.right_margin) };
+            if let Some((label, p)) = text_more_rows(ui, &mut extra) {
                 live(app, label, "text.edit", p);
             }
             row_prose(ui, tr!("Text"), |ui| {
-                if ui.button(tr!("Edit Text")).on_hover_text(tr!("Type on the stage (or double-click the text)")).clicked() {
+                if ui.button(tr!("Edit Text")).on_hover_text(tr!("Type on the stage (or double-click the text); select characters to style them on their own")).clicked() {
                     let at = e.transform.apply(anicraft_engine::geom::Vec2::ZERO);
-                    app.text_edit = Some(crate::app::TextEditing { at: pos2(at.x, at.y), element: Some(e.id), text: t.text.clone(), original: t.text.clone(), focus: true });
+                    app.text_edit = Some(crate::app::TextEditing::new(pos2(at.x, at.y), Some(e.id), Some(t), &app.s.text_style));
                 }
             });
             text_path_rows(app, ui, e, t);
@@ -1338,6 +1367,7 @@ pub fn sync_filter_presets(app: &mut App) {
         return;
     }
     app.prefs.filter_presets = app.s.filter_presets.clone();
+    app.prefs.filter_presets_hidden = app.s.filter_presets.hidden().to_vec();
     if app.shot.is_none()
         && let Err(e) = app.prefs.save()
     {
@@ -1354,6 +1384,8 @@ enum FilterAct {
     Paste,
     Apply(String),
     Delete(String),
+    /// Hide a built-in preset from the menu, or show it again.
+    Hide(String, bool),
 }
 
 /// A filter's grip: drag it up or down the list to reorder, or, focused, Alt+Up and Alt+Down
@@ -1394,7 +1426,10 @@ fn filter_rows(app: &mut App, ui: &mut egui::Ui, current: &[anicraft_engine::doc
     let n = list.len();
     let mut changed: Option<&'static str> = None;
     let mut act: Option<FilterAct> = None;
-    let presets: Vec<(String, String)> = app.s.filter_presets.presets().iter().map(|p| (p.name.clone(), p.filters.iter().map(|f| crate::i18n::t(f.filter.label())).collect::<Vec<_>>().join(", "))).collect();
+    let what = |p: &anicraft_engine::filter_library::FilterPreset| p.filters.iter().map(|f| crate::i18n::t(f.filter.label())).collect::<Vec<_>>().join(", ");
+    let presets: Vec<(String, String)> = app.s.filter_presets.presets().iter().map(|p| (p.name.clone(), what(p))).collect();
+    // The built-in presets (ADR 0099): name, what is in it, and whether the menu lists it.
+    let builtin: Vec<(&'static str, String, bool)> = anicraft_engine::filter_library::BUILTIN_NAMES.into_iter().zip(anicraft_engine::filter_library::builtins().iter()).map(|(name, p)| (name, what(p), !app.s.filter_presets.is_hidden(name))).collect();
     let copied = app.s.filter_clipboard.as_ref().map_or(0, Vec::len);
     let mut naming = app.filter_naming.name.clone();
     row_prose(ui, tr!("Filters"), |ui| {
@@ -1412,6 +1447,20 @@ fn filter_rows(app: &mut App, ui: &mut egui::Ui, current: &[anicraft_engine::doc
         .set_name(tr!("Add filter"));
         let pr = crate::timeline::icon_button(ui, tr!("Filter presets: apply, save, rename, delete, import, export"), None, Icon::Folder);
         egui::Popup::menu(&pr).id(egui::Id::new("anicraft.filters.presets")).show(|ui| {
+            // The built-in presets the menu lists, then your own.
+            let shown: Vec<&(&'static str, String, bool)> = builtin.iter().filter(|b| b.2).collect();
+            if !shown.is_empty() {
+                ui.label(text(Type::Caption, tr!("Built-in")));
+            }
+            for (name, what, _) in shown.iter().copied() {
+                if ui.button(crate::i18n::t(name)).on_hover_text(tr!("Apply: {filters} (replaces the filters)", filters = what.as_str())).clicked() {
+                    act = Some(FilterAct::Apply((*name).to_string()));
+                }
+            }
+            if !shown.is_empty() {
+                ui.separator();
+                ui.label(text(Type::Caption, tr!("Yours")));
+            }
             if presets.is_empty() {
                 ui.label(text(Type::Caption, tr!("No presets yet. Set up filters, then Save as Preset.")));
             }
@@ -1421,6 +1470,16 @@ fn filter_rows(app: &mut App, ui: &mut egui::Ui, current: &[anicraft_engine::doc
                 }
             }
             ui.separator();
+            // Built-in presets can't be deleted: untick one to take it off this menu.
+            ui.menu_button(tr!("Built-in Presets"), |ui| {
+                ui.label(text(Type::Caption, tr!("Untick one to hide it from this menu")));
+                for (name, _, listed) in &builtin {
+                    let mut on = *listed;
+                    if crate::theme::checkbox(ui, &mut on, crate::i18n::t(name)).named(&tr!("Show the built-in preset {name}", name = crate::i18n::t(name))).changed() {
+                        act = Some(FilterAct::Hide((*name).to_string(), !on));
+                    }
+                }
+            });
             if ui.add_enabled(n > 0, egui::Button::new(tr!("Save as Preset…"))).on_hover_text(tr!("Keep these filters under a name, for any document")).clicked() {
                 naming = Some((String::new(), None));
             }
@@ -1695,6 +1754,9 @@ fn filter_rows(app: &mut App, ui: &mut egui::Ui, current: &[anicraft_engine::doc
                 app.run("filter.preset_apply", json!({"name": name}));
             }
             FilterAct::Delete(name) => app.request("filter.preset_delete", json!({"name": name})),
+            FilterAct::Hide(name, hidden) => {
+                app.run("filter.preset_hide", json!({"name": name, "hidden": hidden}));
+            }
         }
         return;
     }
@@ -1912,10 +1974,101 @@ fn ramp_editor(ui: &mut egui::Ui, fname: &str, stops: &mut Vec<anicraft_engine::
     ui.data_mut(|d| d.insert_temp(sel_id, sel));
 }
 
+/// Which of the text style rows' values differ across the characters (or paragraphs) they show
+/// (ADR 0085): those rows show the first one's and say "mixed".
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TextMixed {
+    pub font: bool,
+    pub size: bool,
+    pub color: bool,
+    pub bold: bool,
+    pub italic: bool,
+    pub letter_spacing: bool,
+    pub align: bool,
+    pub line_spacing: bool,
+}
+
+/// "mixed" after a text row whose characters differ.
+fn mixed_chars(ui: &mut egui::Ui, differs: bool) {
+    if differs {
+        ui.label(text(Type::Caption, tr!("mixed")).color(T.text_faint)).on_hover_text(tr!("The characters differ here; it shows the first one's. A change applies to all of them"));
+    }
+}
+
+/// The rest of a text's character and paragraph style (ADR 0085): baseline shift, underline,
+/// link, indent and margins. `None` values are mixed.
+#[derive(Clone, Debug, Default)]
+pub struct TextExtra {
+    pub shift: Option<anicraft_engine::doc::BaselineShift>,
+    pub underline: Option<bool>,
+    pub url: Option<String>,
+    pub indent: f32,
+    pub left_margin: f32,
+    pub right_margin: f32,
+    /// The paragraphs' indents or margins differ.
+    pub layout_mixed: bool,
+}
+
+/// Baseline shift, underline, link, indent and margin rows. Returns the edit made, as params
+/// (one key per change), with an undo label.
+pub fn text_more_rows(ui: &mut egui::Ui, x: &mut TextExtra) -> Option<(&'static str, Value)> {
+    use anicraft_engine::doc::BaselineShift;
+    let mut out: Option<(&'static str, Value)> = None;
+    row_prose(ui, tr!("Position"), |ui| {
+        let label = |s: BaselineShift| match s {
+            BaselineShift::Normal => tr!("Normal"),
+            BaselineShift::Superscript => tr!("Superscript"),
+            BaselineShift::Subscript => tr!("Subscript"),
+        };
+        let shown = x.shift.map_or_else(|| tr!("mixed").to_string(), |s| label(s).to_string());
+        egui::ComboBox::from_id_salt("text_shift").selected_text(shown).show_ui(ui, |ui| {
+            for s in BaselineShift::ALL {
+                if ui.selectable_label(x.shift == Some(s), label(s)).clicked() {
+                    x.shift = Some(s);
+                    out = Some((tr_noop!("Superscript and subscript"), json!({"shift": s.key()})));
+                }
+            }
+        })
+        .response
+        .set_name(tr!("Character position"));
+        // The letter on the button is the usual underline mark.
+        let on = x.underline == Some(true);
+        if ui.selectable_label(on, text(Type::Body, "U").underline()).named(tr!("Underline")).on_hover_text(tr!("Underline")).clicked() {
+            x.underline = Some(!on);
+            out = Some((tr_noop!("Underline"), json!({"underline": !on})));
+        }
+        mixed_chars(ui, x.underline.is_none());
+    });
+    row_prose(ui, tr!("Link"), |ui| {
+        let mut url = x.url.clone().unwrap_or_default();
+        let r = ui.add(egui::TextEdit::singleline(&mut url).desired_width(170.0).font(crate::theme::font(Type::Path)).hint_text(if x.url.is_none() { tr!("mixed") } else { tr!("https://…") })).named(tr!("Link")).on_hover_text(tr!("Where the characters link to in SVG and other exports; empty for no link"));
+        if r.lost_focus() && x.url.as_deref() != Some(url.trim()) {
+            x.url = Some(url.trim().to_string());
+            out = Some((tr_noop!("Text link"), json!({"url": url.trim()})));
+        }
+    });
+    row(ui, tr!("Indent"), |ui| {
+        if ui.add(egui::DragValue::new(&mut x.indent).suffix(" px").speed(0.5).range(-1000.0..=1000.0).max_decimals(1)).named(tr!("First-line indent")).on_hover_text(tr!("First-line indent")).changed() {
+            out = Some((tr_noop!("Indent"), json!({"indent": x.indent})));
+        }
+        mixed_chars(ui, x.layout_mixed);
+    });
+    row(ui, tr!("Margins"), |ui| {
+        if ui.add(egui::DragValue::new(&mut x.left_margin).prefix(format!("{} ", tr!("Left"))).suffix(" px").speed(0.5).range(0.0..=1000.0).max_decimals(1)).named(tr!("Left margin")).changed() {
+            out = Some((tr_noop!("Margins"), json!({"left_margin": x.left_margin})));
+        }
+        if ui.add(egui::DragValue::new(&mut x.right_margin).prefix(format!("{} ", tr!("Right"))).suffix(" px").speed(0.5).range(0.0..=1000.0).max_decimals(1)).named(tr!("Right margin")).changed() {
+            out = Some((tr_noop!("Margins"), json!({"right_margin": x.right_margin})));
+        }
+    });
+    out
+}
+
 /// Font, size, style, colour, alignment and spacing rows for text. Returns the edit made, as
 /// `text.edit` params (one key per change), with an undo label.
-pub fn text_style_rows(app: &mut App, ui: &mut egui::Ui, st: &mut anicraft_engine::cmds_text::TextStyle, width: Option<&mut Option<f32>>) -> Option<(&'static str, Value)> {
+pub fn text_style_rows(app: &mut App, ui: &mut egui::Ui, st: &mut anicraft_engine::cmds_text::TextStyle, width: Option<&mut Option<f32>>, mx: Option<&TextMixed>) -> Option<(&'static str, Value)> {
     use anicraft_engine::doc::TextAlign;
+    let mx = mx.copied().unwrap_or_default();
     let families = app.font_families.get_or_insert_with(|| anicraft_engine::text::Fonts::get().families().to_vec()).clone();
     let mut out: Option<(&'static str, Value)> = None;
     row_prose(ui, tr!("Font"), |ui| {
@@ -1933,6 +2086,7 @@ pub fn text_style_rows(app: &mut App, ui: &mut egui::Ui, st: &mut anicraft_engin
         })
         .response
         .set_name(tr!("Font"));
+        mixed_chars(ui, mx.font);
     });
     row(ui, tr!("Size"), |ui| {
         if ui.add(egui::DragValue::new(&mut st.size).suffix(" px").speed(0.25).range(1.0..=2000.0).max_decimals(1)).named(tr!("Font size")).changed() {
@@ -1943,6 +2097,7 @@ pub fn text_style_rows(app: &mut App, ui: &mut egui::Ui, st: &mut anicraft_engin
             st.color = Rgba::hex(u32::from(c[0]) << 16 | u32::from(c[1]) << 8 | u32::from(c[2]));
             out = Some((tr_noop!("Text colour"), json!({"color": hex(c)})));
         }
+        mixed_chars(ui, mx.size || mx.color);
     });
     row_prose(ui, tr!("Style"), |ui| {
         // The letters on the two buttons are the usual bold and italic marks.
@@ -1954,6 +2109,7 @@ pub fn text_style_rows(app: &mut App, ui: &mut egui::Ui, st: &mut anicraft_engin
             st.italic = !st.italic;
             out = Some((tr_noop!("Italic"), json!({"italic": st.italic})));
         }
+        mixed_chars(ui, mx.bold || mx.italic);
         ui.separator();
         for (a, label, name, key) in [(TextAlign::Left, tr!("Left"), tr!("Align left"), "left"), (TextAlign::Center, tr!("Centre"), tr!("Align centre"), "center"), (TextAlign::Right, tr!("Right"), tr!("Align right"), "right")] {
             if ui.selectable_label(st.align == a, label).named(name).on_hover_text(name).clicked() {
@@ -1961,6 +2117,7 @@ pub fn text_style_rows(app: &mut App, ui: &mut egui::Ui, st: &mut anicraft_engin
                 out = Some((tr_noop!("Text alignment"), json!({"align": key})));
             }
         }
+        mixed_chars(ui, mx.align);
     });
     row(ui, tr!("Spacing"), |ui| {
         if ui.add(egui::DragValue::new(&mut st.letter_spacing).prefix(format!("{} ", tr!("Letters"))).suffix(" px").speed(0.1).range(-1000.0..=1000.0).max_decimals(1)).named(tr!("Letter spacing")).changed() {
@@ -1969,6 +2126,7 @@ pub fn text_style_rows(app: &mut App, ui: &mut egui::Ui, st: &mut anicraft_engin
         if ui.add(egui::DragValue::new(&mut st.line_spacing).prefix(format!("{} ", tr!("Lines"))).suffix(" px").speed(0.1).range(-1000.0..=1000.0).max_decimals(1)).named(tr!("Line spacing")).changed() {
             out = Some((tr_noop!("Line spacing"), json!({"line_spacing": st.line_spacing})));
         }
+        mixed_chars(ui, mx.letter_spacing || mx.line_spacing);
     });
     if let Some(width) = width {
         row(ui, tr!("Width"), |ui| {
@@ -2170,7 +2328,7 @@ fn bone_props(app: &mut App, ui: &mut egui::Ui, id: anicraft_engine::doc::BoneId
         }
     });
     // A bone inside a shape (ADR 0071): how many of the shape's points it moves.
-    let skin = layer.armature.as_ref().and_then(|a| a.skin.as_ref()).map(|k| (k.points.iter().filter(|p| p.weight(id) > 0.0).count(), k.points.len()));
+    let skin = layer.armature.as_ref().and_then(|a| a.skin_of(id).map(|k| (a.bound_count(id), k.points.len())));
     if let Some((mine, total)) = skin {
         row(ui, tr!("Points"), |ui| {
             ui.label(text(Type::Data, format!("{mine} / {total}"))).on_hover_text(tr!("How many of the shape's points this bone moves. Adjust them with the Bind tool"));
@@ -2186,7 +2344,7 @@ fn bone_props(app: &mut App, ui: &mut egui::Ui, id: anicraft_engine::doc::BoneId
                 app.run("bone.bind", json!({"bone": id.0, "mode": "auto"}));
             }
         }
-        let hint = if skin.is_some() { tr!("Removes the bone and the bones below it; the shape's points follow the bones that are left") } else { tr!("Removes the bone and the bones below it; their instances stay where they are, on a layer of their own") };
+        let hint = if skin.is_some() { tr!("Removes the bone and the bones below it; the shape's points follow the bones that are left") } else { tr!("Removes the bone and the bones below it; what they moved stays where it is, on a layer of its own") };
         if ui.button(tr!("Remove Bone")).named(tr!("Remove bone")).on_hover_text(hint).clicked() {
             app.request("bone.remove", json!({"bone": id.0}));
         }
@@ -2236,7 +2394,7 @@ fn bind_props(app: &mut App, ui: &mut egui::Ui, id: anicraft_engine::doc::BoneId
         }
     });
     let arm = layer.armature.as_ref();
-    let binding = arm.and_then(|a| a.skin.as_ref()).and_then(|k| k.points.get(point)).cloned().unwrap_or_default();
+    let binding = arm.and_then(|a| a.skin_of(id)).and_then(|k| k.points.get(point)).cloned().unwrap_or_default();
     let mut w = binding.weight(id) * 100.0;
     row(ui, tr!("Weight"), |ui| {
         let r = ui.add(egui::DragValue::new(&mut w).suffix(" %").speed(0.5).range(0.0..=100.0).max_decimals(1)).named(tr!("Bone weight at the point"));
@@ -2600,7 +2758,7 @@ fn tool_props(app: &mut App, ui: &mut egui::Ui) {
     if app.tool == Tool::Text {
         // What new text gets (the last style used).
         let mut st = app.s.text_style.clone();
-        if text_style_rows(app, ui, &mut st, None).is_some() {
+        if text_style_rows(app, ui, &mut st, None, None).is_some() {
             app.s.text_style = st;
         }
         return;
