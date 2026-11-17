@@ -102,6 +102,9 @@ pub struct HtmlExport {
 const PLUGIN_SCRIPTS: &str = "plug-in frame scripts (not exported; they need the plug-in host)";
 const KEPT_SCRIPTS: &str = "kept frame scripts outside the ActionScript subset (not run; kept in the document only)";
 const NINE_SLICE: &str = "9-slice scaling (scaled as a whole)";
+/// An input field is a real form element over the canvas (ADR 0066): what is typed is the
+/// browser's to draw, so the filters reach the field's box, border and authored text only.
+const INPUT_FILTERS: &str = "filters on input text (typed text is drawn by the browser, without them)";
 const OUTSIDE_CALLS: &str = "script calls that reach outside the movie (ignored)";
 const WARPED_BITMAPS: &str = "warped bitmaps (the image shows unbent inside its bent outline; warped shapes come across)";
 const FIELD_FONTS: &str = "text fields (their authored text keeps its outlines; text a script or the viewer changes is drawn with the browser's fonts)";
@@ -197,6 +200,17 @@ fn filter_json(f: &anicraft_doc::Filter) -> Value {
             let m = crate::filters::color_matrix(brightness, contrast, saturation, hue);
             json!({"k": "adjust", "m": m.iter().flatten().map(|v| exact(*v)).collect::<Vec<_>>()})
         }
+    }
+}
+
+/// An item's filters, on a symbol instance or on text (ADR 0099). Filters run in the page as
+/// the renderer runs them (ADR 0072): `fx` the list, `fm` how far they reach together (stage
+/// pixels). Filters switched off are left out, as the renderer leaves them (ADR 0091).
+fn filters_json(filters: &[anicraft_doc::FilterEntry], item: &mut Map<String, Value>) {
+    let on = anicraft_doc::active_filters(filters);
+    if !on.is_empty() {
+        item.insert("fx".into(), Value::Array(on.iter().map(filter_json).collect()));
+        item.insert("fm".into(), exact(on.iter().map(anicraft_doc::Filter::margin).sum::<f32>()));
     }
 }
 
@@ -576,6 +590,10 @@ impl<'a> Bake<'a> {
         }
         let mut item = Map::new();
         item.insert("tf".into(), o);
+        filters_json(&t.filters, &mut item);
+        if f.kind == anicraft_doc::TextKind::Input && anicraft_doc::any_active_filter(&t.filters) {
+            self.notes.entry(INPUT_FILTERS).or_default().insert(el.id.0);
+        }
         item.insert("id".into(), json!(el.id.0));
         if !el.name.is_empty() {
             item.insert("n".into(), json!(el.name));
@@ -633,7 +651,12 @@ impl<'a> Bake<'a> {
                 }
                 None => {
                     let fill = Paint::Solid(t.color);
-                    out.push(self.shape(&t.outline, &el.transform, &el.color.transform(), Some(&fill), None, FillRule::NonZero));
+                    let mut item = self.shape(&t.outline, &el.transform, &el.color.transform(), Some(&fill), None, FillRule::NonZero);
+                    // Static text with filters draws in a group of its own, as a field does.
+                    if let Some(o) = item.as_object_mut() {
+                        filters_json(&t.filters, o);
+                    }
+                    out.push(item);
                 }
             },
             ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, events } => {
@@ -674,14 +697,7 @@ impl<'a> Bake<'a> {
                 if !blend.is_normal() {
                     o.insert("bl".into(), json!(blend.key()));
                 }
-                // Filters run in the page as the renderer runs them (ADR 0072): `fx` the list,
-                // `fm` how far they reach together (stage pixels).
-                // Filters switched off are left out, as the renderer leaves them (ADR 0091).
-                let on = anicraft_doc::active_filters(filters);
-                if !on.is_empty() {
-                    o.insert("fx".into(), Value::Array(on.iter().map(filter_json).collect()));
-                    o.insert("fm".into(), exact(on.iter().map(anicraft_doc::Filter::margin).sum::<f32>()));
-                }
+                filters_json(filters, &mut o);
                 if !events.is_empty() {
                     o.insert("ev".into(), Value::Array(events.iter().map(|h| json!([h.event.key(), actions(&h.actions)])).collect()));
                 }

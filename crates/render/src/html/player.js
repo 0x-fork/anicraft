@@ -363,11 +363,25 @@ var AniCraft = (function () {
       }
     }
     const xf = mul(cx.xf, m);
-    if (e.tf) return evalField(e.tf, e.n || "", xf, concat(cx.c, fx), cx.group, clip, masks, dl, child, v);
-    if (e.y === undefined) {
-      const it = { p: e.p, m: xf, f: e.f === undefined ? -1 : e.f, s: e.s || null, k: e.k || null, eo: !!e.eo, c: concat(cx.c, fx), clip: clip, masks: masks, group: cx.group };
-      dl.items.push(it);
-      if (v) v.item(it);
+    if (e.tf || e.y === undefined) {
+      // Text with filters draws in a group of its own, as a movie clip does (eval.rs, ADR
+      // 0099): the group fades at the text's alpha and its items keep the rest of the effect.
+      // (Mask artwork takes neither.)
+      const filters = masks === null && Array.isArray(e.fx) && e.fx.length ? e.fx : null;
+      let color = concat(cx.c, fx), group = cx.group;
+      if (filters) {
+        group = dl.groups.length;
+        dl.groups.push({ parent: cx.group, alpha: fx[7] === 0 ? Math.min(Math.max(fx[3], 0), 1) : 1, blend: "normal", clip: clip, filters: filters, margin: e.fm || 0 });
+        color = concat(cx.c, fx[7] === 0 ? [fx[0], fx[1], fx[2], 1, fx[4], fx[5], fx[6], 0] : fx);
+        if (v) v.groupBegin(group, dl.groups[group]);
+      }
+      if (e.tf) evalField(e.tf, e.n || "", xf, color, group, clip, masks, dl, child, v);
+      else {
+        const it = { p: e.p, m: xf, f: e.f === undefined ? -1 : e.f, s: e.s || null, k: e.k || null, eo: !!e.eo, c: color, clip: clip, masks: masks, group: group };
+        dl.items.push(it);
+        if (v) v.item(it);
+      }
+      if (filters && v) v.groupEnd(group, dl.groups[group]);
       return;
     }
     const sym = M.symbols[e.y];
