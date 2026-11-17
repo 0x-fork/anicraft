@@ -1112,6 +1112,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         let mut dots = egui::Mesh::default();
         let mut budget = MAX_DOTS;
         let dl = app.s.display_list();
+        let mut occluders = Occluders::new(&dl.items, &to_px, canvas, gap);
 
         for (index, item) in dl.items.iter().enumerate().filter(|(_, i)|
             app.s.selection.contains(i.layer, i.element)
@@ -1135,21 +1136,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 gap,
             );
 
-            exclude_overlying_artwork(
-                &mut fills,
-                &dl.items[index + 1..],
-                &to_px,
-                canvas,
-                gap,
-            );
+            occluders.exclude(&mut fills, index + 1);
 
-            exclude_overlying_artwork(
-                &mut strokes,
-                &dl.items[index + 1..],
-                &to_px,
-                canvas,
-                gap,
-            );
+            occluders.exclude(&mut strokes, index + 1);
 
             let (fill_colour, stroke_colour) = selection_colours(item);
 
@@ -1163,13 +1152,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             );
 
             // Foreground artwork must still hide the backing.
-            exclude_overlying_artwork(
-                &mut backing_spans,
-                &dl.items[index + 1..],
-                &to_px,
-                canvas,
-                gap,
-            );
+            occluders.exclude(&mut backing_spans, index + 1);
 
             for span in &backing_spans {
                 backing.add_colored_rect(*span, stroke_backing);
@@ -2168,94 +2151,112 @@ fn subtract_occlusion_spans(
     }
 }
 
-/// Hide selection stipple behind opaque fills and strokes
-/// that appear later in drawing order, including on other layers.
-/// Translucent and bitmap fills need separate handling.
-fn exclude_overlying_artwork(
-    fills: &mut Vec<Rect>,
-    above: &[anicraft_engine::doc::DisplayItem],
-    to_px: &Affine,
+/// Most occluding outlines built in a frame. Past it the stipple shows through what is above
+/// it, as it did before occlusion; it only bounds a pathological drawing.
+const MAX_OCCLUDERS: usize = 4_000;
+
+/// A display item that can hide a selection's stipple: where its opaque parts are on screen
+/// and, once something selected lies under them, their outlines.
+struct Occluder {
+    /// Screen bounds of the opaque parts (the stroke's reach included).
+    bounds: Rect,
+    fill: bool,
+    stroke: bool,
+    /// The fill's and the stroke's outlines in screen space, built on first use.
+    lines: Option<[Vec<anicraft_engine::geom::Polyline>; 2]>,
+}
+
+/// The artwork that hides selection stipple: opaque fills and strokes later in drawing order,
+/// including on other layers. Translucent, bitmap, clipped and fading artwork hides nothing.
+///
+/// A frame asks once per selected fill, stroke and backing, so the work is shared: each item's
+/// bounds are found once, an item is only looked at where its bounds meet the selected spans,
+/// and its outline is built once however many selected shapes lie under it (a selected raw
+/// drawing of 720 pieces took 600 ms a frame when every piece outlined everything above it).
+struct Occluders<'a> {
+    items: &'a [anicraft_engine::doc::DisplayItem],
+    to_px: Affine,
     clip: Rect,
     gap: f32,
-) {
-    use anicraft_engine::geom::FillRule;
+    /// One entry per item once anything asks; `None` for items that hide nothing.
+    known: Vec<Option<Occluder>>,
+    built: usize,
+    batch: Vec<Rect>,
+}
 
-    if fills.is_empty() {
-        return;
+impl<'a> Occluders<'a> {
+    fn new(items: &'a [anicraft_engine::doc::DisplayItem], to_px: &Affine, clip: Rect, gap: f32) -> Self {
+        Self { items, to_px: *to_px, clip, gap, known: Vec::new(), built: 0, batch: Vec::new() }
     }
 
-    let mut occluders = Vec::new();
-
-    for item in above {
-        if item.guide
-            || item.masks.is_some()
-            || item.outline.is_some()
-        {
-            continue;
+    /// What `item` hides, if anything.
+    fn occluder(item: &anicraft_engine::doc::DisplayItem, to_px: &Affine) -> Option<Occluder> {
+        use anicraft_engine::doc::Paint;
+        if item.guide || item.masks.is_some() || item.outline.is_some() || item.clip.is_some() || item.group.is_some() {
+            return None;
         }
+        let solid = |c: anicraft_engine::doc::Rgba| item.color.apply(c).a >= 0.999;
+        let fill = match &item.fill {
+            Some(Paint::Solid(c)) => solid(*c),
+            Some(Paint::Linear { stops, .. } | Paint::Radial { stops, .. }) => !stops.is_empty() && stops.iter().all(|s| solid(s.color)),
+            // Bitmap transparency cannot be established from the paint alone.
+            Some(Paint::Bitmap { .. }) | None => false,
+        };
+        // Translucent strokes hide nothing: that overlap needs its own visual treatment.
+        let stroke = item.stroke.as_ref().is_some_and(|s| solid(s.color));
+        if !fill && !stroke {
+            return None;
+        }
+        let m = to_px.mul(&item.transform);
+        let reach = item.stroke.as_ref().filter(|_| stroke).map_or(0.0, |s| s.reach() * m.mean_scale());
+        let b = item.path.bounds().transformed(&m).inflate(reach + 1.0);
+        let bounds = Rect::from_min_max(pos2(b.min.x, b.min.y), pos2(b.max.x, b.max.y));
+        (bounds.is_finite() && bounds.is_positive()).then_some(Occluder { bounds, fill, stroke, lines: None })
+    }
 
-        // Opaque fills above the selection hide its stipple,
-        // just as opaque strokes do.
-        if let Some(fill) = &item.fill {
-            use anicraft_engine::doc::Paint;
-
-            let opaque = match fill {
-                Paint::Solid(colour) => {
-                    item.color.apply(*colour).a >= 0.999
+    /// Takes what the items from `from` on cover out of `spans`.
+    fn exclude(&mut self, spans: &mut Vec<Rect>, from: usize) {
+        use anicraft_engine::geom::FillRule;
+        let Some(area) = spans.iter().copied().reduce(|a, b| a.union(b)) else { return };
+        let Self { items, to_px, clip, gap, known, built, batch } = self;
+        if known.is_empty() {
+            known.extend(items.iter().map(|i| Self::occluder(i, to_px)));
+        }
+        // Only the rows and columns the spans are in need scanning.
+        let clip = clip.intersect(area.expand(1.0));
+        for (item, slot) in items.iter().zip(known.iter_mut()).skip(from) {
+            if spans.is_empty() {
+                break;
+            }
+            let Some(o) = slot.as_mut().filter(|o| o.bounds.intersects(area)) else { continue };
+            if o.lines.is_none() {
+                if *built >= MAX_OCCLUDERS {
+                    continue;
                 }
-                Paint::Linear { stops, .. }
-                | Paint::Radial { stops, .. } => {
-                    !stops.is_empty()
-                        && stops.iter().all(|stop| {
-                            item.color.apply(stop.color).a >= 0.999
-                        })
-                }
-                // Bitmap transparency cannot be established
-                // from the paint alone.
-                Paint::Bitmap { .. } => false,
-            };
-
-            if opaque {
+                *built += 1;
                 let m = to_px.mul(&item.transform);
-
-                subtract_occlusion_spans(
-                    fills,
-                    &item.path.flatten(&m, 0.5),
-                    item.fill_rule,
-                    clip,
-                    &mut occluders,
-                    gap,
-                );
+                let fill = if o.fill { item.path.flatten(&m, 0.5) } else { Vec::new() };
+                let stroke = match &item.stroke {
+                    Some(st) if o.stroke => anicraft_engine::render::stroke::stroke_outline(&item.path, &m, st, 0.5).flatten(&Affine::IDENTITY, 0.5),
+                    _ => Vec::new(),
+                };
+                o.lines = Some([fill, stroke]);
+            }
+            let Some([fill, stroke]) = &o.lines else { continue };
+            if !fill.is_empty() {
+                subtract_occlusion_spans(spans, fill, item.fill_rule, clip, batch, *gap);
+            }
+            if !stroke.is_empty() {
+                subtract_occlusion_spans(spans, stroke, FillRule::NonZero, clip, batch, *gap);
             }
         }
-
-        let Some(stroke) = &item.stroke else {
-            continue;
-        };
-
-        // Start with opaque strokes; translucent overlap needs
-        // its own visual treatment.
-        if item.color.apply(stroke.color).a < 0.999 {
-            continue;
-        }
-
-        let m = to_px.mul(&item.transform);
-        let outline = anicraft_engine::render::stroke::stroke_outline(
-            &item.path,
-            &m,
-            stroke,
-            0.5,
-        );
-
-        subtract_occlusion_spans(
-            fills,
-            &outline.flatten(&Affine::IDENTITY, 0.5),
-            FillRule::NonZero,
-            clip,
-            &mut occluders,
-            gap,
-        );
     }
+}
+
+/// Hides selection stipple behind the opaque artwork in `above` (see [`Occluders`]).
+#[cfg(test)]
+fn exclude_overlying_artwork(fills: &mut Vec<Rect>, above: &[anicraft_engine::doc::DisplayItem], to_px: &Affine, clip: Rect, gap: f32) {
+    Occluders::new(above, to_px, clip, gap).exclude(fills, 0);
 }
 
 /// Remove areas covered by `occluders` from a collection of rectangles.
@@ -4464,5 +4465,78 @@ mod pasteboard_tests {
         assert!(n <= (2 * MAX_TILES_PER_AXIS + 1).pow(2), "{n} tiles");
         // Clipped and looking away from the stage: nothing to draw.
         assert!(tiles_for(1.0, (100, 100), [-900.0, -900.0, -10.0, -10.0], 0, Some(BG), false).is_empty());
+    }
+}
+
+/// The artwork that hides selection stipple is found once a frame and only where it covers
+/// something selected; `selection_overlay_cost` measures the whole overlay
+/// (`cargo test selection_overlay_cost -- --ignored --nocapture`).
+#[cfg(test)]
+mod occluder_tests {
+    use super::*;
+
+    #[test]
+    fn occluders_are_outlined_once_and_only_where_they_cover() {
+        let mut s = anicraft_engine::Session::new(anicraft_engine::doc::Document::default());
+        // Two squares apart, then one over the first's corner.
+        for (x, y) in [(0, 0), (300, 0), (50, 50)] {
+            let p = json!({"x": x, "y": y, "w": 100, "h": 100, "fill": "#ff0000", "stroke": null, "object": true});
+            assert!(s.execute("draw.rect", &p).is_ok());
+        }
+        let dl = s.display_list();
+        assert_eq!(dl.items.len(), 3);
+        let clip = Rect::from_min_max(pos2(-100.0, -100.0), pos2(1000.0, 1000.0));
+        let mut occluders = Occluders::new(&dl.items, &Affine::IDENTITY, clip, GAP);
+        let square = |x: f32| vec![Rect::from_min_max(pos2(x, 0.0), pos2(x + 100.0, 100.0))];
+        let area = |spans: &[Rect]| spans.iter().map(|r| r.area()).sum::<f32>();
+        // The first square is under the third's corner: a quarter of it is hidden.
+        for _ in 0..3 {
+            let mut spans = square(0.0);
+            occluders.exclude(&mut spans, 1);
+            assert!((area(&spans) - 7500.0).abs() < 150.0, "{}", area(&spans));
+        }
+        assert_eq!(occluders.built, 1, "the square between them is never outlined, the one on top once");
+        // Nothing is over the second square, and nothing more is outlined to find that out.
+        let mut spans = square(300.0);
+        occluders.exclude(&mut spans, 2);
+        assert_eq!((spans, occluders.built), (square(300.0), 1));
+        // Artwork that fades with a group or is clipped hides nothing.
+        let mut faded = dl.items.clone();
+        if let Some(top) = faded.last_mut() {
+            top.group = Some(0);
+        }
+        let mut spans = square(0.0);
+        Occluders::new(&faded, &Affine::IDENTITY, clip, GAP).exclude(&mut spans, 1);
+        assert_eq!(spans, square(0.0));
+    }
+
+    #[test]
+    #[ignore = "a measurement, not a check"]
+    fn selection_overlay_cost() {
+        let ctx = egui::Context::default();
+        let session = anicraft_engine::Session::new(anicraft_engine::doc::Document::default());
+        let mut app = App::with_context(&ctx, session, Some(std::path::PathBuf::from("unused.png")));
+        app.tool = Tool::Select;
+        for i in 0..144 {
+            let (x, y) = (20 + (i % 12) * 40, 20 + (i / 12) * 30);
+            app.run("draw.rect", json!({"x": x, "y": y, "w": 30, "h": 22, "fill": "#3366ff", "stroke": "#000000", "stroke_width": 2, "object": false}));
+        }
+        app.run("edit.deselect", json!({}));
+        let input = || egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 940.0))), ..Default::default() };
+        let frames = |app: &mut App| {
+            for _ in 0..3 {
+                ctx.run_ui(input(), |ui| app.frame(ui)).textures_delta.clear();
+            }
+            let t = std::time::Instant::now();
+            for _ in 0..5 {
+                ctx.run_ui(input(), |ui| app.frame(ui)).textures_delta.clear();
+            }
+            t.elapsed().as_secs_f64() * 1000.0 / 5.0
+        };
+        let idle = frames(&mut app);
+        app.run("edit.select_all", json!({}));
+        let pieces = app.s.selection.len();
+        let selected = frames(&mut app);
+        println!("{pieces} raw pieces: {idle:.2} ms a frame unselected, {selected:.2} ms selected");
     }
 }
