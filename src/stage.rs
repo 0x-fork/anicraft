@@ -2025,7 +2025,13 @@ pub(crate) fn pattern_spans(
     out: &mut Vec<Rect>,
     gap: f32,
 ) {
-    scan_spans(lines, rule, clip, out, gap, 0.0);
+    scan_spans(lines, rule, clip, gap, 0.0, |span| {
+        if out.len() >= MAX_SPANS {
+            return false;
+        }
+        out.push(span);
+        true
+    });
 }
 
 fn occlusion_spans(
@@ -2036,16 +2042,23 @@ fn occlusion_spans(
     gap: f32,
 ) {
     let pixel = gap / GAP;
-    scan_spans(lines, rule, clip, out, pixel, pixel * 0.5);
+
+    scan_spans(lines, rule, clip, pixel, pixel * 0.5, |span| {
+        if out.len() >= MAX_SPANS {
+            return false;
+        }
+        out.push(span);
+        true
+    });
 }
 
 fn scan_spans(
     lines: &[anicraft_engine::geom::Polyline],
     rule: anicraft_engine::geom::FillRule,
     clip: Rect,
-    out: &mut Vec<Rect>,
     gap: f32,
     phase: f32,
+    mut emit: impl FnMut(Rect) -> bool,
 ) {
     use anicraft_engine::geom::FillRule;
     // Every non-horizontal edge near the view, as (top, bottom, x at top, dx/dy, winding).
@@ -2080,7 +2093,7 @@ fn scan_spans(
         FillRule::EvenOdd => w % 2 != 0,
     };
     let (mut next, mut active, mut xs): (usize, Vec<usize>, Vec<(f32, i32)>) = (0, Vec::new(), Vec::new());
-    while y <= last && out.len() < MAX_SPANS {
+    while y <= last {
         while edges.get(next).is_some_and(|e| e.0 <= y) {
             active.push(next);
             next += 1;
@@ -2099,14 +2112,59 @@ fn scan_spans(
                 (false, true) => from = x,
                 (true, false) => {
                     let (x0, x1) = (from.max(clip.left()), x.min(clip.right()));
-                    if x1 > x0 && bottom > top {
-                        out.push(Rect::from_min_max(pos2(x0, top), pos2(x1, bottom)));
+                    if x1 > x0 && bottom > top
+                        && !emit(Rect::from_min_max(pos2(x0, top), pos2(x1, bottom)))
+                    {
+                        return;
                     }
                 }
                 _ => {}
             }
         }
         y += gap;
+    }
+}
+
+fn subtract_occlusion_spans(
+    selected: &mut Vec<Rect>,
+    lines: &[anicraft_engine::geom::Polyline],
+    rule: anicraft_engine::geom::FillRule,
+    clip: Rect,
+    batch: &mut Vec<Rect>,
+    gap: f32,
+) {
+    if selected.is_empty() {
+        return;
+    }
+
+    const BATCH_SIZE: usize = 2048;
+    let pixel = gap / GAP;
+
+    scan_spans(
+        lines,
+        rule,
+        clip,
+        pixel,
+        pixel * 0.5,
+        |span| {
+            batch.push(span);
+
+            // Subtract each batch rather than accumulating
+            // all foreground coverage in one enormous vector.
+            if batch.len() >= BATCH_SIZE {
+                subtract_spans(selected, batch);
+                batch.clear();
+            }
+
+            // Stop early if no selected area remains.
+            !selected.is_empty()
+        },
+    );
+
+    // Process the final, potentially incomplete batch.
+    if !batch.is_empty() {
+        subtract_spans(selected, batch);
+        batch.clear();
     }
 }
 
@@ -2136,7 +2194,6 @@ fn exclude_overlying_artwork(
             continue;
         }
 
-
         // Opaque fills above the selection hide its stipple,
         // just as opaque strokes do.
         if let Some(fill) = &item.fill {
@@ -2161,7 +2218,8 @@ fn exclude_overlying_artwork(
             if opaque {
                 let m = to_px.mul(&item.transform);
 
-                occlusion_spans(
+                subtract_occlusion_spans(
+                    fills,
                     &item.path.flatten(&m, 0.5),
                     item.fill_rule,
                     clip,
@@ -2189,7 +2247,8 @@ fn exclude_overlying_artwork(
             0.5,
         );
 
-       occlusion_spans(
+        subtract_occlusion_spans(
+            fills,
             &outline.flatten(&Affine::IDENTITY, 0.5),
             FillRule::NonZero,
             clip,
@@ -2197,8 +2256,6 @@ fn exclude_overlying_artwork(
             gap,
         );
     }
-
-    subtract_spans(fills, &occluders);
 }
 
 /// Remove areas covered by `occluders` from a collection of rectangles.
@@ -2386,6 +2443,58 @@ mod pattern_tests {
         assert!(
             !selected.iter().any(|r| r.contains(pos2(50.0, 49.5))),
             "the opaque foreground must hide the selected stroke backing"
+        );
+    }
+
+    /// Foreground artwork must continue hiding selected artwork
+    /// even after earlier occluders exhaust MAX_SPANS.
+    #[test]
+    fn late_foreground_occluders_are_not_dropped_at_span_limit() {
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(100.0, 2160.0),
+        );
+
+        // A small selected area near the bottom of the view.
+        let mut selected = vec![Rect::from_min_max(
+            pos2(45.0, 1800.0),
+            pos2(55.0, 1810.0),
+        )];
+
+        // Each full-height rectangle generates 2160
+        // one-pixel occlusion spans. The first 185 consume
+        // 399,600 of the 400,000-span allowance.
+        //
+        // They do not overlap the selected area.
+        let mut above: Vec<_> = (0..185)
+            .map(|_| {
+                item(
+                    Path::rect(0.0, 0.0, 10.0, 2160.0),
+                    true,
+                    None,
+                )
+            })
+            .collect();
+
+        // This final foreground rectangle DOES overlap the
+        // selection, but its lower rows currently get dropped.
+        above.push(item(
+            Path::rect(40.0, 0.0, 20.0, 2160.0),
+            true,
+            None,
+        ));
+
+        exclude_overlying_artwork(
+            &mut selected,
+            &above,
+            &Affine::IDENTITY,
+            clip,
+            GAP,
+        );
+
+        assert!(
+            !selected.iter().any(|r| r.contains(pos2(50.0, 1805.0))),
+            "foreground coverage was dropped after MAX_SPANS"
         );
     }
 
