@@ -173,6 +173,14 @@ fn expressions_follow_ecmascript() {
 }
 
 #[test]
+fn math_round_preserves_negative_zero() {
+    for value in [-0.5, -0.4, -0.0] {
+        assert_eq!(run::round(value).to_bits(), (-0.0f64).to_bits(), "{value}");
+    }
+    assert_eq!(lines("trace(1 / Math.round(-0.5), 1 / Math.round(-0.4));"), ["-Infinity -Infinity"]);
+}
+
+#[test]
 fn if_else_and_loops_run_with_break_and_continue() {
     let a = lines(
         "var total:int = 0;\n\

@@ -551,6 +551,7 @@ var AniCraft = (function () {
   // Math.round as the Rust evaluator computes it.
   function round(x) {
     if (!Number.isFinite(x)) return x;
+    if (x >= -0.5 && x < 0) return -0;
     const f = Math.floor(x);
     return x - f >= 0.5 ? f + 1 : f;
   }
@@ -558,7 +559,9 @@ var AniCraft = (function () {
     let out = max ? -Infinity : Infinity;
     for (const v of vals) {
       if (Number.isNaN(v)) return Number.NaN;
-      if ((max && v > out) || (!max && v < out)) out = v;
+      // Equal zeros prefer +0 for max and -0 for min, regardless of argument order.
+      if ((max && v > out) || (!max && v < out) ||
+          (v === 0 && out === 0 && Object.is(v, max ? 0 : -0))) out = v;
     }
     return out;
   }
