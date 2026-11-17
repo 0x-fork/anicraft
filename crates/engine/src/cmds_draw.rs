@@ -476,7 +476,7 @@ pub(crate) fn set_stroke(s: &mut Session, p: &Value) -> Result<Value> {
     // A raw drawing's outline is its own stroke pieces (ADR 0042). When the selection holds
     // strokes for the change, its raw fills take none of their own, which would draw the outline
     // a second time over the pieces (#389).
-    let strokes_selected = shapes.iter().any(|sh| sh.stroke.is_some());
+    let strokes_selected = shapes.iter().any(|sh| sh.merge && sh.stroke.is_some());
     for sh in shapes {
         if remove {
             sh.stroke = None;
