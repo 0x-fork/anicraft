@@ -34,7 +34,7 @@ pub mod templates;
 pub mod sound;
 pub mod swatch;
 
-pub use filter::{FILTER_PARAMS, Filter, FilterEntry, FilterParam, FilterProp, FilterSide, MAX_FILTER_SLOTS, active as active_filters, any_active as any_active_filter, pairs_up as filters_pair_up, MAX_BLUR, MAX_QUALITY, MAX_RAMP_STOPS, REST_SNAP, default_bevel_ramp, default_glow_ramp, pinned_stop, ramp_at};
+pub use filter::{Channel, FILTER_PARAMS, Filter, FilterColor, FilterEntry, FilterParam, FilterProp, FilterSide, MAX_FILTER_SLOTS, pairing as filter_pairing, active as active_filters, any_active as any_active_filter, pairs_up as filters_pair_up, MAX_BLUR, MAX_QUALITY, MAX_RAMP_STOPS, REST_SNAP, default_bevel_ramp, default_glow_ramp, pinned_stop, ramp_at};
 pub use bitmap::{Bitmap, BitmapId, ImageError, MAX_BITMAP_EDGE, Pixels, base64_decode, base64_encode, decode_png, image_to_png};
 pub use easing::{CustomEase, EaseDir, EaseFamily, EasePoint, Easing, Handle, MAX_EASE_NAME, MAX_EASE_POINTS, MAX_EASE_SAMPLES, MAX_EASE_Y, MAX_SAVED_EASES, SampledEase, SavedEase, ease_name};
 pub use color_effect::{ADVANCED_ADD, ADVANCED_MUL, ColorEffect, ColorStyle, ColorTransform};
@@ -589,6 +589,25 @@ pub enum ElementKind {
 }
 
 impl ElementKind {
+    /// The filter list of what takes filters: a symbol instance (movie clips and buttons draw
+    /// them) or a block of text (ADR 0099). `None` for everything else.
+    pub fn filters(&self) -> Option<&[FilterEntry]> {
+        match self {
+            ElementKind::Symbol { filters, .. } => Some(filters),
+            ElementKind::Text(t) => Some(&t.filters),
+            _ => None,
+        }
+    }
+
+    /// The same list, to change (a text block shared with another element is copied first).
+    pub fn filters_mut(&mut self) -> Option<&mut Vec<FilterEntry>> {
+        match self {
+            ElementKind::Symbol { filters, .. } => Some(filters),
+            ElementKind::Text(t) => Some(&mut Arc::make_mut(t).filters),
+            _ => None,
+        }
+    }
+
     /// A group of `elements` (ADR 0073), on one layer with id `layer`.
     pub fn group(layer: LayerId, elements: Vec<Arc<Element>>) -> ElementKind {
         let mut l = Layer::new(layer, "Layer 1");
@@ -777,6 +796,10 @@ pub struct TextBlock {
     /// `outline` holds the glyphs set along it. Static text only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_path: Option<TextPath>,
+    /// Filters, applied in order to the text as it is drawn (its box and border included), as
+    /// on a movie clip (ADR 0099); each may be switched off.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filters: Vec<FilterEntry>,
 }
 
 /// The path a text block follows (ADR 0070), and where along it the text sits.

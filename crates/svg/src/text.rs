@@ -539,6 +539,7 @@ impl<'a> Builder<'a> {
             box_height: layout.height,
             field: None,
             on_path: None,
+            filters: Vec::new(),
         };
         Ok(Some((block, ascent)))
     }

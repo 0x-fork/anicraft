@@ -367,8 +367,9 @@ fn interpolate(a: &Element, b: &Element, pr: Progress, morph: bool, hints: &[(an
             };
             ElementKind::Shape(Shape { path, fill, stroke, fill_rule: sa.fill_rule, merge: sa.merge, warp })
         }
-        // An instance tweens its filters when both keyframes have the same kinds in the same
-        // order (Animate's rule); otherwise they hold.
+        // An instance tweens its filters: pairwise when both keyframes have the same kinds in
+        // the same order, else as Animate pairs them, a filter without a partner fading in or
+        // out (ADR 0099).
         (ElementKind::Symbol { symbol: s1, filters: fa, .. }, ElementKind::Symbol { symbol: s2, filters: fb, .. }) if s1 == s2 => {
             let mut k = a.kind.clone();
             if let (ElementKind::Symbol { filters, .. }, Some(lerped)) = (&mut k, crate::filter::lerp_filters(fa, fb, pr.filters)) {
@@ -376,8 +377,12 @@ fn interpolate(a: &Element, b: &Element, pr: Progress, morph: bool, hints: &[(an
             }
             k
         }
-        // Text tweens its placement and colour effect; the words stay the first keyframe's.
-        (ElementKind::Text(_), ElementKind::Text(_)) => a.kind.clone(),
+        // Text tweens its placement, colour effect and filters (ADR 0099); the words stay the
+        // first keyframe's.
+        (ElementKind::Text(ta), ElementKind::Text(tb)) => match crate::filter::lerp_filters(&ta.filters, &tb.filters, pr.filters) {
+            Some(filters) => ElementKind::Text(Arc::new(crate::TextBlock { filters, ..(**ta).clone() })),
+            None => a.kind.clone(),
+        },
         (ElementKind::Camera, ElementKind::Camera) => ElementKind::Camera,
         // A group tweens its placement and colour effect, and its members pair by order, layer by
         // layer, tweening as they would on their own (ADR 0073); a member without a partner holds.
@@ -641,6 +646,17 @@ fn eval_element(doc: &Document, cx: &Ctx, lc: &LayerCtx<'_>, el: &Element, out: 
             });
         }
         ElementKind::Text(t) => {
+            // Text with filters draws on its own, as a movie clip does (ADR 0099): its items
+            // composite in a group the filters run on, and the group fades at the text's alpha.
+            // (Mask artwork takes neither.)
+            let (color, group) = if masks.is_none() && crate::filter::any_active(&t.filters) {
+                let gid = out.groups.len() as u32;
+                out.groups.push(Group { parent: cx.group, alpha: fx.alpha_factor().unwrap_or(1.0), blend: crate::BlendMode::Normal, filters: crate::filter::active(&t.filters).into(), clip });
+                let inner = if fx.alpha_factor().is_some() { fx.without_alpha() } else { fx };
+                (cx.color.concat(&inner), Some(gid))
+            } else {
+                (color, cx.group)
+            };
             let item = |path: Arc<Path>, transform: Affine, fill: Option<Paint>, stroke: Option<Stroke>, clip: Option<u32>, masks: Option<u32>| DisplayItem {
                 path,
                 transform,
@@ -654,7 +670,7 @@ fn eval_element(doc: &Document, cx: &Ctx, lc: &LayerCtx<'_>, el: &Element, out: 
                 clip,
                 masks,
                 guide,
-                group: cx.group,
+                group,
                 image: None,
                 smooth: true,
                 warp: None,

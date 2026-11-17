@@ -136,9 +136,6 @@ pub fn field(el: &X, fonts: &Fonts, faces: &mut HashMap<String, FaceMatch>, repo
     if field.orientation().is_some_and(|o| o != "horizontal") {
         report.skip("vertical text (drawn horizontal)");
     }
-    if field.has_filters() {
-        report.skip("filters on text");
-    }
     let mut flags = Flags::default();
     let mut styles: Vec<RunStyle> = Vec::new();
     let mut lines: Vec<Line> = vec![Vec::new()];
@@ -266,6 +263,7 @@ pub fn field(el: &X, fonts: &Fonts, faces: &mut HashMap<String, FaceMatch>, repo
             box_height: layout.height,
             field: None,
             on_path: None,
+            filters: Vec::new(),
         };
         out.push(Placed { block, offset: Vec2::new(origin.x + st.left_margin, origin.y + y) });
         y += layout.lines as f32 * layout.line_height;
@@ -377,6 +375,7 @@ fn text_field(
         box_height,
         field: Some(field),
         on_path: None,
+        filters: Vec::new(),
     };
     Some(Placed { block, offset: Vec2::new(native.left().unwrap_or(0.0), native.top().unwrap_or(0.0)) })
 }

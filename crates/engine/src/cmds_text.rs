@@ -142,6 +142,7 @@ pub(crate) fn lay_out(text: &str, style: &TextStyle, width: Option<f32>) -> Resu
         box_height: layout.height,
         field: None,
         on_path: None,
+        filters: Vec::new(),
     };
     Ok((block, note))
 }
@@ -209,6 +210,7 @@ pub(crate) fn lay_out_field(text: &str, style: &TextStyle, field: &TextField, bo
         box_height,
         field: Some(field.clone()),
         on_path: None,
+        filters: Vec::new(),
     };
     Ok((block, note))
 }
@@ -248,6 +250,7 @@ pub(crate) fn lay_out_on_path(text: &str, style: &TextStyle, on: &TextPath) -> R
         box_height: set.height,
         field: None,
         on_path: Some(TextPath { path: set.path, offset, flip: on.flip }),
+        filters: Vec::new(),
     };
     Ok((block, note, shift))
 }
@@ -256,20 +259,23 @@ pub(crate) fn lay_out_on_path(text: &str, style: &TextStyle, on: &TextPath) -> R
 /// width); static text wraps at `width`; text on a path stays on it. With where the block's
 /// origin moved to ([`lay_out_on_path`]; zero for the others).
 pub(crate) fn relay(t: &TextBlock, text: &str, style: &TextStyle, width: Option<f32>) -> Result<(TextBlock, Option<String>, Vec2)> {
-    match (&t.field, &t.on_path) {
+    let (block, note, shift) = match (&t.field, &t.on_path) {
         (_, Some(on)) => lay_out_on_path(text, style, on),
         (Some(f), None) => lay_out_field(text, style, f, width.unwrap_or(t.box_width), t.box_height).map(|(b, n)| (b, n, Vec2::ZERO)),
         (None, None) => lay_out(text, style, width).map(|(b, n)| (b, n, Vec2::ZERO)),
-    }
+    }?;
+    // The words and their look change; the block's filters stay (ADR 0099).
+    Ok((TextBlock { filters: t.filters.clone(), ..block }, note, shift))
 }
 
 /// What Find and Replace lays text out with: as before (static text, its fields' boxes
 /// dropped), except that text on a path stays on its path.
 pub(crate) fn relay_static(t: &TextBlock, text: &str, style: &TextStyle) -> Result<(TextBlock, Option<String>, Vec2)> {
-    match &t.on_path {
+    let (block, note, shift) = match &t.on_path {
         Some(on) => lay_out_on_path(text, style, on),
         None => lay_out(text, style, t.width).map(|(b, n)| (b, n, Vec2::ZERO)),
-    }
+    }?;
+    Ok((TextBlock { filters: t.filters.clone(), ..block }, note, shift))
 }
 
 /// The selected static text, along a copy of a shape's outline (ADR 0070).
@@ -336,7 +342,7 @@ fn attach_path(s: &mut Session, p: &Value) -> Result<Value> {
         // The path is in stage space; the text's new space is the path's, moved to its box.
         e.transform = Affine::translate(shift.x, shift.y);
         out = json!({"element": e.id.0, "length": length, "offset": offset, "flip": flip, "note": note});
-        e.kind = ElementKind::Text(Arc::new(block));
+        e.kind = ElementKind::Text(Arc::new(TextBlock { filters: t.filters.clone(), ..block }));
     }
     s.select_only([*text_id]);
     Ok(out)
@@ -361,12 +367,12 @@ fn set_path(s: &mut Session, p: &Value) -> Result<Value> {
             let (block, _) = lay_out(&t.text, &style, None)?;
             let at = if start.min.x.is_finite() { start.min } else { Vec2::ZERO };
             e.transform = e.transform.mul(&Affine::translate(at.x, at.y));
-            e.kind = ElementKind::Text(Arc::new(block));
+            e.kind = ElementKind::Text(Arc::new(TextBlock { filters: t.filters.clone(), ..block }));
         } else {
             let on = TextPath { offset: offset.unwrap_or(on.offset), flip: flip.unwrap_or(on.flip), ..on.clone() };
             let (block, _, shift) = lay_out_on_path(&t.text, &style, &on)?;
             e.transform = e.transform.mul(&Affine::translate(shift.x, shift.y));
-            e.kind = ElementKind::Text(Arc::new(block));
+            e.kind = ElementKind::Text(Arc::new(TextBlock { filters: t.filters.clone(), ..block }));
         }
         changed += 1;
     }
@@ -458,7 +464,7 @@ fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
             lay_out_field(&t.text, &style, &f.sanitized(), width.unwrap_or(bw), height.unwrap_or(bh))?
         };
         notes.extend(note);
-        e.kind = ElementKind::Text(Arc::new(block));
+        e.kind = ElementKind::Text(Arc::new(TextBlock { filters: t.filters.clone(), ..block }));
         changed += 1;
     }
     if changed == 0 {
