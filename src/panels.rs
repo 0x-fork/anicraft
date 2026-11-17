@@ -945,11 +945,14 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
         if !matches!(e.kind, ElementKind::Camera) {
             colour_effect_rows(app, ui, &e.color, m.color, EffectOf::Selection);
         }
-        // Blending and filters, on movie clips and buttons.
+        // Blending and filters, on movie clips and buttons; filters on text too (ADR 0099).
         if let ElementKind::Symbol { symbol, filters, .. } = &e.kind
             && app.s.doc.symbol(*symbol).is_some_and(|x| x.kind != SymbolKind::Graphic)
         {
             filter_rows(app, ui, filters, m.filters);
+        }
+        if let ElementKind::Text(t) = &e.kind {
+            filter_rows(app, ui, &t.filters, m.filters);
         }
         if let ElementKind::Symbol { symbol, blend, .. } = &e.kind
             && app.s.doc.symbol(*symbol).is_some_and(|x| x.kind != SymbolKind::Graphic)
@@ -1338,6 +1341,7 @@ pub fn sync_filter_presets(app: &mut App) {
         return;
     }
     app.prefs.filter_presets = app.s.filter_presets.clone();
+    app.prefs.filter_presets_hidden = app.s.filter_presets.hidden().to_vec();
     if app.shot.is_none()
         && let Err(e) = app.prefs.save()
     {
@@ -1354,6 +1358,8 @@ enum FilterAct {
     Paste,
     Apply(String),
     Delete(String),
+    /// Hide a built-in preset from the menu, or show it again.
+    Hide(String, bool),
 }
 
 /// A filter's grip: drag it up or down the list to reorder, or, focused, Alt+Up and Alt+Down
@@ -1394,7 +1400,10 @@ fn filter_rows(app: &mut App, ui: &mut egui::Ui, current: &[anicraft_engine::doc
     let n = list.len();
     let mut changed: Option<&'static str> = None;
     let mut act: Option<FilterAct> = None;
-    let presets: Vec<(String, String)> = app.s.filter_presets.presets().iter().map(|p| (p.name.clone(), p.filters.iter().map(|f| crate::i18n::t(f.filter.label())).collect::<Vec<_>>().join(", "))).collect();
+    let what = |p: &anicraft_engine::filter_library::FilterPreset| p.filters.iter().map(|f| crate::i18n::t(f.filter.label())).collect::<Vec<_>>().join(", ");
+    let presets: Vec<(String, String)> = app.s.filter_presets.presets().iter().map(|p| (p.name.clone(), what(p))).collect();
+    // The built-in presets (ADR 0099): name, what is in it, and whether the menu lists it.
+    let builtin: Vec<(&'static str, String, bool)> = anicraft_engine::filter_library::BUILTIN_NAMES.into_iter().zip(anicraft_engine::filter_library::builtins().iter()).map(|(name, p)| (name, what(p), !app.s.filter_presets.is_hidden(name))).collect();
     let copied = app.s.filter_clipboard.as_ref().map_or(0, Vec::len);
     let mut naming = app.filter_naming.name.clone();
     row_prose(ui, tr!("Filters"), |ui| {
@@ -1412,6 +1421,20 @@ fn filter_rows(app: &mut App, ui: &mut egui::Ui, current: &[anicraft_engine::doc
         .set_name(tr!("Add filter"));
         let pr = crate::timeline::icon_button(ui, tr!("Filter presets: apply, save, rename, delete, import, export"), None, Icon::Folder);
         egui::Popup::menu(&pr).id(egui::Id::new("anicraft.filters.presets")).show(|ui| {
+            // The built-in presets the menu lists, then your own.
+            let shown: Vec<&(&'static str, String, bool)> = builtin.iter().filter(|b| b.2).collect();
+            if !shown.is_empty() {
+                ui.label(text(Type::Caption, tr!("Built-in")));
+            }
+            for (name, what, _) in shown.iter().copied() {
+                if ui.button(crate::i18n::t(name)).on_hover_text(tr!("Apply: {filters} (replaces the filters)", filters = what.as_str())).clicked() {
+                    act = Some(FilterAct::Apply((*name).to_string()));
+                }
+            }
+            if !shown.is_empty() {
+                ui.separator();
+                ui.label(text(Type::Caption, tr!("Yours")));
+            }
             if presets.is_empty() {
                 ui.label(text(Type::Caption, tr!("No presets yet. Set up filters, then Save as Preset.")));
             }
@@ -1421,6 +1444,16 @@ fn filter_rows(app: &mut App, ui: &mut egui::Ui, current: &[anicraft_engine::doc
                 }
             }
             ui.separator();
+            // Built-in presets can't be deleted: untick one to take it off this menu.
+            ui.menu_button(tr!("Built-in Presets"), |ui| {
+                ui.label(text(Type::Caption, tr!("Untick one to hide it from this menu")));
+                for (name, _, listed) in &builtin {
+                    let mut on = *listed;
+                    if crate::theme::checkbox(ui, &mut on, crate::i18n::t(name)).named(&tr!("Show the built-in preset {name}", name = crate::i18n::t(name))).changed() {
+                        act = Some(FilterAct::Hide((*name).to_string(), !on));
+                    }
+                }
+            });
             if ui.add_enabled(n > 0, egui::Button::new(tr!("Save as Preset…"))).on_hover_text(tr!("Keep these filters under a name, for any document")).clicked() {
                 naming = Some((String::new(), None));
             }
@@ -1695,6 +1728,9 @@ fn filter_rows(app: &mut App, ui: &mut egui::Ui, current: &[anicraft_engine::doc
                 app.run("filter.preset_apply", json!({"name": name}));
             }
             FilterAct::Delete(name) => app.request("filter.preset_delete", json!({"name": name})),
+            FilterAct::Hide(name, hidden) => {
+                app.run("filter.preset_hide", json!({"name": name, "hidden": hidden}));
+            }
         }
         return;
     }
