@@ -65,6 +65,9 @@ pub struct DisplayList {
     /// through each other. A group's items are one unbroken run of `items`, nested runs for
     /// nested groups; a parent always has a lower index.
     pub groups: Vec<Group>,
+    /// Links on text (ADR 0085): `(item, url)` for each item drawing characters that link
+    /// somewhere, in item order. Sparse: most lists have none.
+    pub links: Vec<(u32, Arc<str>)>,
 }
 
 /// A group that fades as one (see [`DisplayList::groups`]).
@@ -138,6 +141,8 @@ impl DisplayList {
             self.set_clip_mode(base + i as u32, m);
         }
         self.groups.extend(other.groups.into_iter().map(|g| Group { parent: gshift(g.parent), alpha: g.alpha, blend: g.blend, filters: g.filters, clip: shift(g.clip) }));
+        let ibase = self.items.len() as u32;
+        self.links.extend(other.links.into_iter().map(|(i, u)| (i + ibase, u)));
         self.items.extend(other.items.into_iter().map(|mut i| {
             i.clip = shift(i.clip);
             i.masks = shift(i.masks);
@@ -665,10 +670,11 @@ fn eval_element(doc: &Document, cx: &Ctx, lc: &LayerCtx<'_>, el: &Element, out: 
                     let live = child.as_ref().map(|c| (c.state.fields.get(&c.path), c.state.focus.as_deref() == Some(c.path.as_slice())));
                     field_items(t, f, live, xf, clip, out, item);
                 }
-                _ => {
-                    let path = child.as_ref().and_then(|c| c.state.fields.get(&c.path)).and_then(|s| s.look.as_ref()).map_or_else(|| t.outline.clone(), |l| l.outline.clone());
-                    out.items.push(item(path, xf, Some(Paint::Solid(t.color)), None, clip, masks));
-                }
+                _ => match child.as_ref().and_then(|c| c.state.fields.get(&c.path)).and_then(|s| s.look.as_ref()) {
+                    Some(l) => out.items.push(item(l.outline.clone(), xf, Some(Paint::Solid(t.color)), None, clip, masks)),
+                    // One item per colour (ADR 0085), with its link.
+                    None => text_fills(t, out, |path, color| item(path, xf, Some(Paint::Solid(color)), None, clip, masks)),
+                },
             }
         }
         ElementKind::Camera => {}
@@ -731,6 +737,17 @@ fn eval_element(doc: &Document, cx: &Ctx, lc: &LayerCtx<'_>, el: &Element, out: 
     }
 }
 
+/// A text block's authored outline as items, one per colour piece (ADR 0085), recording the
+/// links of pieces that have one.
+fn text_fills(t: &crate::TextBlock, out: &mut DisplayList, item: impl Fn(Arc<Path>, Rgba) -> DisplayItem) {
+    for (color, url, path) in t.fill_paths() {
+        if !url.is_empty() {
+            out.links.push((out.items.len() as u32, Arc::from(url)));
+        }
+        out.items.push(item(path, color));
+    }
+}
+
 /// The highlight behind selected text in a focused field.
 pub const SELECTION: Rgba = Rgba::new(0.62, 0.78, 1.0, 1.0);
 
@@ -769,13 +786,10 @@ fn field_items(t: &crate::TextBlock, f: &crate::TextField, live: Option<(Option<
     }
     // The text: laid out by the player when it changed, else the authored outline (a field whose
     // text changed but couldn't be laid out shows none).
-    let outline = match (state.and_then(|s| s.text.as_ref()), look) {
-        (_, Some(l)) => Some(l.outline.clone()),
-        (None, None) => Some(t.outline.clone()),
-        (Some(_), None) => None,
-    };
-    if let Some(path) = outline {
-        out.items.push(item(path, text_xf, Some(Paint::Solid(t.color)), None, Some(inner), None));
+    match (state.and_then(|s| s.text.as_ref()), look) {
+        (_, Some(l)) => out.items.push(item(l.outline.clone(), text_xf, Some(Paint::Solid(t.color)), None, Some(inner), None)),
+        (None, None) => text_fills(t, out, |path, color| item(path, text_xf, Some(Paint::Solid(color)), None, Some(inner), None)),
+        (Some(_), None) => {}
     }
     // The caret, in an input field with the keyboard and nothing selected.
     if let (true, Some(st), crate::TextKind::Input) = (focused, state, f.kind)

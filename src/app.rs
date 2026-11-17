@@ -168,9 +168,21 @@ pub struct TextEditing {
     /// The text element being edited, or `None` for new text.
     pub element: Option<anicraft_engine::doc::ElementId>,
     pub text: String,
-    /// The text when editing started (unchanged text commits nothing).
+    /// The text when editing started, or when its styles were last applied (unchanged text
+    /// commits nothing).
     pub original: String,
-    /// Focus the field on its first frame.
+    /// The text as the runs last saw it (a change since is followed by [`TextEditing::sync`]).
+    pub last: String,
+    /// Its styled runs and one style per paragraph (ADR 0085).
+    pub runs: Vec<anicraft_engine::doc::TextRun>,
+    pub paras: Vec<anicraft_engine::doc::ParagraphStyle>,
+    /// The selected characters (anchor, caret), as the editor last reported them.
+    pub sel: (u32, u32),
+    /// A style picked at a caret, for what is typed there next.
+    pub pending: Option<anicraft_engine::doc::CharStyle>,
+    /// Styled text being pasted this frame (copied from this editor).
+    pub paste: Option<crate::rich_edit::StyledClip>,
+    /// Focus the field on its next frame.
     pub focus: bool,
 }
 
@@ -389,6 +401,11 @@ pub struct App {
     pub library: crate::library::LibraryView,
     /// Text being typed on the stage.
     pub text_edit: Option<TextEditing>,
+    /// Styled text last copied from the stage editor (ADR 0085).
+    pub text_clip: Option<crate::rich_edit::StyledClip>,
+    /// Where Properties showed the styles of the text being typed (last frame): a click there
+    /// keeps the editor open.
+    pub text_props_rect: Option<egui::Rect>,
     /// Attach to Path is waiting for a click on a shape (ADR 0070): the text to set along it.
     pub path_pick: Option<anicraft_engine::doc::ElementId>,
     /// Font families on this computer, listed once on first need.
@@ -701,6 +718,8 @@ impl App {
             library_sel,
             library: Default::default(),
             text_edit: None,
+            text_clip: None,
+            text_props_rect: None,
             path_pick: None,
             font_families: None,
             polystar: PolyStarOptions::default(),
@@ -1721,6 +1740,31 @@ impl App {
                     && let Some(m) = mask
                 {
                     crate::layer_props::open(self, Some(anicraft_engine::doc::LayerId(m)));
+                }
+            }
+            Some("richtext") => {
+                // Styled text (ADR 0085): a title with bold, coloured and superscript runs and a
+                // centred paragraph, open for typing with a word selected, its style in
+                // Properties.
+                self.perform("file.new", json!({"width": 640, "height": 400}));
+                // i18n-exempt: document content
+                let made = self.run("text.create", json!({"text": "Energy E = mc2\nStyled runs in one block", "x": 60, "y": 90, "size": 44, "color": "#264653", "width": 520}));
+                if let Some(id) = made.and_then(|v| v["element"].as_u64()) {
+                    self.run("text.style", json!({"start": 0, "end": 6, "bold": true, "color": "#e76f51"}));
+                    self.run("text.style", json!({"start": 13, "end": 14, "shift": "superscript"}));
+                    self.run("text.style", json!({"start": 15, "end": 39, "size": 26, "italic": true, "color": "#2a9d8f"}));
+                    self.run("text.style", json!({"start": 22, "end": 26, "underline": true, "url": "https://example.org"}));
+                    self.run("text.paragraph", json!({"start": 15, "end": 39, "align": "center"}));
+                    let block = self.s.visible_elements().into_iter().find(|e| e.id.0 == id).and_then(|e| match &e.kind {
+                        anicraft_engine::doc::ElementKind::Text(t) => Some((e.transform.apply(anicraft_engine::geom::Vec2::ZERO), t.clone())),
+                        _ => None,
+                    });
+                    if let Some((at, t)) = block {
+                        self.tool = Tool::Text;
+                        let mut te = TextEditing::new(egui::pos2(at.x, at.y), Some(anicraft_engine::doc::ElementId(id)), Some(&t), &self.s.text_style);
+                        te.sel = (0, 6);
+                        self.text_edit = Some(te);
+                    }
                 }
             }
             Some(which @ ("textfields" | "testtext")) => {
@@ -3521,7 +3565,7 @@ impl App {
         let mut submit = false;
         let mut cancel = false;
         let title = crate::i18n::t(p.title);
-        egui::Window::new(title).id(egui::Id::new(("prompt", p.title))).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, -80.0]).show(ctx, |ui| {
+        crate::windows::new(ctx, title).id(egui::Id::new(("prompt", p.title))).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, -80.0]).show(ctx, |ui| {
             ui.set_min_width(360.0);
             let r = ui.add(egui::TextEdit::singleline(&mut p.text).desired_width(f32::INFINITY)).named(title);
             if p.focus {
@@ -3558,7 +3602,7 @@ impl App {
 
     fn about_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_about;
-        let shown = egui::Window::new(tr!("About AniCraft")).id(egui::Id::new("about_window")).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+        let shown = crate::windows::new(ctx, tr!("About AniCraft")).id(egui::Id::new("about_window")).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
             ui.add(egui::Image::new((app_mark(ctx).id(), egui::vec2(64.0, 64.0))));
             ui.heading("AniCraft");
             ui.label(tr!("Version {version} · {stage}", version = env!("CARGO_PKG_VERSION"), stage = crate::i18n::t(RELEASE_STAGE)));
@@ -3590,7 +3634,7 @@ impl App {
             (tr!("Screenshots"), root.join("shots")),
         ];
         let mut opened: Option<Result<(), String>> = None;
-        let shown = egui::Window::new(tr!("Project Files")).id(egui::Id::new("files_window")).open(&mut open).collapsible(false).resizable(false).default_width(620.0).show(ctx, |ui| {
+        let shown = crate::windows::new(ctx, tr!("Project Files")).id(egui::Id::new("files_window")).open(&mut open).collapsible(false).resizable(false).default_width(620.0).show(ctx, |ui| {
             ui.label(theme::text(theme::Type::Label, tr!("Where AniCraft's documents and files are on this computer")));
             ui.add_space(4.0);
             egui::Grid::new("files").num_columns(3).spacing([10.0, 6.0]).striped(true).show(ui, |ui| {
@@ -3835,7 +3879,9 @@ impl App {
 
         let bar = |fill| egui::Frame::NONE.fill(fill).inner_margin(egui::Margin::symmetric(8, 2));
         crate::drop::begin_frame(self);
-        egui::Panel::top("menu_bar").frame(bar(T.chrome)).show(ui, |ui| menus::bar(self, ui));
+        let menu = egui::Panel::top("menu_bar").frame(bar(T.chrome)).show(ui, |ui| menus::bar(self, ui));
+        // Floating windows stay below the menu bar (crate::windows).
+        crate::windows::set_work_area(&ctx, menu.response.rect.max.y);
         if self.start.is_some() {
             // The start screen takes the workspace's place (ADR 0059); the menus stay.
             egui::Panel::bottom("status_bar").exact_size(28.0).frame(bar(T.chrome)).show(ui, |ui| panels::status_bar(self, ui));
