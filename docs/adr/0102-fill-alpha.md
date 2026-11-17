@@ -1,6 +1,6 @@
 # ADR 0102: Fill alpha
 
-* Status: proposed
+* Status: accepted (2026-11-17; an outside contribution by Koolskull, pull request #354, merged with the M8 batch)
 * Relates to: ADR 0074 (the fill picker and gradients), ADR 0078 (swatches)
 
 ## Context
@@ -41,3 +41,18 @@ was always drawn opaque, so a fade did not show on the handles.
 * Alpha 0 is a fill the hit test and the eraser can still find. Removing the fill is None.
 * A wash does not join the raw drawing. Group still bundles those strokes. An opaque stroke
   joins as before.
+
+## Notes from review (the batch that merged this, M8)
+
+* **Where this differs from Animate.** In Animate a see-through brush stroke with Object
+  Drawing off still merges: it replaces the paint under it. Here it stays its own shape
+  (Decision 3), because a wash that cuts away what it covers can't do what a wash is for. The
+  cost is that such strokes don't join into one shape; Modify › Group bundles them.
+* **Only the brushes do this.** A rectangle, oval or Paint Bucket fill with a see-through
+  colour and Object Drawing off still merges as before (it cuts what it covers, then shows the
+  stage through). Not yet: the same rule for the other drawing tools, if artists ask for it.
+* **Nothing in the file changes.** `Rgba` always had alpha, `#rrggbbaa` was already read by the
+  commands, and the renderers already draw it (CPU oracle and GPU stage, SVG, HTML canvas and
+  Lottie exports). Older files open unchanged; no version bump.
+* **Live preview.** The pen-down wash is one coverage image (at most 2048 px on its longer
+  side, reused as one texture), so its cost is bounded for any stroke.
