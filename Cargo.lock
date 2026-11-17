@@ -1314,7 +1314,7 @@ dependencies = [
 [[package]]
 name = "craft-lottie"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=b421e6777343cba6c017295e318624e419b95323#b421e6777343cba6c017295e318624e419b95323"
+source = "git+https://github.com/storytold/craft-libs?rev=c2ae800d87ff5a6266c2e0818ee7a18d72f97e25#c2ae800d87ff5a6266c2e0818ee7a18d72f97e25"
 dependencies = [
  "craft-zip",
  "serde_json",
@@ -1452,7 +1452,7 @@ dependencies = [
 [[package]]
 name = "craft-zip"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=b421e6777343cba6c017295e318624e419b95323#b421e6777343cba6c017295e318624e419b95323"
+source = "git+https://github.com/storytold/craft-libs?rev=c2ae800d87ff5a6266c2e0818ee7a18d72f97e25#c2ae800d87ff5a6266c2e0818ee7a18d72f97e25"
 dependencies = [
  "flate2",
  "thiserror 2.0.21",
