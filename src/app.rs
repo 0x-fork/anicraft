@@ -3526,6 +3526,18 @@ impl App {
             let r = ui.add(egui::TextEdit::singleline(&mut p.text).desired_width(f32::INFINITY)).named(title);
             if p.focus {
                 r.request_focus();
+
+                if matches!(p.cmd, "layer.rename" | "scene.rename")
+                    && let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), r.id)
+                {
+                    let start = egui::text::CCursor::new(0);
+                    let end = egui::text::CCursor::new(p.text.chars().count());
+
+                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(start, end)));
+
+                    state.store(ui.ctx(), r.id);
+                }
+
                 p.focus = false;
             }
             if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
@@ -3966,5 +3978,100 @@ mod prompt_enter_tests {
         ctx.run_ui(input(vec![enter]), |_| app.prompt_window(&ctx)).textures_delta.clear();
         assert!(app.prompt.is_none(), "Enter closes the rename prompt");
         assert_eq!(app.s.active_layer().unwrap().name, "Renamed");
+    }
+
+    #[test]
+    fn opening_rename_layer_selects_entire_name() {
+        let ctx = egui::Context::default();
+
+        // Start with a genuine new AniCraft document.
+        let document = anicraft_engine::doc::Document::default();
+        let session = anicraft_engine::Session::new(document);
+        let mut app = App::with_context(&ctx, session, Some(std::path::PathBuf::from("unused.png")));
+
+        // Check the initial document.
+        let original = app.s.active_layer().expect("A new document should have an active layer").name.clone();
+
+        assert_eq!(original, "Layer 1");
+
+        // Invoke AniCraft's REAL Rename Layer command.
+        app.invoke("layer.rename");
+
+        // Verify that the command created the correct prompt.
+        let prompt = app.prompt.as_ref().expect("Rename Layer should open a prompt");
+
+        assert_eq!(prompt.cmd, "layer.rename");
+        assert_eq!(prompt.text, original);
+        assert!(prompt.focus);
+
+        // Simulate three frames of the dialog.
+        for _ in 0..3 {
+            let input =
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 940.0))), ..Default::default() };
+
+            ctx.run_ui(input, |_| app.prompt_window(&ctx)).textures_delta.clear();
+        }
+
+        // Find the text field that received keyboard focus.
+        let id = ctx.memory(|m| m.focused()).expect("The name field should have focus");
+
+        // Inspect the actual text selection.
+        let state = egui::TextEdit::load_state(&ctx, id).expect("The text field should have editing state");
+
+        let selection = state.cursor.char_range().expect("The name field should have a selection");
+
+        let a = selection.primary.index;
+        let b = selection.secondary.index;
+
+        // The entire original name must be selected.
+        assert_eq!(a.min(b), egui::text::CharIndex(0));
+        assert_eq!(a.max(b), egui::text::CharIndex(original.chars().count()));
+    }
+
+    #[test]
+    fn opening_rename_scene_selects_entire_name() {
+        let ctx = egui::Context::default();
+
+        // Create a real new AniCraft document.
+        let document = anicraft_engine::doc::Document::default();
+        let session = anicraft_engine::Session::new(document);
+        let mut app = App::with_context(&ctx, session, Some(std::path::PathBuf::from("unused.png")));
+
+        // Get the actual name of the current scene.
+        let original = app.s.doc.scenes.get(app.s.scene).expect("A new document should have a scene").name.clone();
+
+        assert!(!original.is_empty());
+
+        // Invoke the real Rename Scene command.
+        app.invoke("scene.rename");
+
+        // Verify that AniCraft created the correct prompt.
+        let prompt = app.prompt.as_ref().expect("Rename Scene should open a prompt");
+
+        assert_eq!(prompt.cmd, "scene.rename");
+        assert_eq!(prompt.text, original);
+        assert!(prompt.focus);
+
+        // Simulate three frames of the dialog.
+        for _ in 0..3 {
+            let input =
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 940.0))), ..Default::default() };
+
+            ctx.run_ui(input, |_| app.prompt_window(&ctx)).textures_delta.clear();
+        }
+
+        // Get the focused text field's editing state.
+        let id = ctx.memory(|m| m.focused()).expect("The scene name field should have focus");
+
+        let state = egui::TextEdit::load_state(&ctx, id).expect("The text field should have editing state");
+
+        let selection = state.cursor.char_range().expect("The scene name should have a selection");
+
+        let a = selection.primary.index;
+        let b = selection.secondary.index;
+
+        // The entire original scene name must be selected.
+        assert_eq!(a.min(b), egui::text::CharIndex(0));
+        assert_eq!(a.max(b), egui::text::CharIndex(original.chars().count()));
     }
 }
