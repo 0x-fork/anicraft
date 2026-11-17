@@ -680,13 +680,15 @@ impl<'a> Builder<'a> {
                 // Shapes loose on a frame, or in a group, are raw shapes (a group's merge only with
                 // each other, ADR 0073); drawing objects say so.
                 "DOMShape" => self.shape(el, parent, out, true),
-                // A group (ADR 0073): its members in its own space, placed by its matrix.
+                // A group (ADR 0073); Animate writes members in its parent space, so bring them into its frame.
                 "DOMGroup" if depth < anicraft_doc::MAX_GROUP_DEPTH => {
+                    let m = matrix(el);
+                    let (own, into_own) = m.inverse().map(|inv| (m, inv)).unwrap_or_default();
                     let mut members = Vec::new();
-                    self.elements(el.list("members"), &Affine::IDENTITY, &mut members, depth + 1);
+                    self.elements(el.list("members"), &into_own, &mut members, depth + 1);
                     if !members.is_empty() {
                         let layer = LayerId(self.doc.alloc_id());
-                        let g = self.element(ElementKind::group(layer, members), parent.mul(&matrix(el)), ColorEffect::default());
+                        let g = self.element(ElementKind::group(layer, members), parent.mul(&own), ColorEffect::default());
                         out.push(g);
                     }
                 }

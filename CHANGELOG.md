@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+* **Fixed: grouped artwork in Animate documents came in scaled and moved twice** (M4, fixes #411).
+  A scaled symbol in a group drew at the group's scale squared (a 50% instance at 25%). Animate
+  writes a group's members in the group's parent space; they now land where Animate puts them.
+
 * **Saved commands (command macros)** (ADR 0097, M6).
   * In the **History** panel, **Ctrl+click** steps (Shift+click a range) and choose **Save As
     Command…**: the steps come back at the end of the **Commands** menu, to run on whatever is

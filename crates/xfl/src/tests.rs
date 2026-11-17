@@ -598,6 +598,28 @@ fn loose_shapes_come_in_raw_and_drawing_objects_and_groups_as_groups() {
 }
 
 #[test]
+fn group_members_keep_their_own_placement() {
+    // A 50% instance in a 50% group stays 50% (#411).
+    let document = r##"<DOMDocument>
+      <symbols><Include href="Target.xml"/></symbols>
+      <timelines><DOMTimeline name="Scene 1"><layers><DOMLayer name="Layer 1"><frames><DOMFrame index="0"><elements>
+        <DOMGroup><matrix><Matrix a="0.5" d="0.5" tx="50" ty="50"/></matrix><members>
+          <DOMSymbolInstance libraryItemName="Target"><matrix><Matrix a="0.5" d="0.5" tx="50" ty="50"/></matrix></DOMSymbolInstance>
+        </members></DOMGroup>
+        <DOMGroup><matrix><Matrix a="0" d="0"/></matrix><members>
+          <DOMSymbolInstance libraryItemName="Target"><matrix><Matrix tx="7" ty="8"/></matrix></DOMSymbolInstance>
+        </members></DOMGroup>
+      </elements></DOMFrame></frames></DOMLayer></layers></DOMTimeline></timelines>
+    </DOMDocument>"##;
+    let symbol = r#"<DOMSymbolItem name="Target"><timeline><DOMTimeline name="Target"/></timeline></DOMSymbolItem>"#;
+    let (doc, _) = import(&HashMap::from([("DOMDocument.xml", document), ("LIBRARY/Target.xml", symbol)])).unwrap();
+    let placed: Vec<[f32; 6]> =
+        doc.timeline(0).layers[0].keyframes[0].elements.iter().map(|g| g.transform.mul(&g.kind.group_members()[0].transform).m).collect();
+    // The second group's matrix can't be inverted: it frames nothing and its member stays put.
+    assert_eq!(placed, [[0.5, 0.0, 0.0, 0.5, 50.0, 50.0], [1.0, 0.0, 0.0, 1.0, 7.0, 8.0]]);
+}
+
+#[test]
 fn stroke_caps_joints_dashes_and_dots_come_across() {
     use anicraft_doc::{Cap, Dash, Join, StrokeStyle};
     let read = |xml: &str| {
