@@ -2171,6 +2171,71 @@ fn subtract_occlusion_spans(
     }
 }
 
+fn clip_occluder_to_coverage_masks(
+    path: &anicraft_engine::geom::Path,
+    rule: anicraft_engine::geom::FillRule,
+    clip_id: u32,
+    dl: &anicraft_engine::doc::DisplayList,
+    to_px: &Affine,
+) -> Option<anicraft_engine::geom::Path> {
+    use anicraft_engine::geom::{FillRule, planar};
+
+    let mut visible = path.clone();
+    let mut visible_rule = rule;
+    let mut id = clip_id;
+
+    // Follow the mask and any enclosing parent masks.
+    for _ in 0..dl.clip_parents.len() {
+        // Soft masks need their actual transparency values.
+        // Do not treat their entire geometry as opaque.
+        if dl.clip_mode(id).is_soft() {
+            return None;
+        }
+
+        // A single mask can contain several filled shapes.
+        let masks: Vec<_> = dl.items.iter()
+            .filter(|item| {
+                item.masks == Some(id) && item.fill.is_some()
+            })
+            .map(|item| {
+                (
+                    item.path.transformed(
+                        &to_px.mul(&item.transform)
+                    ),
+                    item.fill_rule,
+                )
+            })
+            .collect();
+
+        if masks.is_empty() {
+            return None;
+        }
+
+        let parts: Vec<_> = masks.iter()
+            .map(|(path, rule)| (path, *rule))
+            .collect();
+
+        let region = planar::union(&parts)?;
+
+        // Keep only foreground geometry revealed by the mask.
+        visible = planar::intersect(
+            &visible,
+            visible_rule,
+            &region,
+        )?;
+
+        visible_rule = FillRule::EvenOdd;
+
+        match dl.clip_parents.get(id as usize).copied()? {
+            Some(parent) if parent < id => id = parent,
+            Some(_) => return None,
+            None => return Some(visible),
+        }
+    }
+
+    None
+}
+
 /// Hide selection stipple behind opaque fills and strokes
 /// that appear later in drawing order, including on other layers.
 /// Translucent and bitmap fills need separate handling.
@@ -2228,14 +2293,38 @@ fn exclude_overlying_artwork(
             if opaque {
                 let m = to_px.mul(&item.transform);
 
-                subtract_occlusion_spans(
-                    fills,
-                    &item.path.flatten(&m, 0.5),
-                    item.fill_rule,
-                    clip,
-                    &mut occluders,
-                    gap,
-                );
+                if let Some(clip_id) = item.clip {
+                    // Transform foreground artwork into screen space,
+                    // then intersect it with its coverage masks.
+                    let screen_path = item.path.transformed(&m);
+
+                    if let Some(visible) = clip_occluder_to_coverage_masks(
+                        &screen_path,
+                        item.fill_rule,
+                        clip_id,
+                        dl,
+                        to_px,
+                    ) {
+                        subtract_occlusion_spans(
+                            fills,
+                            &visible.flatten(&Affine::IDENTITY, 0.5),
+                            FillRule::EvenOdd,
+                            clip,
+                            &mut occluders,
+                            gap,
+                        );
+                    }
+                } else {
+                    // Unmasked artwork retains its existing behaviour.
+                    subtract_occlusion_spans(
+                        fills,
+                        &item.path.flatten(&m, 0.5),
+                        item.fill_rule,
+                        clip,
+                        &mut occluders,
+                        gap,
+                    );
+                }
             }
         }
 
@@ -2257,14 +2346,34 @@ fn exclude_overlying_artwork(
             0.5,
         );
 
-        subtract_occlusion_spans(
-            fills,
-            &outline.flatten(&Affine::IDENTITY, 0.5),
-            FillRule::NonZero,
-            clip,
-            &mut occluders,
-            gap,
-        );
+        if let Some(clip_id) = item.clip {
+            // The stroke outline is already in screen space.
+            if let Some(visible) = clip_occluder_to_coverage_masks(
+                &outline,
+                FillRule::NonZero,
+                clip_id,
+                dl,
+                to_px,
+            ) {
+                subtract_occlusion_spans(
+                    fills,
+                    &visible.flatten(&Affine::IDENTITY, 0.5),
+                    FillRule::EvenOdd,
+                    clip,
+                    &mut occluders,
+                    gap,
+                );
+            }
+        } else {
+            subtract_occlusion_spans(
+                fills,
+                &outline.flatten(&Affine::IDENTITY, 0.5),
+                FillRule::NonZero,
+                clip,
+                &mut occluders,
+                gap,
+            );
+        }
     }
 }
 
@@ -2575,6 +2684,130 @@ mod pattern_tests {
         assert!(
             !selected.iter().any(|r| r.contains(pos2(50.0, 50.0))),
             "a fully opaque parent group must hide selection"
+        );
+    }
+
+
+    /// Foreground artwork must only occlude selection
+    /// inside the area revealed by its mask.
+    #[test]
+    fn masked_foreground_only_occludes_inside_mask() {
+        use anicraft_engine::doc::DisplayList;
+
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(100.0, 100.0),
+        );
+
+        let mut selected = vec![Rect::from_min_max(
+            pos2(20.0, 40.0),
+            pos2(80.0, 60.0),
+        )];
+
+        let mut dl = DisplayList::default();
+
+        // One mask, with no enclosing parent mask.
+        dl.clip_parents.push(None);
+
+        // The mask reveals only the LEFT half.
+        let mut mask = item(
+            Path::rect(0.0, 0.0, 50.0, 100.0),
+            true,
+            None,
+        );
+        mask.masks = Some(0);
+        dl.items.push(mask);
+
+        // Foreground rectangle spans the entire view,
+        // but its mask hides the RIGHT half.
+        let mut foreground = item(
+            Path::rect(0.0, 0.0, 100.0, 100.0),
+            true,
+            None,
+        );
+        foreground.clip = Some(0);
+        dl.items.push(foreground);
+
+        exclude_overlying_artwork(
+            &mut selected,
+            &dl.items,
+            &dl,
+            &Affine::IDENTITY,
+            clip,
+            GAP,
+        );
+
+        // Covered by the visible foreground.
+        assert!(
+            !selected.iter().any(|r| r.contains(pos2(25.0, 50.0))),
+            "visible foreground must hide selection"
+        );
+
+        // Outside the mask, the foreground is invisible.
+        assert!(
+            selected.iter().any(|r| r.contains(pos2(75.0, 50.0))),
+            "masked-away foreground must not hide selection"
+        );
+    }
+
+    /// A masked foreground stroke only hides selected artwork
+    /// where the stroke is visible through its mask.
+    #[test]
+    fn masked_foreground_stroke_only_occludes_inside_mask() {
+        use anicraft_engine::doc::DisplayList;
+        use anicraft_engine::geom::Vec2;
+
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(100.0, 100.0),
+        );
+
+        let mut selected = vec![Rect::from_min_max(
+            pos2(20.0, 40.0),
+            pos2(80.0, 60.0),
+        )];
+
+        let mut dl = DisplayList::default();
+        dl.clip_parents.push(None);
+
+        // Reveal only the left half.
+        let mut mask = item(
+            Path::rect(0.0, 0.0, 50.0, 100.0),
+            true,
+            None,
+        );
+        mask.masks = Some(0);
+        dl.items.push(mask);
+
+        // An opaque horizontal stroke crosses both halves.
+        let mut foreground = item(
+            Path::line(
+                Vec2::new(0.0, 50.0),
+                Vec2::new(100.0, 50.0),
+            ),
+            false,
+            Some(12.0),
+        );
+        foreground.clip = Some(0);
+        dl.items.push(foreground);
+
+        exclude_overlying_artwork(
+            &mut selected,
+            &dl.items,
+            &dl,
+            &Affine::IDENTITY,
+            clip,
+            GAP,
+        );
+
+        assert!(
+            !selected.iter().any(|r| r.contains(pos2(25.0, 50.0))),
+            "visible foreground stroke must hide selection"
+        );
+
+        assert!(
+            selected.iter().any(|r| r.contains(pos2(75.0, 50.0))),
+            "masked-away stroke must not hide selection"
         );
     }
 
