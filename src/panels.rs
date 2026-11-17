@@ -3320,6 +3320,7 @@ mod tests {
             egui::ComboBox::is_open(&ctx, arrow_id),
             "Clicking the arrow should open the scene dropdown"
         );
+    }
 
     /// #304: the Scale lock keeps the width:height proportion (multiplicative).
     #[test]
