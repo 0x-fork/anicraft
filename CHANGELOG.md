@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+* **Licences: the shared libraries' exceptions, and the licence check back in CI.** `symphonia` (MPL-2.0, sound decoding through `craft-audio`) and `jpeg-encoder` (IJG, JPEG export through `craft-image-codecs`) are accepted as crate-scoped exceptions, named in `NOTICE` and `ATTRIBUTION.md`, with the reasons in `docs/legal/compliance.md`. CI runs `cargo deny check licenses bans sources` in its own job again, since the shared gate doesn't.
 * **Security: safer reads and temp files.** Import to Library checks an image's size (256 MiB) before reading it, and saves, audio exports and the video soundtrack write their temporary files under unguessable names, created exclusively.
 * **Saved commands (command macros)** (ADR 0097, M6).
   * In the **History** panel, **Ctrl+click** steps (Shift+click a range) and choose **Save As
