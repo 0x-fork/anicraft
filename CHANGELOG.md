@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+* **From outside contributors** (M8; thank you).
+  * **Free Transform skews** (by mypenc, #176, for #174). Drag the line between two handles
+    of the selection box to shear the artwork along that edge, as in Animate: the opposite edge
+    stays put, **Alt** skews about the centre, and the cursor shows the direction. One undo
+    step per drag; works with Edit Multiple Frames.
+  * **Fill and stroke alpha** (by Koolskull, #354, ADR 0102). The colour picker has a labelled
+    **Alpha** row (a slider and a percent) for a solid fill and for a stroke, on the Tools
+    squares, the Colour panel and Properties; hex takes `#rrggbbaa`. A clear fill is still a
+    fill; no fill is the type None. Each stop of a gradient keeps its own alpha and its marker
+    shows it. A brush stroke that isn't fully opaque stays its own shape over what is behind
+    it, so crossings darken, and the ink is drawn at that alpha while the pen is down. Opaque
+    strokes join as before.
+  * **Remote control: an assistant edits the window you have open** (by lienatanael-dev, #216,
+    ADR 0104, `docs/control-protocol.md`). `anicraft --control 9878` (or
+    `ANICRAFT_CONTROL_PORT`) lets an assistant edit the open document through a port on this
+    computer only; `anicraft-cli mcp --bridge 9878` is the MCP server's five tools acting on
+    that window. Edits show at once and undo with Ctrl+Z; they wait while you drag, so undo
+    steps never mix; the status bar says "Remote control on (port 9878)". Off unless you start
+    AniCraft this way. Each run has a fresh token in `control.json` in the settings folder
+    (readable only by you; `ANICRAFT_CONTROL_TOKEN` overrides it); anything that isn't a JSON
+    request with that token is refused. Added in review: the port closes with the window, a
+    connection that sends nothing is dropped after 10 s, the token file is always created new
+    and owner-only, and a portable install keeps it in its own folder
+    (`ANICRAFT_CONTROL_FILE` tells the bridge where).
+  * **Georgian, ready for its translation** (by Davit Matchakhelidze, #160). Builds made with
+    craft-fonts embed Noto Sans Georgian as a fallback face and offer Georgian (`ka`) once its
+    catalog is in craft-i18n; a build without the face doesn't offer it, and a damaged font
+    file is never loaded.
 * **Security: safer reads and temp files.** Import to Library checks an image's size (256 MiB) before reading it, and saves, audio exports and the video soundtrack write their temporary files under unguessable names, created exclusively.
 * **Saved commands (command macros)** (ADR 0097, M6).
   * In the **History** panel, **Ctrl+click** steps (Shift+click a range) and choose **Save As
@@ -27,14 +55,6 @@
   * The keyboard shortcut editor moves from F1 to **Ctrl+Alt+Shift+K**, as in Animate.
   * A new chapter, **Using this guide**.
 
-* **Fill and stroke alpha** (ADR 0097).
-  * The colour picker sets an alpha on a solid fill and on a stroke, from clear to opaque.
-    A clear fill is still a fill. No fill is the type None.
-  * Each stop of a linear or radial gradient keeps its own alpha, so a ramp can fade. The
-    stop's marker shows that alpha.
-  * A brush stroke that is not fully opaque stays its own shape, so the colour behind it
-    shows through and crossings darken. Opaque strokes still join. Group bundles the
-    separate strokes. The ink is drawn at that alpha while the pen is down.
 * **Sound output polish** (ADR 0095, M5).
   * The playhead follows the sound being **heard**: the device's latency is taken off and slow
     frames are dropped rather than drifting (within a frame over an hour of play in tests).
@@ -481,21 +501,6 @@
     click, Shift-click, Ctrl-click or a box. **Properties › Bone** counts the bone's points and
     has **Rebind All**.
   * Headless: `bone.add_in_shape`, `bone.bind`, and `bone.info` with `points`.
-* **Remote control: assistants edit the open window live** (ADR 0104).
-  * `anicraft --control 9878` opens AniCraft as usual and lets an assistant edit the document you
-    have open, through a port on this computer only. Its edits appear at once and undo with
-    Ctrl+Z, like yours; the status bar says "Remote control on (port 9878)" while it is open. Also
-    `ANICRAFT_CONTROL_PORT`.
-  * `anicraft-cli mcp --bridge 9878`: the MCP server's five tools, acting on that window. It starts
-    before AniCraft is open, connects on the first call, says how to start AniCraft when it isn't
-    running, and reconnects after AniCraft is reopened.
-  * No setup: each run makes a fresh token and writes it to `control.json` in AniCraft's settings
-    folder (only you can read it), where the bridge finds it. `ANICRAFT_CONTROL_TOKEN` overrides it.
-  * While you drag, the assistant's edits wait until you let go, so the two never share an undo step.
-  * The protocol (`docs/control-protocol.md`): JSON lines on `127.0.0.1`; `hello`, `tools.list`,
-    `tools.call`; anything that isn't a JSON request (such as a web page's request to localhost) is
-    refused.
-
 * **CI on macOS and Windows** (ADR 0067, M8). Every pull request that changes code now builds,
   tests and lints the workspace on macOS (arm64) and Windows (x64) runners as well as Linux, so
   macOS-only and Windows-only code is checked before it merges. Documentation-only changes skip
@@ -687,9 +692,6 @@
     `prefs.recent_pin`, `prefs.recent_remove`, `prefs.recent_clear`; `file.import` takes
     `cx`/`cy` and `layer: "active"`.
 
-* **Free Transform: skew and shear** (#174). Dragging the line between two handles of the
-  selection box shears the artwork along that edge, as in Adobe Animate: the opposite edge stays
-  put and Alt skews about the centre. The cursor shows the direction.
 * **Buttons, complete: sounds on button frames and hit-area editing** (ADR 0057, M5).
   * A sound on a button's **Over** or **Down** frame plays when the pointer goes over or
     presses the button, in Test Movie and in the HTML canvas page (Web Audio). As the SWF format
