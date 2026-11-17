@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+* **Security: safer reads and temp files.** Import to Library checks an image's size (256 MiB) before reading it, and saves, audio exports and the video soundtrack write their temporary files under unguessable names, created exclusively.
 * **Saved commands (command macros)** (ADR 0097, M6).
   * In the **History** panel, **Ctrl+click** steps (Shift+click a range) and choose **Save As
     Command…**: the steps come back at the end of the **Commands** menu, to run on whatever is
