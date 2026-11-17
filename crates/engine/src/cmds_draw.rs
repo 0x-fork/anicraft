@@ -357,8 +357,10 @@ fn set_transform(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(EngineError::Param("scale must be between 0.001 and 1000 in magnitude".into()));
         }
     }
-    let els = s.selected_elements_mut()?;
-    for e in els {
+    let units = raw_drawings(s);
+    let in_unit = |id: &ElementId| units.iter().any(|(ids, _)| ids.contains(id));
+    let mut els = s.selected_elements_mut()?;
+    for e in els.iter_mut().filter(|e| !in_unit(&e.id)) {
         let mut d: Decomposed = e.transform.decompose();
         if let Some(v) = x {
             d.tx = v;
@@ -377,7 +379,59 @@ fn set_transform(s: &mut Session, p: &Value) -> Result<Value> {
         }
         e.transform = d.compose();
     }
+    // A raw drawing turns and scales as one shape, about the centre of its pieces (#297): every
+    // piece takes the change that gives its first piece the values asked for.
+    for (ids, bounds) in &units {
+        let Some(reference) = ids.first().and_then(|id| els.iter().find(|e| e.id == *id)).map(|e| e.transform) else { continue };
+        let m = drawing_change(&reference, bounds.center(), [x, y, sx, sy, rot]);
+        for e in els.iter_mut().filter(|e| ids.contains(&e.id)) {
+            e.transform = m.mul(&e.transform);
+        }
+    }
     Ok(json!({"ok": true}))
+}
+
+/// The selected raw drawings of two or more pieces on the active layer: raw pieces that touch,
+/// such as a fill and the strokes on its edges (ADR 0042), and their combined bounds.
+fn raw_drawings(s: &Session) -> Vec<(Vec<ElementId>, anicraft_geom::Rect)> {
+    let layer = s.layer;
+    let (ids, boxes): (Vec<ElementId>, Vec<anicraft_geom::Rect>) = s
+        .selected_elements()
+        .into_iter()
+        .filter(|(l, e)| *l == layer && crate::merge::mergeable(e).is_some())
+        .map(|(l, e)| (e.id, s.element_bounds_on(l, e.id)))
+        .filter(|(_, b)| !b.is_empty())
+        .unzip();
+    crate::merge::touching_groups(&boxes)
+        .into_iter()
+        .filter(|g| g.len() > 1)
+        .map(|g| {
+            let members: Vec<ElementId> = g.iter().filter_map(|&i| ids.get(i).copied()).collect();
+            let b = g.iter().filter_map(|&i| boxes.get(i)).fold(anicraft_geom::Rect::EMPTY, |r, b| r.union(b));
+            (members, b)
+        })
+        .collect()
+}
+
+/// The stage-space change that gives `reference` the asked-for `[x, y, sx, sy, rotation°]`:
+/// scale, rotation and skew about `pivot`, then a move for the position.
+fn drawing_change(reference: &Affine, pivot: Vec2, [x, y, sx, sy, rot]: [Option<f32>; 5]) -> Affine {
+    let from = reference.decompose();
+    let mut to = from;
+    if let Some(v) = sx {
+        to.sx = v;
+    }
+    if let Some(v) = sy {
+        to.sy = v;
+    }
+    if let Some(v) = rot {
+        to.rotation = v.to_radians();
+    }
+    let linear = |d: &Decomposed| Decomposed { tx: 0.0, ty: 0.0, ..*d }.compose();
+    let turn = linear(&from).inverse().map_or(Affine::IDENTITY, |inv| linear(&to).mul(&inv));
+    let m = Affine::translate(pivot.x, pivot.y).mul(&turn).mul(&Affine::translate(-pivot.x, -pivot.y));
+    let at = m.mul(reference).translation();
+    Affine::translate(x.map_or(0.0, |v| v - at.x), y.map_or(0.0, |v| v - at.y)).mul(&m)
 }
 
 fn shapes_mut(s: &mut Session) -> Result<Vec<&mut Shape>> {
