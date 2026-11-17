@@ -1138,6 +1138,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             exclude_overlying_artwork(
                 &mut fills,
                 &dl.items[index + 1..],
+                &dl,
                 &to_px,
                 canvas,
                 gap,
@@ -1146,6 +1147,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             exclude_overlying_artwork(
                 &mut strokes,
                 &dl.items[index + 1..],
+                &dl,
                 &to_px,
                 canvas,
                 gap,
@@ -1166,6 +1168,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             exclude_overlying_artwork(
                 &mut backing_spans,
                 &dl.items[index + 1..],
+                &dl,
                 &to_px,
                 canvas,
                 gap,
@@ -2174,6 +2177,7 @@ fn subtract_occlusion_spans(
 fn exclude_overlying_artwork(
     fills: &mut Vec<Rect>,
     above: &[anicraft_engine::doc::DisplayItem],
+    dl: &anicraft_engine::doc::DisplayList,
     to_px: &Affine,
     clip: Rect,
     gap: f32,
@@ -2191,6 +2195,12 @@ fn exclude_overlying_artwork(
             || item.masks.is_some()
             || item.outline.is_some()
         {
+            continue;
+        }
+
+        // Account for opacity inherited from symbol instances
+        // and other enclosing rendering groups.
+        if dl.effective_alpha(item) < 0.999 {
             continue;
         }
 
@@ -2435,6 +2445,7 @@ mod pattern_tests {
         exclude_overlying_artwork(
             &mut selected,
             &above,
+            &anicraft_engine::doc::DisplayList::default(),
             &Affine::IDENTITY,
             clip,
             GAP,
@@ -2487,6 +2498,7 @@ mod pattern_tests {
         exclude_overlying_artwork(
             &mut selected,
             &above,
+            &anicraft_engine::doc::DisplayList::default(),
             &Affine::IDENTITY,
             clip,
             GAP,
@@ -2495,6 +2507,74 @@ mod pattern_tests {
         assert!(
             !selected.iter().any(|r| r.contains(pos2(50.0, 1805.0))),
             "foreground coverage was dropped after MAX_SPANS"
+        );
+    }
+
+    /// An opaque fill inside a translucent parent group must
+    /// not completely hide selected artwork beneath it.
+    #[test]
+    fn translucent_parent_group_does_not_occlude_selection() {
+        use anicraft_engine::doc::{BlendMode, DisplayList, Group};
+
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(100.0, 100.0),
+        );
+
+        let mut selected = vec![Rect::from_min_max(
+            pos2(40.0, 40.0),
+            pos2(60.0, 60.0),
+        )];
+
+        let mut dl = DisplayList::default();
+
+        // The parent group is only 50% opaque.
+        dl.groups.push(Group {
+            parent: None,
+            alpha: 0.5,
+            blend: BlendMode::Normal,
+            filters: Default::default(),
+            clip: None,
+        });
+
+        // The rectangle itself is 100% opaque.
+        let mut foreground = item(
+            Path::rect(0.0, 0.0, 100.0, 100.0),
+            true,
+            None,
+        );
+        foreground.group = Some(0);
+        dl.items.push(foreground);
+
+        exclude_overlying_artwork(
+            &mut selected,
+            &dl.items,
+            &dl,
+            &Affine::IDENTITY,
+            clip,
+            GAP,
+        );
+
+        assert!(
+            selected.iter().any(|r| r.contains(pos2(50.0, 50.0))),
+            "a translucent parent group must not fully occlude selection"
+        );
+
+        // A fully opaque instance should hide the selection.
+        dl.groups[0].alpha = 1.0;
+
+        exclude_overlying_artwork(
+            &mut selected,
+            &dl.items,
+            &dl,
+            &Affine::IDENTITY,
+            clip,
+            GAP,
+        );
+
+        assert!(
+            !selected.iter().any(|r| r.contains(pos2(50.0, 50.0))),
+            "a fully opaque parent group must hide selection"
         );
     }
 
@@ -3593,6 +3673,7 @@ mod pattern_tests {
         exclude_overlying_artwork(
             &mut fills,
             std::slice::from_ref(&stroke),
+            &anicraft_engine::doc::DisplayList::default(),
             &Affine::IDENTITY,
             clip,
             GAP,
@@ -3610,6 +3691,7 @@ mod pattern_tests {
         exclude_overlying_artwork(
             &mut fills,
             &[other_layer],
+            &anicraft_engine::doc::DisplayList::default(),
             &Affine::IDENTITY,
             clip,
             GAP,
@@ -3906,6 +3988,7 @@ mod pattern_tests {
         exclude_overlying_artwork(
             &mut strokes,
             &[red],
+            &anicraft_engine::doc::DisplayList::default(),
             &Affine::IDENTITY,
             clip,
             GAP,
@@ -3973,6 +4056,7 @@ mod pattern_tests {
         exclude_overlying_artwork(
             &mut strokes,
             &[red],
+            &anicraft_engine::doc::DisplayList::default(),
             &Affine::IDENTITY,
             clip,
             GAP,
