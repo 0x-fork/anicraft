@@ -15,6 +15,7 @@ repository = "https://github.com/storytold/AniCraft"
 rust-version = "1.95"
 
 [workspace.dependencies]
+craft-video = { git = "https://github.com/storytold/craft-libs", rev = "3e0bb788a7ef48edc05285f05ee7b628c7b23bdd", default-features = false, features = ["screen-video"] }
 craft-lottie = { git = "https://github.com/storytold/craft-libs", rev = "b421e6777343cba6c017295e318624e419b95323" }
 anicraft-geom = { path = "crates/geom" }
 anicraft-doc = { path = "crates/doc" }
