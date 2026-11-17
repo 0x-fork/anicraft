@@ -1365,7 +1365,7 @@ dependencies = [
 [[package]]
 name = "craft-palette"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=aba2ae3a2124625ce76180de3d4a7fa20ad7be7e#aba2ae3a2124625ce76180de3d4a7fa20ad7be7e"
+source = "git+https://github.com/storytold/craft-libs?rev=de97c35f2b2af01c62371647e57a6affeab456fd#de97c35f2b2af01c62371647e57a6affeab456fd"
 
 [[package]]
 name = "craft-tiff"
