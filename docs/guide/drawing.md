@@ -440,7 +440,8 @@ animate the colour effect too (see [Tweens](tweens.md)).
 
 Movie clip and button instances can also have **Filters** and **Blending**, as in Animate.
 Convert your artwork to a movie clip symbol first (see
-[Symbols and the Library](symbols-and-library.md)).
+[Symbols and the Library](symbols-and-library.md)). Text takes filters as it is, with no
+symbol needed (see [Text](text.md#filters-on-text)).
 
 **Filters**: choose **Add filter** under Filters in Properties, and stack as many as you like:
 **Drop Shadow**, **Blur**, **Glow**, **Bevel**, **Gradient Glow**, **Gradient Bevel** and
@@ -470,10 +471,20 @@ the filters it got). **Export Presets…** writes them to a small JSON file and 
 Presets…** adds a file's presets to yours, to move them to another computer. Presets are kept
 in your preferences.
 
-**Tweening filters**: a classic tween changes filter values smoothly when both keyframes have
-the same filters in the same order (switched-off ones count), as in Animate: a Blur from 0 to
-20 is 10 halfway. On/off, Inner, Knockout and Quality stay as the first keyframe has them.
-If the lists differ, the first keyframe's filters hold until the next keyframe.
+The menu starts with AniCraft's **built-in presets**: **Soft Shadow**, **Hard Shadow**, **Neon
+Glow**, **Outline**, **Emboss**, **Engrave**, **Soft Focus** and **Greyscale**. They are a
+starting point: apply one, then change its values in the list. Built-in presets can't be
+renamed or deleted. If you don't use one, open **Built-in Presets** in the same menu and
+untick it to take it off the menu; tick it to bring it back. To keep your own version of one,
+change it and **Save as Preset…** under a new name.
+
+**Tweening filters**: a classic tween changes filter values and colours smoothly between two
+keyframes, as in Animate: a Blur from 0 to 20 is 10 halfway. On/off, Inner, Knockout, the Type
+and Quality stay as the first keyframe has them. The filters don't have to match: one that
+only the second keyframe has fades in, one that only the first has fades out, and the filters
+both have (the same kinds in the same order, switched-off ones included) change from one to
+the other. To change a filter's colour, quality or switches part way, use a motion tween (see
+[Tweens](tweens.md#animating-filters)).
 
 **Blending** sets how the instance mixes with what's below it: Normal, Layer, Darken,
 Multiply, Lighten, Screen, Overlay, Hard Light, Add, Subtract, Difference, Invert, Alpha and

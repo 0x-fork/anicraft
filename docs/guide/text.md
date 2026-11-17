@@ -127,6 +127,21 @@ wraps round; on an open one, letters that would run past the ends don't show. Th
 shows the path it follows. Text on a path is always static text, and it is drawn from its own
 outlines like all text, so it looks the same on every computer.
 
+## Filters on text
+
+Text takes the same filters as movie clips and buttons: **Drop Shadow**, **Blur**, **Glow**,
+**Bevel**, **Gradient Glow**, **Gradient Bevel** and **Adjust Color**. Select the text and
+choose **Add filter** under **Filters** in Properties; you don't need to make a symbol first.
+Everything in [Filters and blend modes](drawing.md#filters-and-blend-modes) works here too: the
+order, the eye that switches a filter off, copying and pasting filters, and presets, the
+built-in ones included.
+
+Filters work on static, dynamic and input text. On a field, the box, the border and the text
+are filtered together, so a drop shadow falls from the whole field. Changing the words, the
+font or the text type keeps the filters. They tween between keyframes and in the Motion Editor
+like a movie clip's (see [Tweens](tweens.md#animating-filters)). **Modify › Break Apart** turns
+the text into a shape, which has no filters.
+
 ## Turning text into shapes
 
 To reshape the letters themselves, select the text and choose **Modify › Break Apart**
@@ -144,7 +159,9 @@ In the **HTML canvas** export, the movie plays in a web browser:
 
 * static text, and the authored text of fields, is drawn exactly as in AniCraft;
 * input fields become real text boxes over the movie, so the browser's input methods, on-screen
-  keyboards on phones and tablets, and the clipboard all work;
+  keyboards on phones and tablets, and the clipboard all work. Filters on an input field show
+  on its box and border there; what the viewer types is drawn by the browser, without them
+  (the export report says so);
 * text that a script or the viewer changes is drawn with the fonts in the viewer's browser. If
   the viewer doesn't have your font, it uses a similar one, and the export report tells you this
   can happen.
@@ -159,7 +176,7 @@ See [Exporting and Publish](exporting-and-publish.md) for every format.
 
 When you open an Animate document, its text comes across as text you can edit, with its font,
 size, colour, bold and italic, alignment, spacing, position and wrapping. Dynamic and input
-fields come across as fields, with their names, boxes, borders and line types. A block whose
+fields come across as fields, with their names, boxes, borders, line types and filters. A block whose
 lines use different styles becomes one block per style, stacked as before. Fonts that aren't on
 your computer use the default font, and the status bar names them. See
 [Opening Animate files](opening-animate-files.md).
