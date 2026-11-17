@@ -206,7 +206,7 @@ impl Lexer<'_> {
     /// escape, and a lone surrogate becomes U+FFFD.
     fn utf16(&mut self, unit: u32) -> char {
         if (0xD800..0xDC00).contains(&unit) {
-            let rest = &self.src.as_bytes()[self.at..];
+            let rest = self.src.as_bytes().get(self.at..).unwrap_or(&[]);
             let low = rest.strip_prefix(b"\\u").and_then(|r| r.get(..4)).and_then(|h| h.iter().try_fold(0u32, |v, &b| Some(v * 16 + char::from(b).to_digit(16)?)));
             if let Some(low) = low.filter(|l| (0xDC00..0xE000).contains(l)) {
                 for _ in 0..6 {

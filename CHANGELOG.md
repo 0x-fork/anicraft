@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+* **Fixes and polish from outside contributors.** Thank you all.
+  * **Shape tweens carry a raw shape's line with its fill** (#119, NetterSilver): when the two keyframes' lines have different numbers of pieces (a triangle into a hexagon), the pieces join into outlines that morph as the fill does, with no side left bare and no line left standing; a line on one keyframe only grows in or shrinks away, and shape hints steer the line too.
+  * **Flipping no longer squashes a shape to 1 %** (#116, jayzed80): the Scale fields in Properties show a mirrored scale as a negative percentage and never rewrite a value they only show.
+  * **SVG path data**: long runs of implicit line, curve and move commands keep every point (Mex).
+  * **Scripts**: `Math.round` keeps negative zero and `Math.min`/`Math.max` order signed zeros as ECMAScript does, in Test Movie and the HTML player alike (Mex); a surrogate pair written as two `\u` escapes in a string makes one character (NetterSilver).
+  * **Strokes**: an odd dash list of 9 to 15 lengths repeats whole instead of being cut mid-pattern, and a dotted line's spacing stays in range under overshooting eases (NetterSilver).
+  * **Geometry**: a rounded rectangle with a negative size is the same box as the plain one (NetterSilver), and a matrix whose inverse would overflow has none (Mex).
+  * **Commands**: a `bezier` ease with a malformed entry is refused rather than half-read, and a colour starting with `##` is not a colour (NetterSilver).
+  * **CLI and MCP**: `anicraft-cli <subcommand> --help` (and `help <subcommand>`) print that subcommand's usage (#153, jayzed80); the usage says which frame numbers are 1-based and which 0-based (#152, jayzed80); the MCP render caption reads `1280×720` (#311, Efe Şahinbaş); `--help` lists the light theme (Mex).
+  * **Docs**: plug-in element kinds and `null` bounds, opening Animate files directly from the CLI, and status notes that had gone out of date (Mex). Localisation tests for Hebrew dual plurals and the product name (nocturney).
 * **Security: safer reads and temp files.** Import to Library checks an image's size (256 MiB) before reading it, and saves, audio exports and the video soundtrack write their temporary files under unguessable names, created exclusively.
 * **Saved commands (command macros)** (ADR 0097, M6).
   * In the **History** panel, **Ctrl+click** steps (Shift+click a range) and choose **Save As

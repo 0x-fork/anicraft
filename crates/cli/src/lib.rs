@@ -131,34 +131,25 @@ fn one_based(a: &Args, k: &str) -> Result<Option<u32>, String> {
     }
 }
 
-/// Returns the usage line(s) for a given subcommand, formatted under `USAGE:`.
+/// The usage of one subcommand, under `USAGE:`: its entries in [`USAGE`] with their
+/// continuation lines, so the two never drift apart. `None` for a name [`USAGE`] doesn't list.
 pub fn subcommand_usage(cmd: &str) -> Option<String> {
-    let body = match cmd {
-        "info" => "  anicraft-cli info <file|--sample>",
-        "render" => "  anicraft-cli render <file|--sample> --out <frame.png> [--frame N] [--scale S]",
-        "render-seq" => "  anicraft-cli render-seq <file|--sample> --out-dir <dir> [--from A] [--to B] [--scale S]",
-        "gif" => "  anicraft-cli gif <file|--sample> --out <anim.gif> [--from A] [--to B] [--scale S] [--overwrite yes]",
-        "apng" | "webp" => {
-            "  anicraft-cli apng|webp <file|--sample> --out <anim.png|anim.webp> [--from A] [--to B] [--scale S]\n                         [--loop forever|N] [--background yes] [--overwrite yes]\n                                         full colour with real transparency (WebP: lossless)"
+    const ENTRY: &str = "  anicraft-cli ";
+    let mut out = String::new();
+    let mut taking = false;
+    // The entries are the block after `USAGE:`, up to the first blank line.
+    for line in USAGE.lines().skip_while(|l| *l != "USAGE:").skip(1).take_while(|l| !l.trim().is_empty()) {
+        if let Some(rest) = line.strip_prefix(ENTRY) {
+            // `apng|webp` names two subcommands; `--version` is also `version`.
+            let names = rest.split_whitespace().next().unwrap_or("");
+            taking = names.split('|').any(|n| n == cmd || n.strip_prefix("--") == Some(cmd));
         }
-        "commands" => "  anicraft-cli commands",
-        "run" => "  anicraft-cli run <file|--sample> <script.json> [--save <out.anicraft>]",
-        "exec" => "  anicraft-cli exec <file|--sample> <command.id> [<json-params>] [--save <out.anicraft>]",
-        "new" => "  anicraft-cli new --out <file.anicraft> [--width W] [--height H] [--fps F]",
-        "guide" => "  anicraft-cli guide --out <folder>      writes the user guide as HTML pages (open index.html)",
-        "bench" => {
-            "  anicraft-cli bench [--layers N] [--shapes N] [--frames N]   performance probe (use --release)\n  anicraft-cli bench --check yes         the default scenario against the budgets in\n                                         docs/performance.md; fails when one is missed"
+        if taking {
+            out.push('\n');
+            out.push_str(line);
         }
-        "serve" => {
-            "  anicraft-cli serve [file|--sample]     JSON-lines on stdin/stdout:\n        {\"id\":1,\"cmd\":\"draw.rect\",\"params\":{\"x\":10,\"y\":10,\"w\":50,\"h\":50}}"
-        }
-        "mcp" => {
-            "  anicraft-cli mcp [file|--sample]       Model Context Protocol server on stdin/stdout,\n                                         for AI assistants (see docs/mcp.md)"
-        }
-        "version" => "  anicraft-cli --version",
-        _ => return None,
-    };
-    Some(format!("USAGE:\n{body}"))
+    }
+    (!out.is_empty()).then(|| format!("USAGE:{out}"))
 }
 
 /// Runs the CLI; returns the text to print on success.
@@ -847,7 +838,7 @@ mod tests {
 
     #[test]
     fn subcommand_help_prints_usage() {
-        let subcommands = ["info", "render", "render-seq", "gif", "apng", "webp", "commands", "run", "exec", "new", "guide", "bench", "serve", "mcp"];
+        let subcommands = ["info", "render", "render-seq", "gif", "apng", "webp", "export", "formats", "commands", "run", "exec", "new", "guide", "bench", "serve", "mcp"];
         for sub in subcommands {
             let out_long = run(&[sub.to_string(), "--help".to_string()]).unwrap();
             assert!(out_long.contains("USAGE:"), "help for {sub} should contain USAGE:");
@@ -874,12 +865,22 @@ mod tests {
     #[test]
     fn subcommand_usage_matches_usage_text() {
         let subcommands =
-            ["info", "render", "render-seq", "gif", "apng", "webp", "commands", "run", "exec", "new", "guide", "bench", "serve", "mcp", "version"];
+            ["info", "render", "render-seq", "gif", "apng", "webp", "export", "formats", "commands", "run", "exec", "new", "guide", "bench", "serve", "mcp", "version"];
         for sub in subcommands {
             let u = subcommand_usage(sub).expect("subcommand_usage should exist");
             let body = u.strip_prefix("USAGE:\n").expect("should start with USAGE:\n");
             assert!(USAGE.contains(body), "USAGE should contain body for {sub}");
         }
         assert_eq!(subcommand_usage("bogus"), None);
+        // Every entry of a subcommand with several comes along, with its continuation lines.
+        let guide = subcommand_usage("guide").unwrap_or_default();
+        assert!(guide.contains("guide --out") && guide.contains("guide search") && guide.contains("best first"), "{guide}");
+        assert!(!guide.contains("bench"), "{guide}");
+        let export = subcommand_usage("export").unwrap_or_default();
+        assert!(export.contains("--options") && export.contains("exporter plug-ins"), "{export}");
+        // Words inside an entry are not subcommands.
+        for word in ["anicraft-cli", "--sample", "file", "", "apng|webp", "--plugins"] {
+            assert_eq!(subcommand_usage(word), None, "{word:?}");
+        }
     }
 }
