@@ -122,7 +122,9 @@ fn all_keys() -> BTreeSet<Key> {
     }
     add(&doc::Easing::Linear.label());
     doc::Property::ALL.iter().for_each(|p| add(p.label()));
-    doc::FilterParam::ALL.iter().for_each(|p| add(p.label()));
+    doc::FilterParam::all().iter().for_each(|p| add(p.label()));
+    [doc::FilterColor::Color, doc::FilterColor::Shadow, doc::FilterColor::Highlight, doc::FilterColor::Stop(0)].iter().for_each(|c| add(c.label()));
+    anicraft_engine::filter_library::BUILTIN_NAMES.iter().for_each(|n| add(n));
     add("Filters");
     add("Filter");
     doc::ColorStyle::ALL.iter().for_each(|s| add(s.label()));

@@ -670,7 +670,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             }
             Drag::Bend { .. } | Drag::RawPoint { .. } | Drag::RawHandle { .. } => end_raw_drag(app),
             Drag::Transform { .. } | Drag::SliceGuide { .. } | Drag::Points { .. } | Drag::Hint { .. } | Drag::MotionMove { .. } | Drag::CameraPan { .. } | Drag::CameraRotate { .. } | Drag::BonePose { .. } | Drag::ArmatureMove { .. } | Drag::WarpPin { .. } => app.s.end_gesture(),
-            Drag::Bone { from, head, cur } => crate::bone_tool::drag_end(app, xf, from, head, cur),
+            Drag::Bone { from, parent, head, cur } => crate::bone_tool::drag_end(app, xf, from, parent, head, cur),
             Drag::Guide { index, .. } => crate::rulers::drag_end(app, index, geo, ui.input(|i| i.pointer.latest_pos())),
             Drag::Width { .. } => crate::widthtool::drag_end(app),
             Drag::Gradient { .. } => crate::gradient_tool::drag_end(app),
@@ -753,7 +753,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 Tool::Text if !panning => {
                     commit_text(app);
                     if !open_text_at(app, sp, 3.0 / zoom.max(1e-3)) {
-                        app.text_edit = Some(crate::app::TextEditing { at: sp, element: None, text: String::new(), original: String::new(), focus: true });
+                        app.text_edit = Some(crate::app::TextEditing::new(sp, None, None, &app.s.text_style));
                     }
                 }
                 Tool::Bone if !panning => crate::bone_tool::click(app, xf, p),
@@ -1833,23 +1833,28 @@ mod pattern_tests {
 fn open_text_at(app: &mut App, sp: Pos2, tolerance: f32) -> bool {
     let Some((_, id)) = app.s.hit_test(to_v(sp), tolerance) else { return false };
     let found = app.s.visible_elements().into_iter().find(|e| e.id == id).and_then(|e| match &e.kind {
-        anicraft_engine::doc::ElementKind::Text(t) => Some((e.transform.apply(Vec2::ZERO), t.text.clone())),
+        anicraft_engine::doc::ElementKind::Text(t) => Some((e.transform.apply(Vec2::ZERO), t.clone())),
         _ => None,
     });
-    let Some((at, text)) = found else { return false };
+    let Some((at, block)) = found else { return false };
     app.run("element.select", json!({"ids": [id.0]}));
-    app.text_edit = Some(crate::app::TextEditing { at: pos2(at.x, at.y), element: Some(id), original: text.clone(), text, focus: true });
+    app.text_edit = Some(crate::app::TextEditing::new(pos2(at.x, at.y), Some(id), Some(&block), &app.s.text_style));
     true
 }
 
 /// Commits the text being typed: new text is created, edited text replaced (one undo step
-/// each); emptied text is deleted, and unchanged text commits nothing.
+/// each), with its styled runs (ADR 0085); emptied text is deleted, and unchanged text commits
+/// nothing.
 pub fn commit_text(app: &mut App) {
-    let Some(te) = app.text_edit.take() else { return };
+    let Some(mut te) = app.text_edit.take() else { return };
+    te.sync();
     match te.element {
         None if te.text.trim().is_empty() => {}
         None => {
-            app.run("text.create", json!({"text": te.text, "x": te.at.x, "y": te.at.y}));
+            let mut p = te.edit_params();
+            p["x"] = json!(te.at.x);
+            p["y"] = json!(te.at.y);
+            app.run("text.create", p);
         }
         Some(_) if te.text == te.original => {}
         Some(id) => {
@@ -1857,33 +1862,67 @@ pub fn commit_text(app: &mut App) {
             if te.text.trim().is_empty() {
                 app.run("edit.delete", json!({}));
             } else {
-                app.run("text.edit", json!({"text": te.text}));
+                app.run("text.edit", te.edit_params());
             }
         }
     }
 }
 
-/// The field text is typed in, over the stage at the text's top-left corner. Esc or a click
-/// elsewhere finishes; Enter starts a new line.
+/// The field text is typed in, over the stage at the text's top-left corner, each run shown in
+/// its own colour, size and style (ADR 0085). Esc or a click elsewhere finishes (a click in
+/// Properties' text styles keeps it open); Enter starts a new line.
 fn text_editor(app: &mut App, ui: &mut egui::Ui, stage_origin: Pos2, zoom: f32) {
+    let focused_id = egui::Id::new("stage_text_edit_field");
+    let had_focus = ui.ctx().memory(|m| m.has_focus(focused_id));
+    crate::rich_edit::watch_clipboard(app, ui.ctx(), had_focus);
+    let paper = crate::theme::stage_text_colour(anicraft_engine::doc::Rgba { a: 1.0, ..app.s.doc.stage.background });
+    let held = app.text_props_rect.zip(ui.ctx().input(|i| i.pointer.interact_pos())).is_some_and(|(r, p)| r.contains(p)) || egui::Popup::is_any_open(ui.ctx());
+    // As wide as the block being edited (at the zoom), so its lines break as they do.
+    let block_w = app.text_edit.as_ref().and_then(|te| te.element).and_then(|id| app.s.visible_elements().into_iter().find(|e| e.id == id)).and_then(|e| match &e.kind {
+        anicraft_engine::doc::ElementKind::Text(t) => Some(t.width.unwrap_or(t.box_width)),
+        _ => None,
+    });
     let Some(te) = app.text_edit.as_mut() else { return };
     let at = stage_origin + vec2(te.at.x * zoom, te.at.y * zoom);
-    let size = (app.s.text_style.size * zoom).clamp(12.0, 64.0);
+    let size = (rt_size(te) * zoom).clamp(12.0, 64.0);
+    let width = 260.0f32.max(size * 8.0).max(block_w.unwrap_or(0.0) * zoom + 8.0).min(4000.0);
     let mut done = false;
+    let (runs, last) = (te.runs.clone(), te.last.clone());
     egui::Area::new(egui::Id::new("stage_text_edit")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
-        egui::Frame::new().fill(T.panel).stroke(Stroke::new(1.0, T.selection)).inner_margin(4.0).show(ui, |ui| {
-            let r = ui.add(egui::TextEdit::multiline(&mut te.text).font(crate::theme::stage_text_font(size)).desired_rows(1).desired_width(260.0f32.max(size * 8.0)).hint_text(tr!("Type text"))).named(tr!("Text on the stage"));
+        egui::Frame::new().fill(paper).stroke(Stroke::new(1.0, T.selection)).inner_margin(4.0).show(ui, |ui| {
+            let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
+                let job = crate::rich_edit::layout_job(&runs, &last, buf.as_str(), zoom, wrap);
+                ui.fonts_mut(|f| f.layout_job(job))
+            };
+            let r = ui
+                .add(egui::TextEdit::multiline(&mut te.text).id(focused_id).font(crate::theme::stage_text_font(size)).desired_rows(1).desired_width(width).background_color(paper).hint_text(tr!("Type text")).layouter(&mut layouter))
+                .named(tr!("Text on the stage"));
+            if let Some(range) = egui::text_edit::TextEditState::load(ui.ctx(), r.id).and_then(|s| s.cursor.char_range()) {
+                te.sel = (range.secondary.index.0 as u32, range.primary.index.0 as u32);
+            }
             if te.focus {
+                // Back in the editor (after a style was picked): the selection as it was.
+                if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), r.id) {
+                    let (a, b) = te.sel;
+                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(a as usize), egui::text::CCursor::new(b as usize))));
+                    state.store(ui.ctx(), r.id);
+                }
                 r.request_focus();
                 te.focus = false;
-            } else if r.lost_focus() {
+            } else if r.lost_focus() && !held {
                 done = true;
             }
         });
     });
+    te.sync();
     if done {
         commit_text(app);
     }
+}
+
+/// The size the editor's caret line is shown at: the run at the caret's.
+fn rt_size(te: &crate::app::TextEditing) -> f32 {
+    anicraft_engine::doc::rich_text::style_at(&te.runs, te.sel.1).size
 }
 
 // ----- free transform ---------------------------------------------------------------------------

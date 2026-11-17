@@ -12,6 +12,59 @@
   * **Commands**: a `bezier` ease with a malformed entry is refused rather than half-read, and a colour starting with `##` is not a colour (NetterSilver).
   * **CLI and MCP**: `anicraft-cli <subcommand> --help` (and `help <subcommand>`) print that subcommand's usage (#153, jayzed80); the usage says which frame numbers are 1-based and which 0-based (#152, jayzed80); the MCP render caption reads `1280×720` (#311, Efe Şahinbaş); `--help` lists the light theme (Mex).
   * **Docs**: plug-in element kinds and `null` bounds, opening Animate files directly from the CLI, and status notes that had gone out of date (Mex). Localisation tests for Hebrew dual plurals and the product name (nocturney).
+* **Licences: the shared libraries' exceptions, and the licence check back in CI.** `symphonia` (MPL-2.0, sound decoding through `craft-audio`) and `jpeg-encoder` (IJG, JPEG export through `craft-image-codecs`) are accepted as crate-scoped exceptions, named in `NOTICE` and `ATTRIBUTION.md`, with the reasons in `docs/legal/compliance.md`. CI runs `cargo deny check licenses bans sources` in its own job again, since the shared gate doesn't.
+* **Filters: animated colours and switches, built-in presets, and filters on text** (ADR 0099,
+  M5).
+  * **Filter colours animate** in a motion tween: a glow's or shadow's colour, a bevel's shadow
+    and highlight, and each stop of a gradient filter's ramp. The Motion Editor has a row per
+    colour with a swatch (pick a colour to key it at the playhead); click the row for its Red,
+    Green, Blue and Alpha curves. Colours change the way a Tint does.
+  * **Quality, Inner, Knockout and Hide object animate as steps**: a key holds until the next
+    one, so a switch turns on exactly at its frame.
+  * Editing a filter's colour or a switch in Properties inside a tween keys it, like its numbers.
+  * **Classic tweens between different filter lists** now fade: a filter only one keyframe has
+    fades in or out, and the ones both have change from one to the other (before, the first
+    keyframe's filters held).
+  * **Built-in filter presets**: Soft Shadow, Hard Shadow, Neon Glow, Outline, Emboss, Engrave,
+    Soft Focus and Greyscale. They can't be deleted; untick one under **Built-in Presets** to
+    take it off the menu (`filter.preset_hide`).
+  * **Filters on text**: static, dynamic and input text take filters in Properties as movie
+    clips do, on the stage, in Test Movie and in every export, and they tween. Animate files'
+    filters on text fields now come in instead of being reported.
+  * Headless: `motion.set_key {property: "filter.0.color", color: "#ff3ea5"}` keys a whole
+    colour; channels and switches are `filter.0.color_red`, `filter.0.knockout` and so on.
+
+* **Mixed armatures: symbols and shapes in one armature** (ADR 0098, M7).
+  * A body drawn as a shape that bends can carry a head, hands or props that are symbol
+    instances, and an instance's bone can end on a shape that then gets bones of its own. One
+    armature can hold several shapes with bones.
+  * With the **Bone tool**, drag from a shape's bone end onto a symbol instance, or from an
+    instance onto a shape and on inside it. The **Selection tool** poses the whole chain by IK;
+    poses tween, and springs and joint translation act across both kinds.
+  * The **Bind tool** binds and paints the points of the shape the picked bone is inside.
+  * **Remove Bone** frees the instances and shapes the bone moved, as they look.
+  * Headless: `bone.add` takes `parent` (a bone to continue from) and shapes as `to`;
+    `bone.info` lists `members`, `shapes` and whether the armature is `mixed`.
+  * Files: a document with a mixed armature is saved as format version 4, which earlier
+    versions refuse with a clear message. Every other document is saved exactly as before.
+  * Fixed: duplicating a symbol that holds a shape armature kept the copy's shape from bending.
+* **Styled text: per-character and paragraph styles** (ADR 0085, M5).
+  * Select characters while typing on the stage and set their **font, size, colour, bold,
+    italic, letter spacing, superscript or subscript, underline and link** in Properties; the
+    section shows what the selection shares and marks the rest **mixed**.
+  * **Paragraph styles**: alignment, first-line indent, left and right margins and line spacing
+    per paragraph.
+  * Typing continues the style before the caret; copy and paste inside AniCraft keeps styles,
+    text from other apps pastes plain.
+  * Each run is shaped on its own and lines wrap across runs; outlines are stored as before, so
+    older files open and save unchanged. Every export draws each colour; SVG writes links.
+    Break Apart gives one shape per colour.
+  * **Animate files** keep their `DOMTextRun` styles in one block per field (they were split into
+    a block per style before), with superscripts, indents, margins and links.
+  * Headless: `text.style`, `text.paragraph`, `text.styles`; `text.create` and `text.edit` take
+    `runs` and `paragraphs`.
+* **Floating windows open below the menu bar**: no dialog (the Custom Ease window among them) can
+  cover File, Edit and View any more.
 * **Security: safer reads and temp files.** Import to Library checks an image's size (256 MiB) before reading it, and saves, audio exports and the video soundtrack write their temporary files under unguessable names, created exclusively.
 * **Saved commands (command macros)** (ADR 0097, M6).
   * In the **History** panel, **Ctrl+click** steps (Shift+click a range) and choose **Save As
