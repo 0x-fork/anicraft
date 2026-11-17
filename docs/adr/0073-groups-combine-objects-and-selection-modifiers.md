@@ -101,7 +101,8 @@ nothing was copied.
 
 6. **XFL import**: a `DOMGroup` now comes in as a group, placed by its matrix, its shapes raw
    inside it and merged with each other on open, as a keyframe's are (before, its members were
-   flattened onto the frame as drawing objects).
+   flattened onto the frame as drawing objects). Animate writes the members in the group's
+   parent space, so they are brought into the group's frame by its inverse (#411).
 
 ## Consequences
 
