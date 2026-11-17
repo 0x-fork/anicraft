@@ -1,6 +1,6 @@
 # Command reference
 
-Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 352 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
+Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 355 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
 
 This page is generated from the command registry, so it always matches the version of AniCraft it came with.
 
@@ -678,9 +678,15 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Export Swatches** `swatch.export`
   Parameters: `{path} writes the document's swatches to a swatch file (JSON) → {written, swatches}`
 - **New Text** `text.create` · changes the document
-  Parameters: `{text (may be empty for an input field), type?: static|dynamic|input, x?, y? (top-left; default: centred), font?, size?, bold?, italic?, color?, align?, letter_spacing?, line_spacing?, width?}`
+  Parameters: `{text (may be empty for an input field), type?: static|dynamic|input, x?, y? (top-left; default: centred), width?, font?, size? (px), bold?, italic?, color?, letter_spacing?, shift?: normal|superscript|subscript, underline?, url? ("": none), align?: left|center|right, indent? (px, first line), left_margin?, right_margin? (px), line_spacing? (px), runs?: [{chars, …character keys}] (styles of the text's characters in order; unset keys take the style above), paragraphs?: [{…paragraph keys}] (one per line of the text)} (ADR 0085)`
 - **Edit Text** `text.edit` · changes the document
-  Parameters: `{text?, font?, size? (px), bold?, italic?, color?, align?: left|center|right, letter_spacing?, line_spacing?, width? (px, wraps; null: one line per paragraph)} on the selected text`
+  Parameters: `{text? (the runs follow the change: typed characters continue the style before them), runs?, paragraphs? (as text.create: replace the styles), width? (px, wraps; null: one line per paragraph), font?, size? (px), bold?, italic?, color?, letter_spacing?, shift?: normal|superscript|subscript, underline?, url? ("": none) (every character), align?: left|center|right, indent? (px, first line), left_margin?, right_margin? (px), line_spacing? (px) (every paragraph)} on the selected text`
+- **Text Character Style** `text.style` · changes the document
+  Parameters: `{start?, end? (characters; default: all), font?, size? (px), bold?, italic?, color?, letter_spacing?, shift?: normal|superscript|subscript, underline?, url? ("": none)} styles those characters of the selected text, splitting and joining its runs (ADR 0085)`
+- **Text Paragraph Style** `text.paragraph` · changes the document
+  Parameters: `{start?, end? (characters; default: all), align?: left|center|right, indent? (px, first line), left_margin?, right_margin? (px), line_spacing? (px)} sets the layout of the paragraphs those characters touch in the selected text (ADR 0085)`
+- **Text Styles** `text.styles`
+  Parameters: `{start?, end? (characters; default: all)} of the first selected text: its runs, paragraphs, and what those characters share (a mixed value is null) (ADR 0085)`
 - **Fonts** `text.fonts`
   Parameters: `{}`
 - **Text on Path** `text.path` · changes the document
