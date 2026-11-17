@@ -323,9 +323,11 @@ fn main() -> eframe::Result {
     let mut why = String::from("no attempt"); // i18n-exempt: log text
     // Once, and again each time the window closed to reopen another way.
     let mut opening = true;
+    // What the command line asks for is tried first, until a session loses its device on it.
+    let mut forced = platform::forced_backend(renderer.as_deref());
     while opening {
         opening = false;
-        let attempts = startup::plan(platform::forced_backend(renderer.as_deref()), prefs::Prefs::load().window_backend, &platform::window_attempts(platform::OS), &last);
+        let attempts = startup::plan(forced, prefs::Prefs::load().window_backend, &platform::window_attempts(platform::OS), &last);
         for (n, attempt) in attempts.iter().enumerate() {
             startup::trying(attempt, n + 1, attempts.len());
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(*attempt, file.as_deref(), shot.clone(), open.clone(), look.clone())));
@@ -340,6 +342,7 @@ fn main() -> eframe::Result {
                         startup::line(&format!("opening the window again, {} last", attempt.label()));
                         last.retain(|l| *l != attempt.label());
                         last.push(attempt.label());
+                        forced = None;
                         file = reopen;
                         opening = true;
                         break;
@@ -360,6 +363,8 @@ fn main() -> eframe::Result {
                 }
                 return Err(eframe::Error::AppCreation(why.into()));
             }
+            // It never came up: the next starts try it last, as one that died in a driver.
+            startup::failed_to_open();
         }
     }
     startup::give_up(&why);
