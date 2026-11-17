@@ -1155,7 +1155,23 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
             let stroke_backing = selection_backing_colour(item);
 
-            for span in &strokes {
+            let mut backing_spans = selected_stroke_backing_spans(
+                item,
+                &to_px.mul(&item.transform),
+                canvas,
+                gap,
+            );
+
+            // Foreground artwork must still hide the backing.
+            exclude_overlying_artwork(
+                &mut backing_spans,
+                &dl.items[index + 1..],
+                &to_px,
+                canvas,
+                gap,
+            );
+
+            for span in &backing_spans {
                 backing.add_colored_rect(*span, stroke_backing);
             }
 
@@ -1884,6 +1900,65 @@ fn gradient_pattern_mesh(
     }
 }
 
+fn selected_stroke_outline(
+    item: &anicraft_engine::doc::DisplayItem,
+    m: &Affine,
+    gap: f32,
+) -> Option<anicraft_engine::geom::Path> {
+    let st = item.stroke.as_ref()?;
+
+    let scale = m.mean_scale();
+    if !scale.is_finite() || scale <= 0.0 {
+        return None;
+    }
+
+    // Preserve the minimum four-physical-pixel selection width.
+    let mut selection_stroke = st.clone();
+
+    if st.profile.is_none() {
+        selection_stroke.width = selection_stroke.width.max(gap / scale);
+
+        // Preserve dotted-stroke positions when widening selection.
+        if let Some(anicraft_engine::doc::Dash::Dotted { spacing }) = &st.style.dash {
+            selection_stroke.style.cap = anicraft_engine::doc::Cap::Round;
+            selection_stroke.style.dash = Some(anicraft_engine::doc::Dash::Dashed {
+                lengths: vec![0.0, st.width + *spacing].into(),
+                offset: 0.0,
+            });
+        }
+    }
+
+    Some(anicraft_engine::render::stroke::stroke_outline(
+        &item.path,
+        m,
+        &selection_stroke,
+        0.5,
+    ))
+}
+
+fn selected_stroke_backing_spans(
+    item: &anicraft_engine::doc::DisplayItem,
+    m: &Affine,
+    clip: Rect,
+    gap: f32,
+) -> Vec<Rect> {
+    use anicraft_engine::geom::FillRule;
+
+    let mut spans = Vec::new();
+
+    if let Some(outline) = selected_stroke_outline(item, m, gap) {
+        occlusion_spans(
+            &outline.flatten(&Affine::IDENTITY, 0.5),
+            FillRule::NonZero,
+            clip,
+            &mut spans,
+            gap,
+        );
+    }
+
+    spans
+}
+
 /// Animate-style selection stipple for raw fills and strokes (ADR 0031).
 /// `m` maps the item's path to screen space; `gap` keeps dot spacing
 /// consistent in physical pixels regardless of display scaling.
@@ -1924,42 +1999,9 @@ fn selection_pattern(
         );
     }
 
-    let Some(st) = &item.stroke else { return };
-
-    let scale = m.mean_scale();
-    if !scale.is_finite() || scale <= 0.0 {
+    let Some(outline) = selected_stroke_outline(item, m, gap) else {
         return;
-    }
-
-    // Uniform strokes get a minimum selection thickness of four
-    // physical screen pixels. Variable-width strokes instead use
-    // their actual outline, like selected fills.
-    // Only the selection geometry changes, never the artwork.
-    let mut selection_stroke = st.clone();
-
-    if st.profile.is_none() {
-        selection_stroke.width = selection_stroke.width.max(gap / scale);
-
-        // Enlarging a dotted stroke must not increase the distance
-        // between its dots. Use fixed-position, zero-length dashes
-        // with round caps for the selection geometry only.
-        if let Some(anicraft_engine::doc::Dash::Dotted { spacing }) = &st.style.dash {
-            selection_stroke.style.cap = anicraft_engine::doc::Cap::Round;
-            selection_stroke.style.dash = Some(anicraft_engine::doc::Dash::Dashed {
-                lengths: vec![0.0, st.width + *spacing].into(),
-                offset: 0.0,
-            });
-        }
-    }
-
-    // Generate the stroke's selected area in screen space.
-    // Its outline respects the stroke's caps and joins.
-    let outline = anicraft_engine::render::stroke::stroke_outline(
-        &item.path,
-        m,
-        &selection_stroke,
-        0.5,
-    );
+    };
 
     // Fill that area with our EXISTING stipple pattern.
     // Dot dimensions and spacing are not changed.
@@ -2344,6 +2386,39 @@ mod pattern_tests {
         assert!(
             !selected.iter().any(|r| r.contains(pos2(50.0, 49.5))),
             "the opaque foreground must hide the selected stroke backing"
+        );
+    }
+
+    /// The solid backing must follow the selected stroke outline
+    /// without the overhang introduced by four-pixel stipple rows.
+    #[test]
+    fn selected_stroke_backing_does_not_overhang() {
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(200.0, 200.0),
+        );
+
+        let shape = item(
+            Path::rect(40.0, 102.0, 100.0, 40.0),
+            false,
+            Some(4.0),
+        );
+
+        let backing = selected_stroke_backing_spans(
+            &shape,
+            &Affine::IDENTITY,
+            clip,
+            GAP,
+        );
+
+        assert!(
+            backing.iter().any(|r| r.contains(pos2(90.0, 101.0))),
+            "backing should cover the stroke interior"
+        );
+
+        assert!(
+            !backing.iter().any(|r| r.contains(pos2(90.0, 99.0))),
+            "backing extends above the stroke outline"
         );
     }
 
