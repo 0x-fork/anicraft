@@ -1108,6 +1108,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             .mul(&Affine::scale(zoom, zoom));
 
         let mut pattern = egui::Mesh::default();
+        let mut backing = egui::Mesh::default();
         let mut dots = egui::Mesh::default();
         let mut budget = MAX_DOTS;
         let dl = app.s.display_list();
@@ -1134,16 +1135,29 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 gap,
             );
 
-            exclude_overlying_strokes(
+            exclude_overlying_artwork(
                 &mut fills,
                 &dl.items[index + 1..],
-                item.layer,
+                &to_px,
+                canvas,
+                gap,
+            );
+
+            exclude_overlying_artwork(
+                &mut strokes,
+                &dl.items[index + 1..],
                 &to_px,
                 canvas,
                 gap,
             );
 
             let (fill_colour, stroke_colour) = selection_colours(item);
+
+            let stroke_backing = selection_backing_colour(item);
+
+            for span in &strokes {
+                backing.add_colored_rect(*span, stroke_backing);
+            }
 
             // Sample gradient colours across the selected fill.
             // Solid fills retain the existing uniform-colour path.
@@ -1165,6 +1179,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
             // Stroke rendering remains unchanged.
             pattern_mesh(&mut pattern, &strokes, stroke_colour, gap);
+        }
+
+        if !backing.vertices.is_empty() {
+            painter.add(egui::Shape::mesh(backing));
         }
 
         if !pattern.vertices.is_empty() {
@@ -1694,6 +1712,19 @@ fn selection_colours(
     (fill, stroke)
 }
 
+fn selection_backing_colour(
+    item: &anicraft_engine::doc::DisplayItem,
+) -> Color32 {
+    use anicraft_engine::doc::Rgba;
+
+    item.stroke.as_ref().map_or(Color32::TRANSPARENT, |s| {
+        let shown = item.color.apply(s.color);
+
+        // Selection backing uses the artwork's RGB at full opacity.
+        let opaque = Rgba { a: 1.0, ..shown };
+        to_color32(opaque)
+    })
+}
 
 struct SelectionGradient {
     shader: anicraft_engine::render::paint::Shader,
@@ -1857,25 +1888,32 @@ fn gradient_pattern_mesh(
 /// `m` maps the item's path to screen space; `gap` keeps dot spacing
 /// consistent in physical pixels regardless of display scaling.
 ///
-/// Fills and wide strokes produce separate scanline spans, allowing
-/// each to use its own selection colour. Hairline strokes produce
-/// individual dots along their paths.
+/// Fills and strokes produce separate scanline spans, allowing
+/// each to use its own selection colour. Both wide strokes and
+/// hairlines use the same textured stipple pattern.
 ///
-/// Scanline spans avoid exhausting the per-frame dot budget when
-/// large shapes fill the view (#204).
-/// Overlying strokes are excluded from fill spans separately.
+/// Uniform strokes have a minimum selection width of four physical
+/// screen pixels. Variable-width strokes retain their actual outline,
+/// while dotted strokes preserve their original dot positions.
+/// An opaque RGB backing keeps translucent selections visible.
+///
+/// Scanline spans avoid creating individual quads for every dot
+/// in large selections (#204). Opaque artwork later in drawing
+/// order occludes selected fills and strokes, even across layers.
 #[allow(clippy::too_many_arguments)]
 fn selection_pattern(
     fill_spans: &mut Vec<Rect>,
     stroke_spans: &mut Vec<Rect>,
-    mesh: &mut egui::Mesh,
+    _mesh: &mut egui::Mesh,
     item: &anicraft_engine::doc::DisplayItem,
     m: &Affine,
     clip: Rect,
-    budget: &mut usize,
+    _budget: &mut usize,
     gap: f32,
 ) {
     use anicraft_engine::geom::FillRule;
+
+    // Fill selection is unchanged.
     if item.fill.is_some() {
         pattern_spans(
             &item.path.flatten(m, 0.5),
@@ -1885,54 +1923,53 @@ fn selection_pattern(
             gap,
         );
     }
+
     let Some(st) = &item.stroke else { return };
-    let half = (st.reach() * m.mean_scale()).max(0.5);
-    if half >= gap {
-        // The stroke's own outline (caps, joins and dashes as drawn), filled non-zero.
-        let outline = anicraft_engine::render::stroke::stroke_outline(&item.path, m, st, 0.5);
-        pattern_spans(&outline.flatten(&Affine::IDENTITY, 0.5), FillRule::NonZero, clip, stroke_spans, gap);
+
+    let scale = m.mean_scale();
+    if !scale.is_finite() || scale <= 0.0 {
         return;
     }
-    let stroke_colour = selection_colours(item).1;
-    let mut dot = |p: Pos2| {
-        if clip.contains(p) && *budget > 0 {
-            *budget -= 1;
-            mesh.add_colored_rect(
-                Rect::from_center_size(p, vec2(gap * 0.5, gap * 0.5)),
-                stroke_colour,
-            );
-        }
-        *budget > 0
-    };
-    // Along the stroke; segments off the screen are skipped.
-    let near = clip.expand(half + gap);
-    for pl in &item.path.flatten(m, 0.5) {
-        let n = pl.points.len();
-        let segs = if pl.closed { n } else { n.saturating_sub(1) };
-        let mut carry = 0.0;
-        for i in 0..segs {
-            let (Some(&a), Some(&c)) = (pl.points.get(i), pl.points.get((i + 1) % n)) else { continue };
-            let d = c - a;
-            let len = d.length();
-            if len <= 1e-6 {
-                continue;
-            }
-            if !near.intersects(Rect::from_two_pos(pos2(a.x, a.y), pos2(c.x, c.y))) {
-                carry = (carry - len).rem_euclid(gap);
-                continue;
-            }
-            let dir = d * (1.0 / len);
-            let mut t = carry;
-            while t < len {
-                let p = a + dir * t;
-                if !dot(pos2(p.x, p.y)) {
-                    return;
-                }
-                t += gap;
-            }
-            carry = t - len;
+
+    // Uniform strokes get a minimum selection thickness of four
+    // physical screen pixels. Variable-width strokes instead use
+    // their actual outline, like selected fills.
+    // Only the selection geometry changes, never the artwork.
+    let mut selection_stroke = st.clone();
+
+    if st.profile.is_none() {
+        selection_stroke.width = selection_stroke.width.max(gap / scale);
+
+        // Enlarging a dotted stroke must not increase the distance
+        // between its dots. Use fixed-position, zero-length dashes
+        // with round caps for the selection geometry only.
+        if let Some(anicraft_engine::doc::Dash::Dotted { spacing }) = &st.style.dash {
+            selection_stroke.style.cap = anicraft_engine::doc::Cap::Round;
+            selection_stroke.style.dash = Some(anicraft_engine::doc::Dash::Dashed {
+                lengths: vec![0.0, st.width + *spacing].into(),
+                offset: 0.0,
+            });
         }
     }
+
+    // Generate the stroke's selected area in screen space.
+    // Its outline respects the stroke's caps and joins.
+    let outline = anicraft_engine::render::stroke::stroke_outline(
+        &item.path,
+        m,
+        &selection_stroke,
+        0.5,
+    );
+
+    // Fill that area with our EXISTING stipple pattern.
+    // Dot dimensions and spacing are not changed.
+    pattern_spans(
+        &outline.flatten(&Affine::IDENTITY, 0.5),
+        FillRule::NonZero,
+        clip,
+        stroke_spans,
+        gap,
+    );
 }
 
 /// The runs inside the closed outlines `lines` (screen space, filled by `rule`) along each row
@@ -2007,13 +2044,12 @@ pub(crate) fn pattern_spans(
     }
 }
 
-
-/// Keep a selected fill's stipple out of opaque strokes painted
-/// above it on the same layer. `above` is already in drawing order.
-fn exclude_overlying_strokes(
+/// Hide selection stipple behind opaque fills and strokes
+/// that appear later in drawing order, including on other layers.
+/// Translucent and bitmap fills need separate handling.
+fn exclude_overlying_artwork(
     fills: &mut Vec<Rect>,
     above: &[anicraft_engine::doc::DisplayItem],
-    layer: anicraft_engine::doc::LayerId,
     to_px: &Affine,
     clip: Rect,
     gap: f32,
@@ -2027,12 +2063,46 @@ fn exclude_overlying_strokes(
     let mut occluders = Vec::new();
 
     for item in above {
-        if item.layer != layer
-            || item.guide
+        if item.guide
             || item.masks.is_some()
             || item.outline.is_some()
         {
             continue;
+        }
+
+
+        // Opaque fills above the selection hide its stipple,
+        // just as opaque strokes do.
+        if let Some(fill) = &item.fill {
+            use anicraft_engine::doc::Paint;
+
+            let opaque = match fill {
+                Paint::Solid(colour) => {
+                    item.color.apply(*colour).a >= 0.999
+                }
+                Paint::Linear { stops, .. }
+                | Paint::Radial { stops, .. } => {
+                    !stops.is_empty()
+                        && stops.iter().all(|stop| {
+                            item.color.apply(stop.color).a >= 0.999
+                        })
+                }
+                // Bitmap transparency cannot be established
+                // from the paint alone.
+                Paint::Bitmap { .. } => false,
+            };
+
+            if opaque {
+                let m = to_px.mul(&item.transform);
+
+                pattern_spans(
+                    &item.path.flatten(&m, 0.5),
+                    item.fill_rule,
+                    clip,
+                    &mut occluders,
+                    gap,
+                );
+            }
         }
 
         let Some(stroke) = &item.stroke else {
@@ -2207,10 +2277,10 @@ mod pattern_tests {
         }
     }
 
-    /// A wide stroke is shaded over its whole outline (beyond the fill), a hairline gets dots
-    /// along it, and nothing off the view is drawn.
+    /// Wide and thin strokes both use textured spans.
+    /// Selection geometry is clipped to the visible area.
     #[test]
-    fn strokes_are_shaded_wide_as_spans_and_hairlines_as_dots() {
+    fn strokes_are_shaded_wide_and_thin_as_spans() {
         let clip = Rect::from_min_max(pos2(0.0, 0.0), pos2(400.0, 400.0));
         let square = || Path::rect(100.0, 100.0, 200.0, 200.0);
         let (mut spans, mut dots, mut budget) = (Vec::new(), egui::Mesh::default(), MAX_DOTS);
@@ -2227,13 +2297,36 @@ mod pattern_tests {
         );
         assert!(spans.iter().any(|r| r.min.x < 100.0) && !spans.iter().any(|r| r.contains(pos2(200.0, 200.0))), "the outline only, its outer half included");
         assert!(dots.vertices.is_empty());
+
+        spans.clear();
+
         let mut fills = Vec::new();
-        selection_pattern(&mut fills, &mut spans, &mut dots, &item(square(), false, Some(20.0)), &Affine::IDENTITY, clip, &mut budget, GAP);
-        let mut fills = Vec::new();
-        selection_pattern(&mut fills, &mut spans, &mut dots, &item(square(), true, Some(0.5)), &Affine::IDENTITY, clip, &mut budget, GAP);
-        assert!(fills.iter().any(|r| r.contains(pos2(200.0, 200.0))), "the fill");
-        let n = dots.vertices.len() / 4;
-        assert_eq!(n, (800.0 / GAP) as usize, "a dot every {GAP} along the 800-long hairline");
+        selection_pattern(
+            &mut fills,
+            &mut spans,
+            &mut dots,
+            &item(square(), true, Some(0.5)),
+            &Affine::IDENTITY,
+            clip,
+            &mut budget,
+            GAP,
+        );
+
+        assert!(
+            fills.iter().any(|r| r.contains(pos2(200.0, 200.0))),
+            "the fill"
+        );
+
+        assert!(
+            !spans.is_empty(),
+            "hairline selection should produce stroke spans"
+        );
+
+        assert!(
+            dots.vertices.is_empty(),
+            "hairlines should use the textured stroke renderer"
+        );
+
         // Wholly off the view: nothing.
         let (mut fills, mut spans, mut dots) = (
             Vec::new(),
@@ -2263,7 +2356,7 @@ mod pattern_tests {
         assert_eq!(mesh.vertices.last().map(|v| v.uv), Some(pos2(1.0, 0.5)));
     }
 
-    /// Hairline dots should invert the stroke's RGB, not alternate theme colours.
+    /// Hairline selection uses the inverse stroke RGB in its textured spans.
     #[test]
     fn hairline_strokes_use_inverted_stroke_colour() {
         use anicraft_engine::doc::Rgba;
@@ -2274,7 +2367,7 @@ mod pattern_tests {
             Some(0.5),
         );
 
-        // A blue stroke should have orange selection dots.
+        // Blue artwork should have orange selection dots.
         shape.stroke.as_mut().unwrap().color =
             Rgba::new(0.0, 102.0 / 255.0, 1.0, 1.0);
 
@@ -2283,7 +2376,8 @@ mod pattern_tests {
             pos2(400.0, 400.0),
         );
         let gap = dot_gap_points(2.0);
-        let (mut fills, mut strokes, mut mesh, mut budget) = (
+
+        let (mut fills, mut strokes, mut dots, mut budget) = (
             Vec::new(),
             Vec::new(),
             egui::Mesh::default(),
@@ -2293,7 +2387,7 @@ mod pattern_tests {
         selection_pattern(
             &mut fills,
             &mut strokes,
-            &mut mesh,
+            &mut dots,
             &shape,
             &Affine::IDENTITY,
             clip,
@@ -2301,45 +2395,63 @@ mod pattern_tests {
             gap,
         );
 
-        assert!(fills.is_empty() && strokes.is_empty());
-        assert!(!mesh.vertices.is_empty(), "hairline dots must be drawn");
+        assert!(fills.is_empty());
+        assert!(!strokes.is_empty(), "hairline must produce stroke spans");
+        assert!(dots.vertices.is_empty(), "hairline uses textured spans, not individual dots");
 
         let expected = crate::theme::artwork_rgb(255, 153, 0);
-        for vertex in &mesh.vertices {
-            assert_eq!(
-                vertex.color, expected,
-                "every blue hairline dot should be orange"
-            );
-        }
-    }
+        let colour = selection_colours(&shape).1;
 
+        assert_eq!(colour, expected);
+
+        // Check the actual stipple mesh receives the orange tint.
+        let mut pattern = egui::Mesh::default();
+        pattern_mesh(&mut pattern, &strokes, colour, gap);
+
+        assert!(!pattern.vertices.is_empty());
+        assert!(
+            pattern.vertices.iter().all(|v| v.color == expected),
+            "every blue hairline stipple should be orange"
+        );
+
+        // The solid backing retains the original blue.
+        assert_eq!(
+            selection_backing_colour(&shape),
+            crate::theme::artwork_rgb(0, 102, 255),
+        );
+    }
 
     #[test]
     fn black_and_white_hairlines_use_opposite_dot_colours() {
         use anicraft_engine::doc::Rgba;
 
         let cases = [
-            (Rgba::new(0.0, 0.0, 0.0, 1.0), Color32::WHITE),
-            (Rgba::new(1.0, 1.0, 1.0, 1.0), Color32::BLACK),
+            (Rgba::new(0.0, 0.0, 0.0, 1.0), Color32::WHITE, Color32::BLACK),
+            (Rgba::new(1.0, 1.0, 1.0, 1.0), Color32::BLACK, Color32::WHITE),
         ];
 
-        for (stroke_colour, expected) in cases {
+        for (stroke_rgb, expected_dots, expected_backing) in cases {
             let mut shape = item(
                 Path::rect(100.0, 100.0, 200.0, 200.0),
                 false,
                 Some(0.5),
             );
-            shape.stroke.as_mut().unwrap().color = stroke_colour;
 
-            let mut fills = Vec::new();
-            let mut strokes = Vec::new();
-            let mut mesh = egui::Mesh::default();
-            let mut budget = MAX_DOTS;
+            shape.stroke.as_mut().unwrap().color = stroke_rgb;
+
+            let (mut fills, mut strokes, mut dots, mut budget) = (
+                Vec::new(),
+                Vec::new(),
+                egui::Mesh::default(),
+                MAX_DOTS,
+            );
+
+            let gap = dot_gap_points(2.0);
 
             selection_pattern(
                 &mut fills,
                 &mut strokes,
-                &mut mesh,
+                &mut dots,
                 &shape,
                 &Affine::IDENTITY,
                 Rect::from_min_max(
@@ -2347,15 +2459,25 @@ mod pattern_tests {
                     pos2(400.0, 400.0),
                 ),
                 &mut budget,
-                dot_gap_points(2.0),
+                gap,
             );
 
-            assert!(fills.is_empty() && strokes.is_empty());
-            assert!(!mesh.vertices.is_empty());
+            assert!(fills.is_empty());
+            assert!(!strokes.is_empty());
+            assert!(dots.vertices.is_empty());
 
+            let dot_colour = selection_colours(&shape).1;
+
+            assert_eq!(dot_colour, expected_dots);
+            assert_eq!(selection_backing_colour(&shape), expected_backing);
+
+            let mut pattern = egui::Mesh::default();
+            pattern_mesh(&mut pattern, &strokes, dot_colour, gap);
+
+            assert!(!pattern.vertices.is_empty());
             assert!(
-                mesh.vertices.iter().all(|v| v.color == expected),
-                "hairline dots should use the inverse stroke colour"
+                pattern.vertices.iter().all(|v| v.color == expected_dots),
+                "hairline stipple should use inverse stroke colour"
             );
         }
     }
@@ -3173,7 +3295,7 @@ mod pattern_tests {
     }
 
     #[test]
-    fn overlying_strokes_clip_fills_only_on_the_same_layer() {
+    fn overlying_strokes_clip_selected_fills_across_layers() {
         use anicraft_engine::doc::LayerId;
 
         let clip = Rect::from_min_max(
@@ -3214,10 +3336,9 @@ mod pattern_tests {
 
         // An overlying stroke excludes the covered part of the fill.
         let mut fills = make_fills();
-        exclude_overlying_strokes(
+        exclude_overlying_artwork(
             &mut fills,
             std::slice::from_ref(&stroke),
-            fill.layer,
             &Affine::IDENTITY,
             clip,
             GAP,
@@ -3232,16 +3353,427 @@ mod pattern_tests {
         other_layer.layer = LayerId(1);
 
         let mut fills = make_fills();
-        exclude_overlying_strokes(
+        exclude_overlying_artwork(
             &mut fills,
             &[other_layer],
-            fill.layer,
             &Affine::IDENTITY,
             clip,
             GAP,
         );
 
-        assert!(contains(&fills, edge));
+        assert!(
+            !contains(&fills, edge),
+            "an opaque stroke on a higher layer must hide the selected fill"
+        );
+    }
+
+
+    #[test]
+    fn three_point_stroke_selection_covers_its_visible_width() {
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(400.0, 400.0),
+        );
+
+        let shape = item(
+            Path::rect(100.0, 100.0, 200.0, 200.0),
+            false,
+            Some(3.0),
+        );
+
+        let (mut fills, mut strokes) = (
+            Vec::new(),
+            Vec::new(),
+        );
+        let mut dots = egui::Mesh::default();
+        let mut budget = MAX_DOTS;
+
+        selection_pattern(
+            &mut fills,
+            &mut strokes,
+            &mut dots,
+            &shape,
+            &Affine::IDENTITY,
+            clip,
+            &mut budget,
+            GAP,
+        );
+
+        // The rectangle's left edge is at x=100.
+        // A 3-point stroke extends 1.5 points to either side.
+        let leftmost = strokes
+            .iter()
+            .map(|r| r.min.x)
+            .chain(dots.vertices.iter().map(|v| v.pos.x))
+            .reduce(f32::min)
+            .expect("stroke selection should produce geometry");
+
+        assert!(
+            leftmost <= 98.55,
+            "3-point stroke selection should reach x=98.5, \
+             but only reached x={leftmost}"
+        );
+    }
+
+
+    /// Selection follows the rendered stroke width, but never
+    /// becomes thinner than four physical screen pixels.
+    #[test]
+    fn stroke_selection_respects_minimum_physical_width() {
+        let path = Path::from_svg("M100 100L300 100")
+            .expect("horizontal test line");
+
+        for ppp in [1.0_f32, 2.0] {
+            let gap = dot_gap_points(ppp);
+
+            for zoom in [1.0_f32, 2.0] {
+                for width in [0.0_f32, 0.5, 1.0, 2.0, 3.0, 6.0] {
+                    let shape = item(path.clone(), false, Some(width));
+                    let transform = Affine::scale(zoom, zoom);
+
+                    let clip = Rect::from_min_max(
+                        pos2(0.0, 0.0),
+                        pos2(800.0, 800.0),
+                    );
+
+                    let (mut fills, mut strokes) =
+                        (Vec::new(), Vec::new());
+                    let mut dots = egui::Mesh::default();
+                    let mut budget = MAX_DOTS;
+
+                    selection_pattern(
+                        &mut fills,
+                        &mut strokes,
+                        &mut dots,
+                        &shape,
+                        &transform,
+                        clip,
+                        &mut budget,
+                        gap,
+                    );
+
+                    // Measure the vertical footprint of the actual
+                    // selection geometry, in physical pixels.
+                    let (top, bottom) = strokes
+                        .iter()
+                        .flat_map(|r| [r.min.y, r.max.y])
+                        .chain(dots.vertices.iter().map(|v| v.pos.y))
+                        .fold(
+                            (f32::INFINITY, f32::NEG_INFINITY),
+                            |(lo, hi), y| (lo.min(y), hi.max(y)),
+                        );
+
+                    assert!(
+                        top.is_finite() && bottom.is_finite(),
+                        "no selection geometry for width={width}"
+                    );
+
+                    let actual = (bottom - top) * ppp;
+                    let rendered = width * zoom * ppp;
+                    let expected = rendered.max(GAP);
+
+                    // Scanline coverage can differ by up to half
+                    // a dot-spacing interval for thicker strokes.
+                    // The minimum screen-pixel width is stricter.
+                    let tolerance = if rendered <= GAP {
+                        0.1
+                    } else {
+                        GAP * 0.5
+                    };
+
+                    assert!(
+                        actual >= expected - tolerance
+                            && actual <= expected + GAP,
+                        "width={width}, zoom={zoom}, ppp={ppp}: \
+                         expected about {expected} physical px, \
+                         got {actual}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Applying the selection minimum must not enlarge parts
+    /// of a variable-width stroke that are already thick enough.
+    #[test]
+    fn variable_width_selection_preserves_the_wide_middle() {
+        use anicraft_engine::doc::{WidthPoint, WidthProfile};
+
+        let path = Path::from_svg("M100 100L300 100")
+            .expect("horizontal test stroke");
+
+        let mut shape = item(path, false, Some(1.0));
+
+        // A 1-point nominal stroke, tapered to zero at its ends,
+        // with an 8-point-wide bulge in the middle.
+        shape.stroke.as_mut().unwrap().profile =
+            WidthProfile::new(vec![
+                WidthPoint::new(0.0, 0.0, 0.0),
+                WidthPoint::new(0.5, 8.0, 8.0),
+                WidthPoint::new(1.0, 0.0, 0.0),
+            ]);
+
+        let (mut fills, mut strokes, mut dots, mut budget) = (
+            Vec::new(),
+            Vec::new(),
+            egui::Mesh::default(),
+            MAX_DOTS,
+        );
+
+        selection_pattern(
+            &mut fills,
+            &mut strokes,
+            &mut dots,
+            &shape,
+            &Affine::IDENTITY,
+            Rect::from_min_max(
+                pos2(0.0, 0.0),
+                pos2(400.0, 200.0),
+            ),
+            &mut budget,
+            GAP,
+        );
+
+        assert!(!strokes.is_empty());
+
+        let top = strokes.iter()
+            .map(|r| r.min.y)
+            .fold(f32::INFINITY, f32::min);
+
+        let bottom = strokes.iter()
+            .map(|r| r.max.y)
+            .fold(f32::NEG_INFINITY, f32::max);
+
+        let actual = bottom - top;
+
+        // The bulge is 8 points wide already. Allow one GAP
+        // of scanline sampling tolerance, but no enlargement
+        // from clamping the much thinner ends.
+        assert!(
+            actual <= 8.0 + GAP,
+            "selection enlarged the variable-width bulge \
+             to {actual} points"
+        );
+    }
+
+    /// Selection may enlarge dotted strokes, but must preserve
+    /// the original dot centres and their spacing.
+    #[test]
+    fn dotted_selection_preserves_original_dot_positions() {
+        use anicraft_engine::doc::Dash;
+
+        let path = Path::from_svg("M100 100L300 100")
+            .expect("horizontal test stroke");
+
+        let mut shape = item(path, false, Some(0.5));
+        shape.stroke.as_mut().unwrap().style.dash =
+            Dash::dotted(8.0);
+
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(400.0, 200.0),
+        );
+
+        let mut fills = Vec::new();
+        let mut strokes = Vec::new();
+        let mut dots = egui::Mesh::default();
+        let mut budget = MAX_DOTS;
+
+        selection_pattern(
+            &mut fills,
+            &mut strokes,
+            &mut dots,
+            &shape,
+            &Affine::IDENTITY,
+            clip,
+            &mut budget,
+            GAP,
+        );
+
+        assert!(!strokes.is_empty());
+
+        // AniCraft's Dotted style places centres one original
+        // stroke width plus the specified spacing apart:
+        // 0.5 + 8.0 = 8.5 points.
+        for x in [100.0, 108.5, 117.0, 125.5] {
+            assert!(
+                strokes.iter().any(|r| r.contains(pos2(x, 100.0))),
+                "selection misses original dot centre at x={x}"
+            );
+        }
+    }
+
+    /// A selected stroke must not show through an opaque
+    /// stroke drawn above it on another layer.
+    #[test]
+    fn overlying_stroke_hides_selected_stroke_on_another_layer() {
+        use anicraft_engine::doc::LayerId;
+
+        let black = item(
+            Path::from_svg("M100 100L300 100").unwrap(),
+            false,
+            Some(20.0),
+        );
+
+        let mut red = item(
+            Path::from_svg("M200 50L200 150").unwrap(),
+            false,
+            Some(20.0),
+        );
+        red.layer = LayerId(1);
+
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(400.0, 200.0),
+        );
+
+        let mut fills = Vec::new();
+        let mut strokes = Vec::new();
+        let mut dots = egui::Mesh::default();
+        let mut budget = MAX_DOTS;
+
+        selection_pattern(
+            &mut fills,
+            &mut strokes,
+            &mut dots,
+            &black,
+            &Affine::IDENTITY,
+            clip,
+            &mut budget,
+            GAP,
+        );
+
+        // Before occlusion, the black selection covers
+        // the intersection.
+        assert!(strokes.iter().any(
+            |r| r.contains(pos2(200.0, 100.0))
+        ));
+
+        exclude_overlying_artwork(
+            &mut strokes,
+            &[red],
+            &Affine::IDENTITY,
+            clip,
+            GAP,
+        );
+
+        // The red stroke should hide the black selection
+        // at the intersection, but not elsewhere.
+        assert!(
+            !strokes.iter().any(
+                |r| r.contains(pos2(200.0, 100.0))
+            ),
+            "black selection shows through the red stroke"
+        );
+
+        assert!(strokes.iter().any(
+            |r| r.contains(pos2(150.0, 100.0))
+        ));
+    }
+
+    /// An opaque fill on a higher layer must hide the
+    /// selection stipple of a stroke behind it.
+    #[test]
+    fn overlying_fill_hides_selected_stroke_on_another_layer() {
+        use anicraft_engine::doc::LayerId;
+
+        let black = item(
+            Path::from_svg("M100 100L300 100").unwrap(),
+            false,
+            Some(20.0),
+        );
+
+        let mut red = item(
+            Path::rect(190.0, 50.0, 20.0, 100.0),
+            true,
+            None,
+        );
+        red.layer = LayerId(1);
+
+        let clip = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(400.0, 200.0),
+        );
+
+        let mut fills = Vec::new();
+        let mut strokes = Vec::new();
+        let mut dots = egui::Mesh::default();
+        let mut budget = MAX_DOTS;
+
+        selection_pattern(
+            &mut fills,
+            &mut strokes,
+            &mut dots,
+            &black,
+            &Affine::IDENTITY,
+            clip,
+            &mut budget,
+            GAP,
+        );
+
+        // Before occlusion, stipple covers the intersection.
+        assert!(strokes.iter().any(
+            |r| r.contains(pos2(200.0, 100.0))
+        ));
+
+        exclude_overlying_artwork(
+            &mut strokes,
+            &[red],
+            &Affine::IDENTITY,
+            clip,
+            GAP,
+        );
+
+        // The red fill must hide the black stipple.
+        assert!(
+            !strokes.iter().any(
+                |r| r.contains(pos2(200.0, 100.0))
+            ),
+            "black selection shows through the opaque red fill"
+        );
+
+        // But the visible portion must remain selected.
+        assert!(strokes.iter().any(
+            |r| r.contains(pos2(150.0, 100.0))
+        ));
+    }
+
+    #[test]
+    fn translucent_strokes_get_opaque_backing_colour() {
+        use anicraft_engine::doc::Rgba;
+
+        let mut shape = item(
+            Path::rect(100.0, 100.0, 200.0, 200.0),
+            false,
+            Some(0.5),
+        );
+
+        shape.stroke.as_mut().unwrap().color =
+            Rgba::new(0.0, 0.0, 0.0, 0.1);
+
+        assert_eq!(
+            selection_backing_colour(&shape),
+            Color32::BLACK,
+        );
+    }
+
+    #[test]
+    fn translucent_blue_strokes_keep_opaque_rgb_in_backing() {
+        use anicraft_engine::doc::Rgba;
+
+        let mut shape = item(
+            Path::rect(100.0, 100.0, 200.0, 200.0),
+            false,
+            Some(0.5),
+        );
+
+        shape.stroke.as_mut().unwrap().color =
+            Rgba::new(0.0, 102.0 / 255.0, 1.0, 0.25);
+
+        assert_eq!(
+            selection_backing_colour(&shape),
+            crate::theme::artwork_rgb(0, 102, 255),
+        );
     }
 }
 
