@@ -27,6 +27,14 @@
   * The keyboard shortcut editor moves from F1 to **Ctrl+Alt+Shift+K**, as in Animate.
   * A new chapter, **Using this guide**.
 
+* **Fill and stroke alpha** (ADR 0097).
+  * The colour picker sets an alpha on a solid fill and on a stroke, from clear to opaque.
+    A clear fill is still a fill. No fill is the type None.
+  * Each stop of a linear or radial gradient keeps its own alpha, so a ramp can fade. The
+    stop's marker shows that alpha.
+  * A brush stroke that is not fully opaque stays its own shape, so the colour behind it
+    shows through and crossings darken. Opaque strokes still join. Group bundles the
+    separate strokes. The ink is drawn at that alpha while the pen is down.
 * **Sound output polish** (ADR 0095, M5).
   * The playhead follows the sound being **heard**: the device's latency is taken off and slow
     frames are dropped rather than drifting (within a frame over an hour of play in tests).

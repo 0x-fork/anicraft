@@ -343,6 +343,37 @@ fn hull(mut pts: Vec<Pos2>) -> Vec<Pos2> {
 
 /// Most preview pieces drawn per frame (a long stroke skips samples in the preview only).
 const MAX_PREVIEW: usize = 4000;
+/// Longest side of the live-alpha coverage image, in pixels. A stroke larger than this is
+/// drawn softer rather than uploading a full-screen texture every move.
+const MASK_MAX: usize = 2048;
+
+/// The alpha the finished stroke will have: the fill (or the stroke colour) times, when
+/// pressure drives opacity, the average mapped pressure so far. That average is what the
+/// command stores for the whole stroke (ADR 0068).
+fn intended_alpha(o: &BrushOptions, paint_a: f32, samples: &[(Vec2, Option<f32>)]) -> f32 {
+    let paint_a = if paint_a.is_finite() { paint_a.clamp(0.0, 1.0) } else { 1.0 };
+    if !o.pressure_opacity || samples.is_empty() {
+        return paint_a;
+    }
+    // The same stand-in `points` sends for a sample that is still waiting on a reading.
+    let Some(first) = samples.iter().find_map(|(_, p)| *p) else { return paint_a };
+    let mut prev = first;
+    let mut seen = false;
+    let mut sum = 0.0f32;
+    for (_, p) in samples {
+        let p = if let Some(p) = *p {
+            seen = true;
+            prev = p;
+            p
+        } else if !seen {
+            first
+        } else {
+            prev
+        };
+        sum += o.curve.map(p);
+    }
+    paint_a * (sum / samples.len() as f32).clamp(0.05, 1.0)
+}
 
 /// The paint as it goes (each pair of samples is the hull of the tip at both, so the union is
 /// what the stroke covers before smoothing), and the tip under the pointer.
@@ -354,9 +385,16 @@ pub fn draw_overlay(app: &App, painter: &egui::Painter, xf: Xf, hover: Option<Po
     let o = options(app);
     let (paint, tip) = if app.tool == Tool::PaintBrush { (app.s.style.stroke, BrushOptions { shape: TipShape::Round, roundness: 100.0, ..*o }) } else { (app.s.style.fill, *o) };
     if app.drag == Drag::Brush {
-        // Opaque, so overlapping pieces don't darken each other.
-        let color = to_color32(anicraft_engine::doc::Rgba { a: 1.0, ..paint });
-        draw_sweep(painter, xf, &tip, &app.brush_samples, color);
+        let alpha = intended_alpha(&tip, paint.a, &app.brush_samples);
+        // Opaque ink stays the convex sweep the Eraser shares. A wash is one coverage image
+        // at the alpha the stroke will keep, so the pen-down ink matches the ink after you
+        // lift (ADR 0097).
+        if (alpha * 255.0).round() >= 255.0 {
+            let color = to_color32(anicraft_engine::doc::Rgba { a: 1.0, ..paint });
+            draw_sweep(painter, xf, &tip, &app.brush_samples, color);
+        } else {
+            draw_sweep_alpha(painter, xf, &tip, &app.brush_samples, paint, alpha);
+        }
     }
     if let Some(h) = hover {
         // The tip's size and shape at the pointer, as Animate shows it.
@@ -384,6 +422,173 @@ pub fn draw_sweep(painter: &egui::Painter, xf: Xf, o: &BrushOptions, samples: &[
         let mut pts = screen(a.0, a.1);
         pts.extend(screen(b.0, b.1));
         painter.add(egui::Shape::convex_polygon(hull(pts), color, Stroke::NONE));
+    }
+}
+
+/// The tip's outline at each step, in screen points (the union is the stroke's coverage).
+fn sweep_hulls(xf: Xf, o: &BrushOptions, samples: &[(Vec2, Option<f32>)]) -> Vec<Vec<Pos2>> {
+    if samples.is_empty() {
+        return Vec::new();
+    }
+    let unit = o.unit_outline();
+    let screen = |at: Vec2, pressure: Option<f32>| -> Vec<Pos2> {
+        let m = o.tip_to_stage(at, o.factor(pressure));
+        unit.iter().map(|u| xf.to_screen(m.apply(*u))).collect()
+    };
+    let step = samples.len().div_ceil(MAX_PREVIEW).max(1);
+    let picked: Vec<&(Vec2, Option<f32>)> = samples.iter().step_by(step).chain(samples.last()).collect();
+    let mut hulls = Vec::new();
+    let mut push = |pts: Vec<Pos2>| {
+        let h = hull(pts);
+        if h.len() >= 3 {
+            hulls.push(h);
+        }
+    };
+    if let [only] = picked.as_slice() {
+        push(screen(only.0, only.1));
+    }
+    for pair in picked.windows(2) {
+        let &[a, b] = pair else { continue };
+        let mut pts = screen(a.0, a.1);
+        pts.extend(screen(b.0, b.1));
+        push(pts);
+    }
+    hulls
+}
+
+/// The same sweep as one coverage image, tinted at `alpha`. Overlapping pieces keep the
+/// greater coverage, so a crossing in one stroke stays one alpha.
+fn draw_sweep_alpha(painter: &egui::Painter, xf: Xf, o: &BrushOptions, samples: &[(Vec2, Option<f32>)], paint: anicraft_engine::doc::Rgba, alpha: f32) {
+    if alpha <= 0.0 {
+        return;
+    }
+    let hulls = sweep_hulls(xf, o, samples);
+    if hulls.is_empty() {
+        return;
+    }
+    let mut bounds = egui::Rect::NOTHING;
+    for hull in &hulls {
+        for p in hull {
+            bounds.extend_with(*p);
+        }
+    }
+    let view = bounds.expand(1.0).intersect(painter.clip_rect());
+    if !view.is_positive() || !view.width().is_finite() || !view.height().is_finite() {
+        return;
+    }
+    let ppp = painter.pixels_per_point();
+    let mut scale = if ppp.is_finite() && ppp > 0.0 { ppp } else { 1.0 };
+    let long = view.width().max(view.height()) * scale;
+    if long > MASK_MAX as f32 && long.is_finite() {
+        scale *= MASK_MAX as f32 / long;
+    }
+    let w = (view.width() * scale).round();
+    let h = (view.height() * scale).round();
+    if !w.is_finite() || !h.is_finite() || w < 1.0 || h < 1.0 {
+        return;
+    }
+    let w = (w as usize).clamp(1, MASK_MAX);
+    let h = (h as usize).clamp(1, MASK_MAX);
+    let cov = coverage(&hulls, view.min, scale, w, h);
+    let mut pixels = Vec::with_capacity(w.saturating_mul(h));
+    for c in cov {
+        let a = (c.clamp(0.0, 1.0) * 255.0).round() as u8;
+        pixels.push(egui::Color32::from_white_alpha(a));
+    }
+    let image = egui::ColorImage::new([w, h], pixels);
+    let tex = sweep_texture(painter.ctx(), image);
+    let tint = to_color32(anicraft_engine::doc::Rgba { a: alpha, ..paint });
+    painter.image(tex.id(), view, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), tint);
+}
+
+/// One reused texture for the live wash, so a stroke does not leak a texture every frame.
+fn sweep_texture(ctx: &egui::Context, image: egui::ColorImage) -> egui::TextureHandle {
+    let id = egui::Id::new("anicraft.brush.sweep");
+    let options = egui::TextureOptions::LINEAR;
+    if let Some(mut tex) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
+        tex.set(image, options);
+        tex
+    } else {
+        let tex = ctx.load_texture("brush-sweep", image, options);
+        ctx.data_mut(|d| d.insert_temp(id, tex.clone()));
+        tex
+    }
+}
+
+/// Coverage in `0..=1`, one value per pixel. A pixel covered more than once keeps the greater
+/// value, so the stroke is one alpha.
+fn coverage(hulls: &[Vec<Pos2>], origin: Pos2, scale: f32, w: usize, h: usize) -> Vec<f32> {
+    let mut cov = vec![0.0f32; w.saturating_mul(h)];
+    let view = egui::Rect::from_min_size(origin, egui::vec2(w as f32 / scale, h as f32 / scale));
+    for hull in hulls {
+        if hull.len() < 3 || !hull_hits(hull, view) {
+            continue;
+        }
+        fill_convex(&mut cov, w, h, hull, origin, scale);
+    }
+    cov
+}
+
+fn hull_hits(poly: &[Pos2], view: egui::Rect) -> bool {
+    let mut b = egui::Rect::NOTHING;
+    for p in poly {
+        if p.x.is_finite() && p.y.is_finite() {
+            b.extend_with(*p);
+        }
+    }
+    b.intersects(view)
+}
+
+/// Scan-converts one convex polygon into `cov` (pixel rows are the image, y down).
+fn fill_convex(cov: &mut [f32], w: usize, h: usize, poly: &[Pos2], origin: Pos2, scale: f32) {
+    let pts: Vec<(f32, f32)> = poly.iter().filter(|p| p.x.is_finite() && p.y.is_finite()).map(|p| ((p.x - origin.x) * scale, (p.y - origin.y) * scale)).collect();
+    if pts.len() < 3 || !scale.is_finite() || scale <= 0.0 {
+        return;
+    }
+    let (mut top, mut bot) = (f32::MAX, f32::MIN);
+    for (_, y) in &pts {
+        top = top.min(*y);
+        bot = bot.max(*y);
+    }
+    if !top.is_finite() || !bot.is_finite() {
+        return;
+    }
+    let iy0 = (top.floor() as i32).max(0);
+    let iy1 = (bot.ceil() as i32).min(h as i32);
+    let n = pts.len();
+    for iy in iy0..iy1 {
+        let y = iy as f32 + 0.5;
+        let mut left = f32::MAX;
+        let mut right = f32::MIN;
+        for i in 0..n {
+            let (x0, y0) = pts[i];
+            let (x1, y1) = pts[(i + 1) % n];
+            // The scanline crosses the edge. A vertex on the scanline counts once.
+            if !((y0 <= y && y1 > y) || (y1 <= y && y0 > y)) {
+                continue;
+            }
+            let t = (y - y0) / (y1 - y0);
+            let x = x0 + (x1 - x0) * t;
+            if !x.is_finite() {
+                continue;
+            }
+            left = left.min(x);
+            right = right.max(x);
+        }
+        // No crossing, or a crossing thinner than a pixel. Non-finite x was skipped above.
+        if right <= left {
+            continue;
+        }
+        let ix0 = (left.floor() as i32).max(0);
+        let ix1 = (right.ceil() as i32).min(w as i32);
+        for ix in ix0..ix1 {
+            let x0 = ix as f32;
+            let span = (right.min(x0 + 1.0) - left.max(x0)).clamp(0.0, 1.0);
+            let Some(slot) = cov.get_mut(iy as usize * w + ix as usize) else { continue };
+            if span > *slot {
+                *slot = span;
+            }
+        }
     }
 }
 
@@ -448,5 +653,29 @@ mod tests {
 
         let h = hull(vec![Pos2::new(0.0, 0.0), Pos2::new(1.0, 0.0), Pos2::new(0.5, 0.2), Pos2::new(1.0, 1.0), Pos2::new(0.0, 1.0), Pos2::new(0.0, 0.0)]);
         assert_eq!(h.len(), 4, "{h:?}");
+    }
+
+    #[test]
+    fn the_preview_alpha_is_the_fill_times_the_pressure_average() {
+        let mut o = BrushOptions::default();
+        let samples = [(Vec2::ZERO, Some(0.25)), (Vec2::new(10.0, 0.0), Some(0.25))];
+        assert!((intended_alpha(&o, 0.5, &samples) - 0.5).abs() < 1e-5, "pressure off leaves the fill");
+        o.pressure_opacity = true;
+        assert!((intended_alpha(&o, 1.0, &samples) - 0.25).abs() < 1e-3, "the average so far");
+        assert!((intended_alpha(&o, 0.5, &samples) - 0.125).abs() < 1e-3, "fill alpha times that average");
+        let light = [(Vec2::ZERO, Some(0.0))];
+        assert!((intended_alpha(&o, 1.0, &light) - 0.05).abs() < 1e-3, "the same floor as the command");
+    }
+
+    #[test]
+    fn a_wash_preview_is_one_coverage_where_the_pieces_overlap() {
+        let square = |x: f32, y: f32| vec![Pos2::new(x, y), Pos2::new(x + 10.0, y), Pos2::new(x + 10.0, y + 10.0), Pos2::new(x, y + 10.0)];
+        let cov = coverage(&[square(0.0, 0.0), square(4.0, 4.0)], Pos2::ZERO, 1.0, 16, 16);
+        let at = |x: usize, y: usize| cov[y * 16 + x];
+        assert!(at(2, 2) > 0.99, "inside the first square");
+        assert!(at(12, 2) < 0.01, "outside both");
+        assert!(at(6, 6) > 0.99 && at(6, 6) <= 1.0, "the overlap stays one coverage, not two: {}", at(6, 6));
+        let edge = coverage(&[vec![Pos2::new(0.5, 0.0), Pos2::new(10.0, 0.0), Pos2::new(10.0, 10.0), Pos2::new(0.5, 10.0)]], Pos2::ZERO, 1.0, 12, 12);
+        assert!((edge[5 * 12] - 0.5).abs() < 0.05, "the cut pixel is a partial: {}", edge[5 * 12]);
     }
 }
