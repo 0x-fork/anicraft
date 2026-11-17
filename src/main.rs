@@ -78,6 +78,8 @@ mod macros_ui;
 mod plugins_ui;
 mod prefs;
 mod recent;
+#[cfg(not(target_arch = "wasm32"))]
+mod remote;
 mod rulers;
 mod scale_grid;
 mod shape_envelope;

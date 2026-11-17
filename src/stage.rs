@@ -1362,7 +1362,8 @@ fn xf_snap(s: &mut anicraft_engine::Session, ring: &mut Option<Vec2>, kind: XfKi
             let pts = [pos2(b[0], b[1]), pos2(b[2], b[1]), pos2(b[2], b[3]), pos2(b[0], b[3]), pos2((b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5)];
             pts.into_iter().min_by(|p, q| p.distance(start).total_cmp(&q.distance(start))).unwrap_or(start)
         }
-        XfKind::Rotate => {
+        // Rotation and skew don't snap.
+        XfKind::Rotate | XfKind::Skew { .. } => {
             *ring = None;
             return c;
         }
