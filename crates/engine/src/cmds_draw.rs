@@ -418,9 +418,17 @@ pub(crate) fn set_stroke(s: &mut Session, p: &Value) -> Result<Value> {
     let default = s.style.clone();
     // Checked once up front, so a bad style param changes nothing.
     opt_stroke_style(p, &default.line, default.stroke_width)?;
-    for sh in shapes_mut(s)? {
+    let shapes = shapes_mut(s)?;
+    // A raw drawing's outline is its own stroke pieces (ADR 0042). When the selection holds
+    // strokes for the change, its raw fills take none of their own, which would draw the outline
+    // a second time over the pieces (#389).
+    let strokes_selected = shapes.iter().any(|sh| sh.stroke.is_some());
+    for sh in shapes {
         if remove {
             sh.stroke = None;
+            continue;
+        }
+        if strokes_selected && sh.merge && sh.stroke.is_none() {
             continue;
         }
         let mut st = sh.stroke.take().unwrap_or_else(|| default.new_stroke(default.stroke, default.stroke_width));
