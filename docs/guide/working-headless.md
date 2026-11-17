@@ -23,9 +23,9 @@ prints the version.
 
 Two rules hold everywhere:
 
-* Each subcommand takes a document path, or `--sample` for the built-in sample animation. The
-  positional document must be a `.anicraft` file (to work on an Animate file, see
-  [Converting Animate files](#converting-animate-files)).
+* Subcommands that open a document accept a `.anicraft` file, an Animate `.fla` or `.xfl`
+  file, an XFL folder, or `--sample` for the built-in sample animation. See
+  [Converting Animate files](#converting-animate-files) to save an import as `.anicraft`.
 * **Frame flags on the command line are 1-based**, as on the timeline: `--frame 1` is the first
   frame. Frame numbers inside JSON params are 0-based, as everywhere in the engine.
 
@@ -159,8 +159,13 @@ Renders are deterministic: the same document and flags give the same pixels on e
 
 ### Converting Animate files
 
-The positional document must be a `.anicraft` file, but the `file.open` command reads `.fla`,
-`.xfl` and XFL folders. Start from the sample, open the Animate file over it, and save:
+Pass a `.fla`, `.xfl` file or XFL folder directly to any subcommand that opens a document:
+
+```sh
+anicraft-cli info intro.fla
+```
+
+To save an import as `.anicraft` and print its import report, use `file.open` and `--save`:
 
 ```sh
 anicraft-cli exec --sample file.open '{"path":"intro.fla"}' --save intro.anicraft
