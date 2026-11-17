@@ -3925,6 +3925,8 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Stage work on the window's device is submitted only while this frame runs (ADR 0105).
+        let _in_frame = crate::gpu_stage::in_frame(ui.ctx());
         self.frame(ui);
         // A few frames drawn: the window started (#207).
         crate::startup::frame();
