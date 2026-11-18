@@ -37,6 +37,24 @@
   * Checked and kept fixed with tests: a flipped symbol or image is no longer squashed by the
     Properties panel, and undoes (fixes #310, #371); Break Apart works on an imported image
     and a second time on text (fixes #341, #299).
+* **Requests from the issue tracker: layers by drag, all-layer buttons, sizes and more** (M8).
+  * **Drag a layer to reorder it** (#407, and part of #241 and #331): drag a layer by its name;
+    a line shows where it lands, a folder lights up when the layer goes inside it, **Esc**
+    cancels. Folders, masks and guides move with everything in them, a drop is one undo step,
+    and the list scrolls when the drag nears its top or bottom. Headless: `layer.move {layer?,
+    before | after | into}`. The up and down buttons and menu items stay for the keyboard.
+  * **The eye, padlock and outline square above the layer names** show, lock or outline every
+    layer at once, as in Animate (#422); `all: true` (and `on`) on `layer.toggle_visible`,
+    `layer.toggle_lock` and `layer.toggle_outline`. The camera layer is left alone.
+  * **The line between the layer names and the frames drags** (#384), from 150 to 600 points;
+    double-click it to put it back. The width is kept in the preferences.
+  * **Symbol types are listed as Movie clip, Button, Graphic**, and Convert to Symbol offers a
+    movie clip the first time, as Animate does (#419). The `modify.convert_to_symbol` command's
+    own default is still a graphic, so scripts make what they made.
+  * **Size in Properties** (#294): the selection's width and height in stage pixels; a new
+    value stretches it from its top-left corner.
+  * **The Brush and the Paint Brush keep their settings between sessions** (#331): size, tip,
+    smoothing, pressure, taper and texture, each tool its own.
 * **Fixed: start-up, graphics and opening Flash files, from user reports** (ADR 0105, M8).
   * Fixed: most `.fla` files saved by Flash CS5 to Animate were refused with "the archive is
     damaged: the central directory is outside the archive" (#356, #385). Flash writes the

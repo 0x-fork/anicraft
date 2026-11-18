@@ -196,8 +196,11 @@ mod tests {
         let (overlaps, done) = run(true);
         assert_eq!(overlaps, 0, "a submission ran while the gate was closed");
         assert!(done > 0, "work still gets through");
-        let (overlaps, _) = run(false);
-        assert!(overlaps > 0, "the detector sees the race without the gate");
+        // The control: without the gate the detector catches the race. On a runner with few
+        // cores the workers and the detector may not overlap in one short run, so it gets a few
+        // tries; the gated run above must hold in every run, this one in any.
+        let seen = (0..8).any(|_| run(false).0 > 0);
+        assert!(seen, "the detector sees the race without the gate");
     }
 
     /// A closed gate asks its owner for a frame, and the submission runs when that frame opens it.

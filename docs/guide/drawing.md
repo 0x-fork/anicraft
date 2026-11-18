@@ -159,6 +159,9 @@ stipple. Both are still ordinary vector shapes: they merge, erase, scale and exp
 other paint, and the same stroke always comes out the same. The **Charcoal** and **Spatter**
 brushes in the Brush menu use them.
 
+The Brush and the Paint Brush keep their settings (size, tip, smoothing, pressure and the rest)
+when you close AniCraft, each tool its own.
+
 **Tilt.** Brushes can follow a pen's tilt: the tip turns with the way the pen leans (so a flat
 nib follows your hand), and paints wider as it leans, up to twice as wide lying flat. A mouse
 is never affected. Windows, macOS and Linux don't pass a pen's tilt on to AniCraft yet, so the
@@ -359,8 +362,10 @@ With the **Free Transform** tool (**Q**), drag a handle (a corner or the middle 
 two handles to **skew** (the opposite edge stays where it is; **Alt** skews about the centre),
 just outside a corner to **rotate** (the pointer turns into a curved arrow there; **Shift**
 snaps to 15°), or inside the box to **move**.
-You can also type exact **Position**, **Scale** and **Rotation** values in Properties. The lock
-beside **Scale** keeps width and height in proportion.
+You can also type exact **Position**, **Size**, **Scale** and **Rotation** values in
+Properties. **Size** is the width (**W**) and height (**H**) of the selection's box in stage
+pixels: a new value stretches the artwork from the box's top-left corner, which stays where it
+is. The lock beside **Scale** keeps width and height in proportion.
 
 | Command | Menu | Key |
 |---|---|---|
