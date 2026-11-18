@@ -29,6 +29,10 @@ accepts `webpki-root-certs` 1.0.12 under CDLA-Permissive-2.0 for Mozilla certifi
 in by the HTTPS verifier. It applies only to that data crate and version; the code licence
 allowlist is unchanged.
 
+Data tables (ADR 0118) read CSV and TSV through `craft-csv` (MIT OR Apache-2.0; its only
+dependency is `thiserror`), pinned to the same reviewed commit of `storytold/craft-libs` as
+`craft-mime` and `craft-gif`. No new licence.
+
 **Shared-library exceptions (approved by the project lead, 2026-11-17).** The move to the shared
 Craft crates brought two licences the allowlist doesn't name. Both are accepted as crate-scoped
 exceptions in `deny.toml`, and the allowlist itself is unchanged:
