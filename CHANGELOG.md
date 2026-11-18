@@ -20,6 +20,92 @@
     value stretches it from its top-left corner.
   * **The Brush and the Paint Brush keep their settings between sessions** (#331): size, tip,
     smoothing, pressure, taper and texture, each tool its own.
+* **Fixed: start-up, graphics and opening Flash files, from user reports** (ADR 0105, M8).
+  * Fixed: most `.fla` files saved by Flash CS5 to Animate were refused with "the archive is
+    damaged: the central directory is outside the archive" (#356, #385). Flash writes the
+    archive's closing record with the file list's size 54 bytes too large whenever `mimetype`
+    isn't the first file; AniCraft now reads those as Animate does. Archives that really are
+    damaged are still refused.
+  * Fixed: the cause of AniCraft closing as it opened or when its window was resized (#264,
+    #309, and most "won't open" reports: #421, #412, #313, #286, #285, #268, #164). The stage
+    handed its drawing to the graphics card while the window was setting itself up, which the
+    graphics library refuses ("Failed to wait for GPU to come idle before reconfiguring the
+    Surface"). 0.2.1 closed on that error; later builds survived it with a skipped frame and a
+    line about the graphics driver. Now it doesn't happen: stage drawing is handed over only
+    while a frame is being drawn. Measured: the error in 3 of 20 starts before, 0 of 20 after.
+  * Fixed: on a computer whose graphics driver crashes AniCraft as it starts, AniCraft opened
+    only every second time (#335). The way of drawing the window that crashed now stays last for
+    the next five starts, then gets one more chance, and is held back longer each time it fails
+    again (25, then 100 starts). `--renderer` still tries what you ask for first.
+  * Fixed: on Linux, after **Add to Applications Menu**, the menu and dock could keep showing a
+    generic icon when another installer had left an icon cache in `~/.local/share/icons`
+    (#348). The cache is brought up to date.
+  * The web version keeps fewer drawn frames in memory: 256 MB at most instead of 768 MB (#314:
+    900 MB for a short animation). The desktop is unchanged; idle, it uses no CPU.
+
+* **Fixes and polish from outside contributors** (M8). Thank you all.
+  * **Fixed: no menus on macOS** (fixes #187, #247, #398; Oskar Raszkiewicz). The window keeps
+    the standard macOS title bar and the menu row sits under it; before, the title bar covered
+    File, Edit and the rest unless the window was full screen (ADR 0006).
+  * **Fixed: Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+Shift+V did nothing on the stage** on desktop builds
+    (fixes #197; jayzed80). They copy, cut, paste and paste in place again; text fields keep
+    their own copy and paste.
+  * **Fixed: grouped artwork in Animate documents came in scaled and moved twice** (fixes #411;
+    Vincent Agerbech, with the nested-group test from NetterSilver). A 50% instance in a group
+    drew at 25%; group members now land where Animate puts them.
+  * **Selected raw artwork is easier to read** (fixes #295; Untoldent): finer, staggered dots in
+    a colour that contrasts with each fill, stroke or gradient instead of blue and white ones,
+    thin selected lines stay visible, and artwork on top hides the dots under it.
+  * **Raw drawings act as one shape** (scks1): Align and Distribute keep a fill and its outline
+    together (fixes #301), Rotation and Scale in Properties turn and scale a selected raw
+    drawing about its centre (fixes #297), and changing the stroke of a whole raw drawing no
+    longer gives its fills a second outline (the doubled stroke of #389).
+  * **A group's registration point is the centre of what was grouped** (Koolskull, ADR 0073),
+    not the corner of the stage, so Rotation and Scale in Properties turn it about itself. The
+    artwork stays where it was; edit the group to move the point.
+  * **Edit bar** (Untoldent, gmrmad1): inside a symbol, group or drawing object, one click on the
+    scene name goes back to the scene and the arrow beside it opens the scene menu (fixes #353);
+    scene rows in that menu are clickable across their whole width; Insert › Scene is now
+    **New Scene**. The zoom percentage is a field you can type in, with its presets on the
+    arrow beside it (fixes #43).
+  * **Properties › Scale has a lock** (fixes #304; gmrmad1): with it on, changing one of width
+    or height changes the other in proportion.
+  * **Names are selected when a dialog opens** (fixes #196, #322; Untoldent): Convert to Symbol,
+    Rename Layer, Rename Scene, Layer Properties and the other name prompts, so typing replaces
+    the name.
+  * **Timeline** (gmrmad1): dragging the playhead on the ruler stops at the last frame that has
+    material (fixes #352), and a playhead past the end of a scene no longer shows the next
+    scene's artwork on the stage (fixes #305).
+  * **Camera** (Kushagra Kumar): with the camera layer hidden, Preview Through Camera no longer
+    blocks drawing on the stage (fixes #126).
+* **From outside contributors** (M8; thank you).
+  * **Free Transform skews** (by mypenc, #176, for #174). Drag the line between two handles
+    of the selection box to shear the artwork along that edge, as in Animate: the opposite edge
+    stays put, **Alt** skews about the centre, and the cursor shows the direction. One undo
+    step per drag; works with Edit Multiple Frames.
+  * **Fill and stroke alpha** (by Koolskull, #354, ADR 0102). The colour picker has a labelled
+    **Alpha** row (a slider and a percent) for a solid fill and for a stroke, on the Tools
+    squares, the Colour panel and Properties; hex takes `#rrggbbaa`. A clear fill is still a
+    fill; no fill is the type None. Each stop of a gradient keeps its own alpha and its marker
+    shows it. A brush stroke that isn't fully opaque stays its own shape over what is behind
+    it, so crossings darken, and the ink is drawn at that alpha while the pen is down. Opaque
+    strokes join as before.
+  * **Remote control: an assistant edits the window you have open** (by lienatanael-dev, #216,
+    ADR 0104, `docs/control-protocol.md`). `anicraft --control 9878` (or
+    `ANICRAFT_CONTROL_PORT`) lets an assistant edit the open document through a port on this
+    computer only; `anicraft-cli mcp --bridge 9878` is the MCP server's five tools acting on
+    that window. Edits show at once and undo with Ctrl+Z; they wait while you drag, so undo
+    steps never mix; the status bar says "Remote control on (port 9878)". Off unless you start
+    AniCraft this way. Each run has a fresh token in `control.json` in the settings folder
+    (readable only by you; `ANICRAFT_CONTROL_TOKEN` overrides it); anything that isn't a JSON
+    request with that token is refused. Added in review: the port closes with the window, a
+    connection that sends nothing is dropped after 10 s, the token file is always created new
+    and owner-only, and a portable install keeps it in its own folder
+    (`ANICRAFT_CONTROL_FILE` tells the bridge where).
+  * **Georgian, ready for its translation** (by Davit Matchakhelidze, #160). Builds made with
+    craft-fonts embed Noto Sans Georgian as a fallback face and offer Georgian (`ka`) once its
+    catalog is in craft-i18n; a build without the face doesn't offer it, and a damaged font
+    file is never loaded.
 * **Fixes and polish from outside contributors.** Thank you all.
   * **Shape tweens carry a raw shape's line with its fill** (#119, NetterSilver): when the two keyframes' lines have different numbers of pieces (a triangle into a hexagon), the pieces join into outlines that morph as the fill does, with no side left bare and no line left standing; a line on one keyframe only grows in or shrinks away, and shape hints steer the line too.
   * **Flipping no longer squashes a shape to 1 %** (#116, jayzed80): the Scale fields in Properties show a mirrored scale as a negative percentage and never rewrite a value they only show.

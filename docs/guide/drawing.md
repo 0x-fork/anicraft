@@ -18,7 +18,7 @@ your hand.
 |---|---|---|
 | Selection | **V** | Select, move and bend artwork |
 | Subselection | **A** | Edit points and curve handles |
-| Free Transform | **Q** | Scale, rotate and move |
+| Free Transform | **Q** | Scale, skew, rotate and move |
 | Gradient Transform | **F** | Move, turn and stretch a gradient or bitmap fill |
 | Width | **U** | Vary a line's thickness along it |
 | Bone | **M** | Join symbol instances into a poseable armature |
@@ -218,8 +218,11 @@ width. The Pencil and the Line tool only draw lines, so they show no fill.
 Click any colour swatch to open the colour picker. **Swatches**, the default, shows the 216
 web-safe colours with greys and primaries beside them; a shade or highlight of a colour is
 usually one cell away. The colours you mix or type are kept in the row below for this session.
-**Mixer** sets any colour by hue, saturation and brightness (and alpha where the colour has
-one). The hex field shows the colour as `#rrggbb` and takes one you type. A fill's picker
+**Mixer** sets any colour by hue, saturation and brightness . Under it, the **Alpha**
+row sets how clear a solid fill or a stroke is, from 0 % (clear) to 100 % (opaque). A clear
+fill is still a fill: you can select it and erase it; **None** is no fill at all. Each stop of
+a gradient has its own alpha, so a gradient can fade out. The hex field shows the colour as
+`#rrggbb`, or `#rrggbbaa` when it isn't opaque, and takes either. A fill's picker
 starts with the fill's type: **None** (no fill), **Solid**, **Linear**, **Radial** or
 **Bitmap** (see [Gradients and bitmap fills](#gradients-and-bitmap-fills)); the stroke's picker
 has **No colour** instead. In the Tools panel's picker, with shapes selected, the colour you
@@ -253,8 +256,10 @@ many palette sites also use); the swatches are added after yours. Adobe's `.aco`
 as GIMP `.gpl` from a tool that has it.
 
 To recolour existing artwork, select it and change **Fill** and **Stroke** in Properties.
-For transparency, use the colour effect's **Alpha** (see
-[Colour effects](#colour-effects)).
+For a see-through fill or line, lower **Alpha** in its colour picker. A brush stroke painted
+with a see-through colour stays a shape of its own, over what is behind it, instead of joining
+the drawing. To fade a whole symbol instance, or to tween a fade, use the colour effect's
+**Alpha** (see [Colour effects](#colour-effects)).
 
 ### Line styles
 
@@ -346,12 +351,14 @@ changes everywhere it's used.
 
 ## Transforming artwork
 
-With the **Free Transform** tool (**Q**), drag a corner or edge to **scale** (**Shift** keeps
-the proportions, **Alt** scales from the centre), just outside a corner to **rotate**
-(**Shift** snaps to 15°), or inside the box to **move**. You can also type exact
-**Position**, **Size**, **Scale** and **Rotation** values in Properties. **Size** is the
-width (**W**) and height (**H**) of the selection's box in stage pixels: a new value stretches
-the artwork from the box's top-left corner, which stays where it is.
+With the **Free Transform** tool (**Q**), drag a handle (a corner or the middle of an edge) to
+**scale** (**Shift** keeps the proportions, **Alt** scales from the centre), the line between
+two handles to **skew** (the opposite edge stays where it is; **Alt** skews about the centre),
+just outside a corner to **rotate** (**Shift** snaps to 15°), or inside the box to **move**.
+You can also type exact **Position**, **Size**, **Scale** and **Rotation** values in
+Properties. **Size** is the width (**W**) and height (**H**) of the selection's box in stage
+pixels: a new value stretches the artwork from the box's top-left corner, which stays where it
+is. The lock beside **Scale** keeps width and height in proportion.
 
 | Command | Menu | Key |
 |---|---|---|

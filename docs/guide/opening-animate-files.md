@@ -130,6 +130,8 @@ computers without the font.
 * A `.fla` saved by **Flash CS4 or earlier** uses an older format AniCraft can't read. AniCraft
   says so: open it in Animate and save it again, then open that copy.
 * A renamed `.fla` still opens; AniCraft recognises it by what is inside.
+* Flash and Animate write most `.fla` files with a small slip in the archive's closing record
+  (it overstates the size of the file list). AniCraft opens them as Animate does.
 * Archives made by different zip tools open, large ones included: a zipped XFL folder (the
   document inside one top folder, with or without the `__MACOSX` folder macOS adds), and a
   self-extracting archive renamed to `.fla`. A zip holding several documents in their own

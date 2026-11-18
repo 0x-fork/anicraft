@@ -146,7 +146,7 @@ impl Tool {
             Tool::Bind => tr_noop!("Shows the points of shapes with bones: a square follows one bone, a triangle several. Click a bone to see the points it moves (filled). Click a point, or drag a box around points, to make them follow only that bone; Shift shares the bone with the ones they follow, Ctrl takes them from it. Turn on Paint Weights in Properties to brush the bone's influence on, off or smooth, shown as a heat map."),
             Tool::Warp => tr_noop!("Click a shape or a bitmap to pin it (the first pin covers it with a warp mesh). Drag a pin to bend the artwork around the other pins; with one pin it moves. Click a pin and press Delete to remove it. A pin moved at another frame keys it, and pins tween."),
             Tool::GradientTransform => tr_noop!("Click a shape with a gradient or bitmap fill to show its handles. Drag the centre to move the fill, the square to change its width, the circle to change its size, the knob to rotate it (Shift: 15° steps) and, on a radial gradient, the triangle to move its focal point. A bitmap fill also has a square for its height and diamonds to skew it. Each drag is one undo step."),
-            Tool::Transform => tr_noop!("Drag a corner or edge to scale (Shift keeps proportions, Alt scales from the centre), just outside a corner to rotate (Shift snaps 15°), inside to move."),
+            Tool::Transform => tr_noop!("Drag a handle to scale (Shift keeps proportions, Alt scales from the centre), a line between handles to skew (Alt skews about the centre), just outside a corner to rotate (Shift snaps 15°), inside to move."),
             Tool::Rect => tr_noop!("Drag to draw a rectangle. Shift draws a square."),
             Tool::Oval => tr_noop!("Drag to draw an oval. Shift draws a circle."),
             Tool::Star => tr_noop!("Drag from the centre to draw a star or a polygon (Shape in the options)."),
@@ -293,6 +293,9 @@ pub enum XfKind {
     /// Handle position: -1/0/1 on each axis (corner, edge or centre).
     Scale { hx: i8, hy: i8 },
     Rotate,
+    /// Dragging the line between two handles shears along that edge (the sign is which edge:
+    /// `hx` is -1/1 on the left/right edge, `hy` is -1/1 on the top/bottom, the other is 0).
+    Skew { hx: i8, hy: i8 },
 }
 
 /// A small text prompt standing in for native file dialogs (M0).
@@ -350,6 +353,9 @@ impl PolyStarOptions {
 pub struct App {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) updates: crate::updates::Updates,
+    /// The live control port, with `--control` (ADR 0104).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) remote: Option<crate::remote::Remote>,
     pub s: Session,
     pub tool: Tool,
     pub view: StageView,
@@ -469,6 +475,12 @@ pub struct App {
     pub width_sel: Option<(anicraft_engine::doc::ElementId, usize)>,
     /// Opens the Tools bar's fill swatch picker on the next frame (the `swatches` screenshot).
     pub open_fill_swatch: bool,
+    /// The Properties panel's Scale lock (#304; view state, not undoable): while on, editing
+    /// one Scale axis adjusts the other so the selection keeps its width:height proportion.
+    pub scale_lock: bool,
+    /// The zoom edit-bar field's draft while it has the keyboard (view state, not undoable):
+    /// `None` shows the current zoom, `Some` is what is being typed.
+    pub zoom_text: Option<String>,
     /// The bone picked on the stage (ADR 0043; view state).
     pub bone_sel: Option<anicraft_engine::doc::BoneId>,
     /// The Bind tool's options: Paint Weights, the brush, the focused point (ADR 0090).
@@ -560,6 +572,9 @@ pub struct App {
     fonts_rx: Option<std::sync::mpsc::Receiver<prefs::SystemFonts>>,
     /// Re-check which glyphs the active fonts have (after fonts change).
     glyph_check: bool,
+    /// A copy or cut ran: the system clipboard gets a note at the end of the frame, so the next
+    /// Ctrl/⌘+V reaches the app (egui-winit sends a paste only when the clipboard holds text).
+    copied: bool,
     /// Document revision at the end of the last frame (edits schedule a repaint).
     last_revision: u64,
     title: String,
@@ -693,6 +708,8 @@ impl App {
         let mut app = App {
             #[cfg(not(target_arch = "wasm32"))]
             updates: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            remote: None,
             s: session,
             tool: Tool::Select,
             view: StageView { zoom: 1.0, pan: egui::Vec2::ZERO, fit: true, fitted: None, clip_to_stage: false },
@@ -762,6 +779,8 @@ impl App {
             points: Vec::new(),
             width_sel: None,
             open_fill_swatch: false,
+            scale_lock: false,
+            zoom_text: None,
             bone_sel: None,
             bind: crate::bind_tool::BindOptions::default(),
             warp_pin: None,
@@ -811,6 +830,7 @@ impl App {
             system_fonts: None,
             fonts_rx: None,
             glyph_check: true,
+            copied: false,
             last_revision: 0,
             title: String::new(),
             keymap,
@@ -854,11 +874,15 @@ impl App {
     }
 
     /// View › Preview Through Camera (ADR 0027). With no camera yet there is nothing to look
-    /// through, so it says how to add one.
+    /// through, so it says how to add one; when the camera layer is hidden, it reminds to show it.
     pub fn toggle_camera_preview(&mut self) {
         self.camera_preview = !self.camera_preview;
-        if self.camera_preview && self.s.timeline().camera_layer().is_none() {
-            self.status_ok(tr!("Preview through camera is on; add a camera (the camera button on the timeline, or the Camera tool) to look through it."));
+        if self.camera_preview {
+            if self.s.timeline().camera_layer().is_none() {
+                self.status_ok(tr!("Preview through camera is on; add a camera (the camera button on the timeline, or the Camera tool) to look through it."));
+            } else if self.s.timeline().camera_layer().is_some_and(|l| !l.visible) {
+                self.status_ok(tr!("Preview through camera is on, but the camera layer is hidden. Show the layer to look through it."));
+            }
         }
     }
 
@@ -901,7 +925,12 @@ impl App {
             platform::deliver(anicraft_engine::vfs::take_written());
         }
         match result {
-            Ok(v) => Some(v),
+            Ok(v) => {
+                if matches!(id, "edit.copy" | "edit.cut" | "timeline.copy_frames" | "timeline.cut_frames" | "frames.copy" | "frames.cut") {
+                    self.copied = true;
+                }
+                Some(v)
+            }
             Err(e) => {
                 // The engine's English, translated when a catalog has that exact message.
                 self.status_err(crate::i18n::t_dyn(&e.to_string()).into_owned());
@@ -3521,6 +3550,10 @@ impl App {
             }
             return;
         }
+        // (A browser sends these keys as presses already, with its clipboard events after.)
+        if !platform::WEB {
+            ctx.input_mut(clipboard_keys_as_presses);
+        }
         let control = keys == crate::a11y::Keyboard::Control;
         if !control {
             crate::motion_path::consume_keys(self, ctx);
@@ -3689,7 +3722,8 @@ impl App {
             ui.set_min_width(360.0);
             let r = ui.add(egui::TextEdit::singleline(&mut p.text).desired_width(f32::INFINITY)).named(title);
             if p.focus {
-                r.request_focus();
+                // What the prompt offers (a name to change) is selected: typing replaces it.
+                crate::theme::focus_selected(ui, &r, &p.text);
                 p.focus = false;
             }
             if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
@@ -3930,9 +3964,13 @@ impl eframe::App for App {
         self.recovery.finish(&self.s, clean);
         #[cfg(not(target_arch = "wasm32"))]
         self.updates.finish();
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::remote::finish(self);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Stage work on the window's device is submitted only while this frame runs (ADR 0105).
+        let _in_frame = crate::gpu_stage::in_frame(ui.ctx());
         self.frame(ui);
         // A few frames drawn: the window started (#207).
         crate::startup::frame();
@@ -3951,6 +3989,9 @@ impl App {
             }
         }
         self.handle_screenshot(&ctx);
+        // An assistant's edits (ADR 0104), before anything draws: they show in this frame.
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::remote::poll(self, &ctx);
         self.poll_font_scan(&ctx);
         self.follow_system_look(&ctx);
         if let Some(p) = platform::picked_file() {
@@ -4082,6 +4123,12 @@ impl App {
         crate::brushtool::sync(self, pointer_down);
         // A browser asks before leaving a page with unsaved work (its close guard).
         platform::set_unsaved(self.s.is_dirty());
+        // Copied artwork or frames: the system clipboard says so, as any copy replaces what it
+        // held, and so the next Ctrl/⌘+V comes through (issue #197). A browser sends that key
+        // press whatever its clipboard holds.
+        if std::mem::take(&mut self.copied) && !platform::WEB {
+            ctx.copy_text(tr!("Copied from AniCraft").to_string());
+        }
 
         // An edit late in this frame (after the stage drew) must be shown without waiting for
         // the next input event: egui only repaints on demand. This was the "drag commits after a
@@ -4090,6 +4137,119 @@ impl App {
             self.last_revision = self.s.revision;
             ctx.request_repaint();
         }
+    }
+}
+
+/// On the desktop egui-winit turns Ctrl/⌘+X, C and V (and Shift+Delete, Ctrl+Insert and
+/// Shift+Insert on Windows) into `Event::Cut`, `Event::Copy` and `Event::Paste` instead of key
+/// presses, so the keymap never saw them (issue #197). Outside a text field they are shortcuts
+/// like any other: each becomes its key press again, with the modifiers held (Ctrl+Shift+V is
+/// Paste in Place), and the keymap decides what it runs. The events stay for egui.
+fn clipboard_keys_as_presses(i: &mut egui::InputState) {
+    // Without Ctrl/⌘ it was Shift+Delete, Ctrl+Insert, Shift+Insert or a Cut/Copy/Paste key.
+    let modifiers = if i.modifiers.command { i.modifiers } else { Modifiers::COMMAND };
+    let keys: Vec<Key> = i
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            egui::Event::Cut => Some(Key::X),
+            egui::Event::Copy => Some(Key::C),
+            egui::Event::Paste(_) => Some(Key::V),
+            _ => None,
+        })
+        .collect();
+    i.events.extend(keys.into_iter().map(|key| egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }));
+}
+
+/// Ctrl/⌘+X, C and V on the stage (issue #197). On the desktop egui-winit hands them over as
+/// `Event::Cut`, `Event::Copy` and `Event::Paste`, never as key presses, so these tests send
+/// exactly that.
+#[cfg(test)]
+mod clipboard_key_tests {
+    use super::App;
+    use egui::{Event, Modifiers, RawInput, Rect, pos2, vec2};
+
+    fn app() -> (egui::Context, App) {
+        let ctx = egui::Context::default();
+        let session = anicraft_engine::Session::new(anicraft_engine::doc::sample::demo());
+        let app = App::with_context(&ctx, session, Some(std::path::PathBuf::from("unused.png")));
+        (ctx, app)
+    }
+
+    /// The keys held (as egui-winit reports them, first) and the events of one frame.
+    fn input(modifiers: Modifiers, events: Vec<Event>) -> RawInput {
+        let events = std::iter::once(Event::ModifiersChanged(modifiers)).chain(events).collect();
+        RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1600.0, 940.0))), events, ..Default::default() }
+    }
+
+    /// One frame; what it asked the system clipboard to hold.
+    fn frame(ctx: &egui::Context, app: &mut App, input: RawInput) -> Vec<String> {
+        let mut out = ctx.run_ui(input, |ui| app.frame(ui));
+        out.textures_delta.clear();
+        out.platform_output.commands.into_iter().filter_map(|c| if let egui::OutputCommand::CopyText(t) = c { Some(t) } else { None }).collect()
+    }
+
+    /// Elements on the playhead's frame, every layer.
+    fn elements(app: &App) -> usize {
+        app.s.timeline().layers.iter().filter_map(|l| l.keyframe_at(app.s.frame)).map(|k| k.elements.len()).sum()
+    }
+
+    fn ctrl() -> Modifiers {
+        Modifiers::CTRL | Modifiers::COMMAND
+    }
+
+    #[test]
+    fn ctrl_c_x_and_v_copy_cut_and_paste_the_selected_artwork() {
+        let (ctx, mut app) = app();
+        for _ in 0..3 {
+            frame(&ctx, &mut app, input(Modifiers::NONE, vec![]));
+        }
+        app.run("edit.select_all", serde_json::json!({}));
+        assert!(!app.s.selection.is_empty(), "the sample has artwork to select");
+        let before = elements(&app);
+        // Ctrl+C copies, and puts something on the system clipboard, so the next Ctrl+V
+        // reaches the app even when the clipboard held no text before.
+        let copied = frame(&ctx, &mut app, input(ctrl(), vec![Event::Copy]));
+        assert!(!app.s.clipboard.is_empty(), "Ctrl+C copied the selection");
+        assert!(copied.iter().any(|t| !t.is_empty()), "the system clipboard holds text: {copied:?}");
+        assert_eq!(elements(&app), before, "copying changes nothing");
+        // Ctrl+V pastes a copy (whatever text the system clipboard holds).
+        let steps = app.s.history().undo_len();
+        frame(&ctx, &mut app, input(ctrl(), vec![Event::Paste("AniCraft artwork".into())]));
+        assert!(elements(&app) > before, "Ctrl+V pasted the artwork");
+        assert_eq!(app.s.history().undo_len(), steps + 1, "one undo step");
+        // Ctrl+Shift+V is Paste in Place.
+        let pasted = elements(&app);
+        frame(&ctx, &mut app, input(ctrl() | Modifiers::SHIFT, vec![Event::Paste("AniCraft artwork".into())]));
+        assert!(elements(&app) > pasted, "Ctrl+Shift+V pasted in place");
+        // Ctrl+X cuts what is selected (the pasted copy).
+        let now = elements(&app);
+        frame(&ctx, &mut app, input(ctrl(), vec![Event::Cut]));
+        assert!(elements(&app) < now, "Ctrl+X cut the selection");
+    }
+
+    #[test]
+    fn a_text_field_keeps_its_own_copy_and_paste() {
+        let (ctx, mut app) = app();
+        let mut text = String::new();
+        let run = |app: &mut App, text: &mut String, input: RawInput| {
+            let mut out = ctx.run_ui(input, |ui| {
+                ui.text_edit_singleline(text).request_focus();
+                app.frame(ui);
+            });
+            out.textures_delta.clear();
+        };
+        for _ in 0..3 {
+            run(&mut app, &mut text, input(Modifiers::NONE, vec![]));
+        }
+        assert!(ctx.text_edit_focused(), "the field has the keyboard");
+        app.run("edit.select_all", serde_json::json!({}));
+        let before = elements(&app);
+        run(&mut app, &mut text, input(ctrl(), vec![Event::Copy]));
+        assert!(app.s.clipboard.is_empty(), "Ctrl+C in a text field does not copy artwork");
+        run(&mut app, &mut text, input(ctrl(), vec![Event::Paste("hello".into())]));
+        assert_eq!(text, "hello", "the field took the paste");
+        assert_eq!(elements(&app), before, "and the stage did not");
     }
 }
 
@@ -4134,5 +4294,100 @@ mod prompt_enter_tests {
         ctx.run_ui(input(vec![enter]), |_| app.prompt_window(&ctx)).textures_delta.clear();
         assert!(app.prompt.is_none(), "Enter closes the rename prompt");
         assert_eq!(app.s.active_layer().unwrap().name, "Renamed");
+    }
+
+    #[test]
+    fn opening_rename_layer_selects_entire_name() {
+        let ctx = egui::Context::default();
+
+        // Start with a genuine new AniCraft document.
+        let document = anicraft_engine::doc::Document::default();
+        let session = anicraft_engine::Session::new(document);
+        let mut app = App::with_context(&ctx, session, Some(std::path::PathBuf::from("unused.png")));
+
+        // Check the initial document.
+        let original = app.s.active_layer().expect("A new document should have an active layer").name.clone();
+
+        assert_eq!(original, "Layer 1");
+
+        // Invoke AniCraft's REAL Rename Layer command.
+        app.invoke("layer.rename");
+
+        // Verify that the command created the correct prompt.
+        let prompt = app.prompt.as_ref().expect("Rename Layer should open a prompt");
+
+        assert_eq!(prompt.cmd, "layer.rename");
+        assert_eq!(prompt.text, original);
+        assert!(prompt.focus);
+
+        // Simulate three frames of the dialog.
+        for _ in 0..3 {
+            let input =
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 940.0))), ..Default::default() };
+
+            ctx.run_ui(input, |_| app.prompt_window(&ctx)).textures_delta.clear();
+        }
+
+        // Find the text field that received keyboard focus.
+        let id = ctx.memory(|m| m.focused()).expect("The name field should have focus");
+
+        // Inspect the actual text selection.
+        let state = egui::TextEdit::load_state(&ctx, id).expect("The text field should have editing state");
+
+        let selection = state.cursor.char_range().expect("The name field should have a selection");
+
+        let a = selection.primary.index;
+        let b = selection.secondary.index;
+
+        // The entire original name must be selected.
+        assert_eq!(a.min(b), egui::text::CharIndex(0));
+        assert_eq!(a.max(b), egui::text::CharIndex(original.chars().count()));
+    }
+
+    #[test]
+    fn opening_rename_scene_selects_entire_name() {
+        let ctx = egui::Context::default();
+
+        // Create a real new AniCraft document.
+        let document = anicraft_engine::doc::Document::default();
+        let session = anicraft_engine::Session::new(document);
+        let mut app = App::with_context(&ctx, session, Some(std::path::PathBuf::from("unused.png")));
+
+        // Get the actual name of the current scene.
+        let original = app.s.doc.scenes.get(app.s.scene).expect("A new document should have a scene").name.clone();
+
+        assert!(!original.is_empty());
+
+        // Invoke the real Rename Scene command.
+        app.invoke("scene.rename");
+
+        // Verify that AniCraft created the correct prompt.
+        let prompt = app.prompt.as_ref().expect("Rename Scene should open a prompt");
+
+        assert_eq!(prompt.cmd, "scene.rename");
+        assert_eq!(prompt.text, original);
+        assert!(prompt.focus);
+
+        // Simulate three frames of the dialog.
+        for _ in 0..3 {
+            let input =
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 940.0))), ..Default::default() };
+
+            ctx.run_ui(input, |_| app.prompt_window(&ctx)).textures_delta.clear();
+        }
+
+        // Get the focused text field's editing state.
+        let id = ctx.memory(|m| m.focused()).expect("The scene name field should have focus");
+
+        let state = egui::TextEdit::load_state(&ctx, id).expect("The text field should have editing state");
+
+        let selection = state.cursor.char_range().expect("The scene name should have a selection");
+
+        let a = selection.primary.index;
+        let b = selection.secondary.index;
+
+        // The entire original scene name must be selected.
+        assert_eq!(a.min(b), egui::text::CharIndex(0));
+        assert_eq!(a.max(b), egui::text::CharIndex(original.chars().count()));
     }
 }

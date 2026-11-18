@@ -265,7 +265,24 @@ Things to know:
 * The assistant reads and writes files with your permissions, at the paths it chooses. Only
   connect assistants you trust with those files.
 * The server works on its own copy of the document, not on the window you have open. Save from
-  the assistant, then open the file in AniCraft.
+  the assistant, then open the file in AniCraft. To have the assistant work in the window
+  instead, see the next section.
+
+### An assistant in the window you have open
+
+Start AniCraft with `anicraft --control 9878`, and give the assistant
+`anicraft-cli mcp --bridge 9878` as its server instead of `anicraft-cli mcp`. The same five
+tools then act on the document in front of you: each edit shows at once and undoes with
+**Ctrl+Z** like your own. While this is on, the status bar says **Remote control on (port
+9878)**.
+
+* Only programs on this computer, running as you, can connect: the port is not open to the
+  network, and each run has its own secret token, kept in the settings folder until AniCraft
+  closes.
+* An edit from the assistant waits while you are in the middle of a drag, so your undo steps
+  and its own never mix.
+* Commands that would lose work still need `"confirm": true`, as above.
+* Without `--control` nothing listens: remote control is off unless you start AniCraft this way.
 
 The full details are in
 [the MCP notes on GitHub](https://github.com/storytold/AniCraft/blob/main/docs/mcp.md).
