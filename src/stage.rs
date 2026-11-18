@@ -399,7 +399,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     Some(XfKind::Scale { .. }) => CursorIcon::ResizeHorizontal,
                     Some(XfKind::Skew { hy: 0, .. }) => CursorIcon::ResizeVertical,
                     Some(XfKind::Skew { .. }) => CursorIcon::ResizeHorizontal,
-                    Some(XfKind::Rotate) => CursorIcon::Alias,
+                    // No desktop has a rotate cursor: the app draws its own (#194).
+                    Some(XfKind::Rotate) => CursorIcon::None,
                     Some(XfKind::Move) => CursorIcon::Move,
                     None => CursorIcon::Default,
                 }
@@ -416,6 +417,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             _ => CursorIcon::Default,
         };
         ui.ctx().set_cursor_icon(icon);
+        // Free Transform outside a corner, and while turning: the curved arrow, bent around
+        // the box so it reads as "drag to rotate".
+        if icon == CursorIcon::None
+            && app.tool == Tool::Transform
+            && let Some(p) = pointer
+        {
+            let centre = sel_rect.map_or(canvas.center(), |r| r.center());
+            rotate_cursor(&ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("stage_cursor"))), p, p - centre);
+        }
     }
 
     if resp.clicked() || resp.drag_started() || resp.secondary_clicked() {
@@ -4145,6 +4155,31 @@ fn rt_size(te: &crate::app::TextEditing) -> f32 {
 
 // ----- free transform ---------------------------------------------------------------------------
 
+/// The rotate cursor at `at`: an arc with an arrowhead at each end, curving around the box whose
+/// centre lies against `outward`. Dark with a light edge, so it shows on any artwork.
+fn rotate_cursor(painter: &egui::Painter, at: Pos2, outward: egui::Vec2) {
+    const R: f32 = 9.0;
+    const SWEEP: f32 = 1.05;
+    let dir = if outward.length() > 1e-3 { outward.normalized() } else { vec2(0.7071, -0.7071) };
+    let mid = dir.y.atan2(dir.x);
+    // The arc's circle sits towards the box, so the arc passes through the pointer.
+    let c = at - dir * R;
+    let on = |a: f32| c + vec2(a.cos(), a.sin()) * R;
+    let arc: Vec<Pos2> = (0..=12).map(|i| on(mid - SWEEP + 2.0 * SWEEP * i as f32 / 12.0)).collect();
+    // An arrowhead at each end, pointing on along the circle.
+    let head = |a: f32, sign: f32| {
+        let tip = on(a + sign * 0.38);
+        let (radial, back) = (vec2(a.cos(), a.sin()), on(a));
+        vec![tip, back + radial * 4.0, back - radial * 4.0]
+    };
+    for (width, colour) in [(4.0, Color32::WHITE), (1.6, Color32::BLACK)] {
+        painter.add(egui::Shape::line(arc.clone(), Stroke::new(width, colour)));
+    }
+    for (a, sign) in [(mid - SWEEP, -1.0), (mid + SWEEP, 1.0)] {
+        painter.add(egui::Shape::convex_polygon(head(a, sign), Color32::BLACK, Stroke::new(1.0, Color32::WHITE)));
+    }
+}
+
 /// Screen-space handle size and the rotation zone just outside each corner.
 const HANDLE: f32 = 8.0;
 const ROTATE_ZONE: f32 = 22.0;
@@ -4646,7 +4681,7 @@ mod occluder_tests {
 }
 
 #[cfg(test)]
-mod double_click_tests {
+mod pointer_tests {
     use super::*;
     use egui::{Event, PointerButton};
 
@@ -4676,6 +4711,32 @@ mod double_click_tests {
         let origin = app.stage_cache.canvas.center() + app.view.pan - size * app.view.zoom * 0.5;
         let zoom = app.view.zoom;
         (app, ctx, move |x, y| origin + vec2(x, y) * zoom)
+    }
+
+    /// #194: with Free Transform, just outside a corner of the box the pointer is the app's own
+    /// rotate cursor (the system one is hidden and a curved arrow is drawn), not the shortcut
+    /// arrow that hid the rotate zone; on the corner it is the scale cursor.
+    #[test]
+    fn free_transform_shows_a_rotate_cursor_outside_the_corners() {
+        let (mut app, ctx, at) = scene();
+        app.tool = Tool::Transform;
+        app.run("edit.select_all", json!({}));
+        let hover = |app: &mut App, p: Pos2, t: f64| {
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 940.0))), time: Some(t), events: vec![Event::PointerMoved(p)], ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| app.frame(ui));
+            out.textures_delta.clear();
+            let drawn = out.shapes.iter().filter(|s| s.clip_rect.contains(p) && matches!(&s.shape, egui::Shape::Path(path) if path.closed && path.points.len() == 3 && path.points.iter().all(|q| q.distance(p) < 20.0))).count();
+            (out.platform_output.cursor_icon, drawn)
+        };
+        let b = app.s.selection_bounds();
+        let corner = at(b.max.x, b.max.y);
+        hover(&mut app, corner, 1.0);
+        assert_eq!(hover(&mut app, corner, 1.1).0, CursorIcon::ResizeNwSe, "on the corner handle: scale");
+        let (icon, arrowheads) = hover(&mut app, corner + vec2(13.0, 13.0), 1.2);
+        assert_eq!(icon, CursorIcon::None, "outside the corner: the app's rotate cursor");
+        assert_eq!(arrowheads, 2, "the curved arrow is drawn at the pointer");
+        let (icon, arrowheads) = hover(&mut app, corner - vec2(40.0, 30.0), 1.3);
+        assert_eq!((icon, arrowheads), (CursorIcon::Move, 0), "inside the box: move");
     }
 
     /// A double-click: press, release, `gap` seconds, press, release (each its own frame).
