@@ -566,7 +566,8 @@ mod tests {
     /// as in a voice, land on the mouth shapes animators draw for them.
     #[test]
     fn vowels_made_of_their_formants_get_their_mouths() {
-        let cases: [(&str, &[(f32, f32)], Viseme); 8] = [
+        type Case = (&'static str, &'static [(f32, f32)], Viseme);
+        let cases: [Case; 8] = [
             ("ah (father)", &[(730.0, 0.6), (1090.0, 0.3)], Viseme::Open),
             ("a (cat)", &[(660.0, 0.6), (1720.0, 0.2)], Viseme::Open),
             ("ee (beet)", &[(270.0, 0.6), (2290.0, 0.15)], Viseme::Wide),

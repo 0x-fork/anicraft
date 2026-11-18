@@ -328,7 +328,7 @@ fn draw_graph(ui: &mut egui::Ui, d: &Dialog, g: &Graph) -> Option<u32> {
         Kind::Keys => tr!("Preview: the sound's loudness on each frame, the threshold, the value the keys follow and where the keys land. Click or drag to show a frame on the stage"),
         Kind::Lips => tr!("Preview: the sound's loudness on each frame and the mouth each frame gets. Click or drag to show a frame on the stage"),
     };
-    crate::a11y::surface(ui, &resp, &name);
+    crate::a11y::surface(ui, &resp, name);
     // A gutter beside the plot: the mouths' names, or the two ends of the property's range.
     let left = NAMES_W;
     let plot = Rect::from_min_max(pos2(area.left() + left, area.top()), pos2(area.right(), area.top() + GRAPH_H));
