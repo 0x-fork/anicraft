@@ -875,6 +875,10 @@ pub(crate) fn element_title(doc: &anicraft_engine::doc::Document, e: &anicraft_e
     if e.name.is_empty() { kind } else { tr!("{name} ({kind})", name = e.name, kind = kind) }
 }
 
+/// The thinnest stroke the Stroke width field makes (Animate's hairline); the Stroke checkbox
+/// removes a stroke (#393).
+const STROKE_HAIRLINE: f32 = 0.1;
+
 /// The Scale lock's link (#304): with the lock on, editing one Scale axis (percent, as the
 /// Properties panel shows it) adjusts the other so the selection keeps its width:height
 /// proportion (multiplicative, not forced equal). `x_changed` says which axis was edited.
@@ -1234,22 +1238,22 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             let fill = sh.fill.as_ref().map(Paint::primary_color);
             let bitmaps = crate::colour_panel::bitmaps(app);
             row(ui, tr!("Fill"), |ui| {
-                let c = fill.unwrap_or(Rgba::WHITE);
                 // The one colour picker, with the fill's type (ADR 0074): a gradient shows as its
                 // ramp here and is edited in the picker.
                 let (r, edit) = crate::colour_panel::swatch(ui, sh.fill.as_ref(), &bitmaps);
                 r.named(tr!("Fill colour")).on_hover_text(tr!("Fill: click for its colour and how clear it is, or a gradient or bitmap fill"));
                 match edit {
                     Some(crate::colour_panel::FillEdit::Solid(p)) => live(app, tr_noop!("Fill colour"), "element.set_fill", json!({"color": crate::colour::to_hex(p, true)})),
+                    // Off, then on again: the fill it had comes back, not white (#292).
                     Some(crate::colour_panel::FillEdit::None(n)) => {
-                        app.run("element.set_fill", if n { json!({"color": null}) } else { json!({"color": crate::colour::to_hex(rgba(c), true)}) });
+                        app.run("element.set_fill", json!({"on": !n}));
                     }
                     Some(edit) => crate::colour_panel::apply_set(app, &edit, true),
                     None => {}
                 }
                 let mut on = fill.is_some();
                 if crate::theme::checkbox(ui, &mut on, "").named(tr!("Fill")).on_hover_text(tr!("Fill on/off")).changed() {
-                    app.run("element.set_fill", if on { json!({"color": crate::colour::to_hex(rgba(c), true)}) } else { json!({"color": null}) });
+                    app.run("element.set_fill", json!({"on": on}));
                 }
                 if let Some(what) = fill_kind_label(sh.fill.as_ref()) {
                     ui.label(text(Type::Caption, what));
@@ -1260,13 +1264,20 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
                 bitmap_row(app, ui, *bitmap, m.bitmap);
             }
             let mut sc = rgba(sh.stroke.as_ref().map_or(app.s.style.stroke, |s| s.color));
-            let mut sw = sh.stroke.as_ref().map_or(0.0, |s| s.width);
+            let mut sw = sh.stroke.as_ref().map_or(app.s.style.stroke_width, |s| s.width);
             row(ui, tr!("Stroke"), |ui| {
                 if crate::colour::button_alpha(ui, &mut sc).named(tr!("Stroke colour")).on_hover_text(tr!("Stroke colour: click to pick the colour and how clear it is")).changed() {
                     live(app, tr_noop!("Stroke colour"), "element.set_stroke", json!({"color": crate::colour::to_hex(sc, true)}));
                 }
-                if ui.add(egui::DragValue::new(&mut sw).suffix(" px").speed(0.1).range(0.0..=200.0).max_decimals(1)).named(tr!("Stroke width")).changed() {
-                    live(app, tr_noop!("Stroke width"), "element.set_stroke", json!({"width": sw}));
+                // On/off like the fill, so the width can stop at a hairline: dragging it all the
+                // way down lands on 0.1 instead of removing the stroke (#393). A width already
+                // below that (an import) shows as it is until it is changed.
+                let mut on = sh.stroke.is_some();
+                if crate::theme::checkbox(ui, &mut on, "").named(tr!("Stroke")).on_hover_text(tr!("Stroke on/off")).changed() {
+                    app.run("element.set_stroke", json!({"on": on}));
+                }
+                if ui.add(egui::DragValue::new(&mut sw).suffix(" px").speed(0.1).range(STROKE_HAIRLINE..=200.0).clamp_existing_to_range(false).max_decimals(1)).named(tr!("Stroke width")).on_hover_text(tr!("Stroke width: drag all the way down for a hairline")).changed() {
+                    live(app, tr_noop!("Stroke width"), "element.set_stroke", json!({"width": sw.max(STROKE_HAIRLINE)}));
                 }
                 mixed(ui, m.stroke);
             });
@@ -3611,6 +3622,64 @@ mod tests {
         assert!(app.s.execute("element.set_transform", &json!({"sy": 0})).is_err());
         assert!(app.s.execute("modify.transform", &json!({"a": 1, "b": 0, "c": 0, "d": 0, "e": 0, "f": 0})).is_err());
         assert_eq!(transform(&app), t);
+    }
+
+    /// #310, #371: a flipped symbol instance (a "sprite") keeps its flip with Properties
+    /// showing, closed and opened again, and one undo takes the flip back for good. In 0.2.1
+    /// the panel wrote Scale Y = 1 % back every frame, squashing it and undoing the undo.
+    #[test]
+    fn a_flipped_symbol_instance_survives_the_properties_panel_and_undoes() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        app.run("draw.rect", json!({"x": 100, "y": 100, "w": 200, "h": 80}));
+        app.run("modify.convert_to_symbol", json!({"name": "Sprite"}));
+        frames(&ctx, &mut app);
+        let (t0, b0) = (transform(&app), app.s.selection_bounds());
+        app.run("modify.flip_h", json!({}));
+        frames(&ctx, &mut app);
+        let flipped = transform(&app);
+        assert!((flipped.determinant() + t0.determinant()).abs() < 1e-4, "mirrored, same size: {flipped:?}");
+        // Properties closed, the instance picked again, Properties opened: nothing changes.
+        app.toggle_panel(crate::dock::Panel::Properties);
+        frames(&ctx, &mut app);
+        app.run("edit.deselect", json!({}));
+        app.run("edit.select_all", json!({}));
+        app.toggle_panel(crate::dock::Panel::Properties);
+        frames(&ctx, &mut app);
+        frames(&ctx, &mut app);
+        assert_eq!(transform(&app), flipped, "showing the panel left the flip alone");
+        let b1 = app.s.selection_bounds();
+        assert!((b1.width() - b0.width()).abs() < 0.5 && (b1.height() - b0.height()).abs() < 0.5, "not squashed: {b0:?} vs {b1:?}");
+        // One undo, and it stays undone with the panel on screen.
+        app.run("edit.undo", json!({}));
+        frames(&ctx, &mut app);
+        assert_eq!(transform(&app), t0);
+        frames(&ctx, &mut app);
+        assert_eq!(transform(&app), t0, "the panel does not squash it again after the undo");
+    }
+
+    /// #393: the Stroke row has a checkbox like Fill, and the width stops at a hairline. A
+    /// stroke thinner than that (an import) is shown, never written back thicker.
+    #[test]
+    fn showing_a_stroke_thinner_than_a_hairline_leaves_it_alone() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        app.run("draw.rect", json!({"x": 100, "y": 100, "w": 200, "h": 80, "stroke": "#000000", "stroke_width": 0.05, "object": true}));
+        let width = |app: &App| match app.s.visible_elements().first().map(|e| e.kind.clone()) {
+            Some(ElementKind::Shape(sh)) => sh.stroke.map(|s| s.width),
+            _ => None,
+        };
+        let state = app.s.state;
+        frames(&ctx, &mut app);
+        assert_eq!(width(&app), Some(0.05));
+        assert_eq!(app.s.state, state, "showing it is not an edit");
+        // The checkbox's command: off, and on again with the same stroke.
+        app.run("element.set_stroke", json!({"on": false}));
+        frames(&ctx, &mut app);
+        assert_eq!(width(&app), None);
+        app.run("element.set_stroke", json!({"on": true}));
+        frames(&ctx, &mut app);
+        assert_eq!(width(&app), Some(0.05));
     }
 
     /// #116: dragging the bottom edge of the transform box up past the top edge mirrors the

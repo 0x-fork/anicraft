@@ -366,6 +366,8 @@ pub struct Session {
     pub(crate) step_label: Option<String>,
     /// A marquee's cut that nothing has used yet (ADR 0041).
     provisional: Option<Provisional>,
+    /// Fills and strokes turned off in this session, for turning them on again (#292, #393).
+    pub(crate) paint_memory: PaintMemory,
     /// Raw shapes a paste left floating (`edit.paste {float: true}`, as the editor pastes).
     pub(crate) floating: Option<Floating>,
     /// Set by `raw.select_rect` when it cut: each piece and the shape it was cut from, and the
@@ -408,6 +410,32 @@ pub struct Session {
 
 /// Each piece of a marquee's cut, with the shape it was cut from.
 pub(crate) type CutOrigin = Vec<(ElementId, ElementId)>;
+
+/// The fill and the stroke each shape had when it was turned off (the Fill and Stroke
+/// checkboxes in Properties), so turning it on again brings back that colour, gradient or line
+/// rather than a default (#292). A convenience of the session: it is not saved or undone.
+#[derive(Default)]
+pub(crate) struct PaintMemory {
+    pub(crate) fills: std::collections::HashMap<ElementId, anicraft_doc::Paint>,
+    pub(crate) strokes: std::collections::HashMap<ElementId, anicraft_doc::Stroke>,
+}
+
+impl PaintMemory {
+    /// Bounded: past this many shapes it starts over.
+    const MAX: usize = 10_000;
+    pub(crate) fn remember_fill(&mut self, id: ElementId, fill: anicraft_doc::Paint) {
+        if self.fills.len() >= Self::MAX {
+            self.fills.clear();
+        }
+        self.fills.insert(id, fill);
+    }
+    pub(crate) fn remember_stroke(&mut self, id: ElementId, stroke: anicraft_doc::Stroke) {
+        if self.strokes.len() >= Self::MAX {
+            self.strokes.clear();
+        }
+        self.strokes.insert(id, stroke);
+    }
+}
 
 /// Raw shapes a paste put on top of the drawing without merging them (#391): each with its
 /// layer, and the frame they were pasted on. They merge when none of them is selected any more.
@@ -476,6 +504,7 @@ impl Session {
             plugins: anicraft_plugins::Registry::default(),
             step_label: None,
             provisional: None,
+            paint_memory: PaintMemory::default(),
             floating: None,
             pending_cut: None,
             gesture_cut: None,
