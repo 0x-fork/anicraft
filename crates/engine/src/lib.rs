@@ -1263,6 +1263,8 @@ mod tests_mixed_bone;
 #[cfg(test)]
 mod view_tests;
 #[cfg(test)]
+mod layer_order_tests;
+#[cfg(test)]
 mod path_text_tests;
 #[cfg(test)]
 mod rich_text_tests;
