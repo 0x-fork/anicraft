@@ -654,7 +654,8 @@ pub enum Lookup {
 }
 
 /// Reference videos' pictures, decoded on demand on a thread of its own and kept within a
-/// memory budget (least recently shown runs go first).
+/// memory budget (least recently shown runs go first). The run shown last and the one just
+/// decoded always stay, so a budget smaller than two runs still plays.
 pub struct Cache {
     shared: Arc<Shared>,
 }
@@ -820,9 +821,11 @@ fn work(shared: &Shared) {
         if let Some(Chunk::Ready { bytes, .. }) = st.chunks.insert(key.clone(), chunk) {
             st.bytes = st.bytes.saturating_sub(bytes);
         }
-        // Over budget, the runs shown longest ago go (never the one that just arrived).
+        // Over budget, the runs shown longest ago go: never the one that just arrived, nor the
+        // one shown last (the run under the playhead while the next one is fetched ahead).
+        let shown = st.chunks.iter().filter(|(k, _)| **k != key).filter_map(|(k, c)| if let Chunk::Ready { used, .. } = c { Some((*used, k.clone())) } else { None }).max_by_key(|(used, _)| *used).map(|(_, k)| k);
         while st.bytes > shared.budget {
-            let oldest = st.chunks.iter().filter(|(k, _)| **k != key).filter_map(|(k, c)| if let Chunk::Ready { used, .. } = c { Some((*used, k.clone())) } else { None }).min_by_key(|(used, _)| *used);
+            let oldest = st.chunks.iter().filter(|(k, _)| **k != key && Some(*k) != shown.as_ref()).filter_map(|(k, c)| if let Chunk::Ready { used, .. } = c { Some((*used, k.clone())) } else { None }).min_by_key(|(used, _)| *used);
             let Some((_, k)) = oldest else { break };
             if let Some(Chunk::Ready { bytes, .. }) = st.chunks.remove(&k) {
                 st.bytes = st.bytes.saturating_sub(bytes);

@@ -1480,6 +1480,7 @@ impl PartialEq for Layer {
             && self.mask_mode == o.mask_mode
             && self.opacity.to_bits() == o.opacity.to_bits()
             && self.rig_parent == o.rig_parent
+            && self.video == o.video
             && match (&self.armature, &o.armature) {
                 (Some(a), Some(b)) => arc_eq(a, b),
                 (a, b) => a.is_none() && b.is_none(),

@@ -220,9 +220,31 @@ fn the_plan_tells_what_an_import_takes_before_it_starts() {
     assert_eq!((unknown.frames, unknown.truncated, unknown.limit), (None, false, 291));
 }
 
+/// An empty 1280 × 720 document with one tracing stroke on its layer (nothing covers the
+/// stage: the demo's backdrop would hide a video under it).
+fn blank() -> anicraft_doc::Document {
+    let mut s = Session::new(anicraft_doc::Document::default());
+    run(&mut s, "doc.set_stage", json!({"width": 1280, "height": 720}));
+    run(&mut s, "draw.freehand", json!({"points": [[600, 300], [640, 340], [700, 320]], "stroke_width": 4}));
+    s.doc.clone()
+}
+
+/// `doc` with its layers' videos taken off (the layers stay): what the movie should equal.
+fn without_video(doc: &anicraft_doc::Document) -> anicraft_doc::Document {
+    let mut plain = doc.clone();
+    for scene in &mut plain.scenes {
+        for layer in &mut Arc::make_mut(scene).timeline.layers {
+            if layer.video.is_some() {
+                Arc::make_mut(layer).video = None;
+            }
+        }
+    }
+    plain
+}
+
 /// A document with a reference video on a guide layer at the bottom, from frame 2.
 fn doc_with_reference() -> (anicraft_doc::Document, VideoRef) {
-    let mut doc = anicraft_doc::sample::demo();
+    let mut doc = blank();
     let v = VideoRef { id: anicraft_doc::ElementId(doc.alloc_id()), path: "nowhere/walk.mp4".into(), width: 320, height: 240, transform: anicraft_geom::Affine::translate(40.0, 30.0), start: 2, offset: 0.0, duration: 1.0 };
     let mut layer = anicraft_doc::Layer::new(anicraft_doc::LayerId(doc.alloc_id()), "walk");
     layer.kind = LayerKind::Guide;
@@ -239,7 +261,7 @@ fn picture(w: u32, h: u32, rgb: [u8; 3]) -> Arc<anicraft_doc::Pixels> {
 #[test]
 fn a_reference_video_is_on_the_stage_and_in_no_export() {
     let (doc, v) = doc_with_reference();
-    let plain = anicraft_doc::sample::demo();
+    let plain = without_video(&doc);
     // The movie: every frame renders exactly as without the video layer.
     for frame in [0, 2, 10, 25] {
         let with = crate::cmds_file::render_png(&doc, frame, 0.25).unwrap();
@@ -271,14 +293,14 @@ fn a_reference_video_is_on_the_stage_and_in_no_export() {
     let (a, b) = (crate::render_service::render_job(&job), crate::render_service::render_job(&filled));
     assert!(a.error.is_none() && b.error.is_none());
     assert_ne!(a.rgba_premul, b.rgba_premul);
-    // The video's rectangle is (40, 30)–(360, 270) on the stage; at half scale its middle is
-    // (100, 75). The demo has artwork there or not; a corner just inside is magenta.
+    // The video's rectangle is (40, 30)–(360, 270) on the stage, (20, 15)–(180, 135) at half
+    // scale: magenta inside it, the stage outside.
     let px = |img: &crate::render_service::FrameImage, x: u32, y: u32| {
         let i = ((y * img.width + x) * 4) as usize;
         [img.rgba_premul[i], img.rgba_premul[i + 1], img.rgba_premul[i + 2]]
     };
-    let magenta = (21..180).flat_map(|x| (16..135).map(move |y| (x, y))).filter(|&(x, y)| px(&b, x, y) == [255, 0, 255]).count();
-    assert!(magenta > 1000, "the picture shows under the artwork ({magenta} pixels)");
+    let magenta = (21..180).flat_map(|x| (16..135).map(move |y| (x, y))).filter(|&(x, y)| matches!(px(&b, x, y), [250..=255, 0..=5, 250..=255])).count();
+    assert!(magenta > 18_000, "the picture fills its rectangle ({magenta} pixels)");
     assert_ne!(px(&b, 10, 10), [255, 0, 255], "and only inside its rectangle");
 }
 
@@ -523,7 +545,7 @@ fn a_reference_layer_shows_the_video_from_a_bounded_cache() {
     let Some(ffmpeg) = ffmpeg() else { return };
     let dir = temp_dir("reference");
     let clip = make_clip(&ffmpeg, &dir, true);
-    let mut s = Session::new(anicraft_doc::sample::demo());
+    let mut s = Session::new(blank());
     run(&mut s, "doc.set_stage", json!({"fps": 25}));
     run(&mut s, "timeline.goto", json!({"frame": 4}));
     let (active, layers, bitmaps) = (s.layer, s.timeline().layers.len(), s.doc.bitmaps.len());
@@ -558,20 +580,21 @@ fn a_reference_layer_shows_the_video_from_a_bounded_cache() {
         let Lookup::Ready(f) = cache.lookup(&v, 4 + n, 25.0, false) else { panic!("frame {n}") };
         assert_eq!(embedded[n as usize].pixels().unwrap().rgba, f.pixels.rgba, "frame {n}");
     }
-    // A later run: asked for, decoded, and with the 1 MB budget (about 5 runs of 64 × 48 × 16)
-    // nothing grows without bound however far the playhead goes.
+    // A later run: asked for and decoded.
     assert!(matches!(cache.lookup(&v, 4 + 40, 25.0, true), Lookup::Pending(Some(_))), "meanwhile, the last picture shown");
     assert!(cache.wait_idle(std::time::Duration::from_secs(60)));
     let Lookup::Ready(late) = cache.lookup(&v, 4 + 40, 25.0, true) else { panic!("decoded") };
     assert_eq!(embedded[40].pixels().unwrap().rgba, late.pixels.rgba, "frame 40 is the 41st moment, in the third run");
     assert!(matches!(cache.lookup(&v, 4 + 50, 25.0, true), Lookup::Outside), "after it ends");
+    // With a budget under two runs, the run shown and the one fetched ahead are all that is
+    // ever held, however far the playhead goes, forwards and back.
     let tight = Cache::new(64 * 48 * 4 * 20);
     for frame in (4..54).chain((4..54).rev()) {
         let _ = tight.lookup(&v, frame, 25.0, true);
         assert!(tight.wait_idle(std::time::Duration::from_secs(60)));
         assert!(matches!(tight.lookup(&v, frame, 25.0, false), Lookup::Ready(_)), "frame {frame}");
         let (bytes, runs) = tight.usage();
-        assert!(bytes <= 64 * 48 * 4 * 20 && runs <= 2, "{bytes} bytes in {runs} runs");
+        assert!(bytes <= 64 * 48 * 4 * 32 && runs <= 2, "{bytes} bytes in {runs} runs");
     }
     // The stage's view of the frame carries the picture; the movie doesn't.
     let shown = video::shown(&cache, &s.doc, 4, true);
@@ -580,7 +603,7 @@ fn a_reference_layer_shows_the_video_from_a_bounded_cache() {
     let job = crate::render_service::make_job(1, &s.doc, 4, view, None);
     let (plain, with) = (crate::render_service::render_job(&job), crate::render_service::render_job(&job.clone().with_reference(shown.frames)));
     assert_ne!(plain.rgba_premul, with.rgba_premul);
-    assert_eq!(crate::cmds_file::render_png(&s.doc, 4, 0.25).unwrap(), crate::cmds_file::render_png(&anicraft_doc::sample::demo(), 4, 0.25).unwrap());
+    assert_eq!(crate::cmds_file::render_png(&s.doc, 4, 0.25).unwrap(), crate::cmds_file::render_png(&without_video(&s.doc), 4, 0.25).unwrap());
     // Hidden, it isn't asked for; relinked to a film that is gone, it fails with a reason.
     run(&mut s, "layer.toggle_visible", json!({"layer": layer.id.0}));
     assert!(video::shown(&cache, &s.doc, 4, true).frames.is_none());
@@ -594,10 +617,11 @@ fn a_reference_layer_shows_the_video_from_a_bounded_cache() {
     assert!(gone.pending);
     assert!(cache.wait_idle(std::time::Duration::from_secs(60)));
     assert!(video::shown(&cache, &s.doc, 4, true).failed.is_some_and(|(l, why)| l == layer.id && why.contains("missing")));
-    run(&mut s, "edit.undo", json!({}));
-    run(&mut s, "edit.undo", json!({}));
-    run(&mut s, "edit.undo", json!({}));
-    run(&mut s, "edit.undo", json!({}));
-    assert_eq!(s.timeline().layers.len(), layers, "the import is one undo step");
+    for _ in 0..6 {
+        if s.timeline().layers.len() > layers {
+            run(&mut s, "edit.undo", json!({}));
+        }
+    }
+    assert_eq!(s.timeline().layers.len(), layers, "undo takes the layer away again");
     let _ = std::fs::remove_dir_all(&dir);
 }

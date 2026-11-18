@@ -190,6 +190,11 @@ fn apply(s: &mut Session, prepared: Prepared) -> Result<Value> {
                 // Under the pictures' layer, a stream sound from the playhead: it keeps time
                 // with the frames, as an embedded video's sound does.
                 crate::cmds_timeline::new_layer(s, &json!({"name": format!("{name} sound")}))?;
+                // The sound starts where the pictures do: on a keyframe of its own there.
+                let layer = s.layer_mut(None)?;
+                if layer.keyframe_at(at).is_none_or(|k| k.start != at) {
+                    crate::cmds_timeline::insert_keyframe_at(layer, at, false)?;
+                }
                 crate::cmds_sound::place(s, &json!({"sound": id.0, "frame": at, "extend": true, "sync": "stream"}))?;
                 sound_id = Some(id.0);
             }
