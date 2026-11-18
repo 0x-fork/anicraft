@@ -3387,7 +3387,7 @@ impl App {
                 let path = v["saved"].as_str().unwrap_or("");
                 self.status_ok(if platform::WEB { tr!("Saved {path} to your downloads", path = path) } else { tr!("Saved {path}", path = path) });
             }
-            "data.import_table" => crate::data_ui::imported(self, &v),
+            "data.import_table" => crate::data_ui::imported(self, v),
             "data.unbind" => {
                 let n = v["removed"].as_u64().unwrap_or(0);
                 self.status_ok(trn!("Removed {n} data binding. {undo} to undo.", "Removed {n} data bindings. {undo} to undo.", n, undo = self.undo_key()));

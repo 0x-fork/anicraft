@@ -78,11 +78,11 @@ pub fn preview(app: &App, ui: &egui::Ui, r: Rect, id: DataId) {
 }
 
 /// The key column's chooser: Row number, or one of the columns.
-fn key_combo(app: &mut App, ui: &mut egui::Ui, id: DataId, salt: &str) {
+fn key_combo(app: &mut App, ui: &mut egui::Ui, id: DataId, place: &str) {
     let Some((key, names)) = app.s.doc.data_table(id).map(|t| (t.key.clone(), t.columns.iter().map(|c| c.name.clone()).collect::<Vec<_>>())) else { return };
     let shown = key.clone().unwrap_or_else(|| tr!("Row number").to_string());
     let mut pick: Option<Option<String>> = None;
-    egui::ComboBox::from_id_salt(("data_key", salt))
+    egui::ComboBox::from_id_salt(egui::Id::new("data_key").with(place))
         .width(theme::fit(ui, 150.0))
         .selected_text(text(Type::Body, shown))
         .show_ui(ui, |ui| {
