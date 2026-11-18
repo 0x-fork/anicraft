@@ -135,7 +135,7 @@ impl Tool {
         match self {
             Tool::Select => tr_noop!("Click to select, drag to move, drag on empty space to marquee-select. Shift adds to the selection."),
             Tool::Subselect => tr_noop!("Click a shape to show its points; on a merged drawing, the points of everything connected to it. Drag points or handles to reshape (a shared point moves every shape that has it; a smooth point's handles stay in line, Alt moves one alone); drag a line or fill to move everything connected. Shift adds to the point selection, drag on empty space to marquee points, arrow keys nudge them. Double-click an edge to add a point, Delete removes points, and right-click makes a point smooth or a corner. A motion path's points edit the same way (its ends stay)."),
-            Tool::Pen => tr_noop!("Click to place corner points, drag to pull smooth handles (Alt moves one handle). Click the first point to close; Enter, Esc or a click on the last point finishes. Backspace removes the last point. Alt-click a selected shape, a merged drawing's line or a motion path to add a point to it. Points snap to points and lines while Snap to Objects is on."),
+            Tool::Pen => tr_noop!("Click to place corner points, drag to pull smooth handles (Alt moves one handle, Shift keeps 45° steps). Click the first point to close; Enter, Esc or a double-click finishes. Click the last point to make it a corner, drag from it for a new handle, Alt-drag it to draw its curve again; Backspace removes it. On a selected path: click a point to make it a corner and again to delete it, click the outline to add a point, click an open end to continue it. Ctrl-click a path to select it. Points snap to points and lines while Snap to Objects is on."),
             Tool::Text => tr_noop!("Click to type new text, or click text to edit it. Esc or a click elsewhere finishes. The options set the font, size and colour; double-click text with the Selection tool to edit it too."),
             Tool::Pencil => tr_noop!("Drag to draw freehand. The options bar sets Smooth, Straighten or Ink."),
             Tool::Brush => tr_noop!("Drag to paint filled shapes in the fill colour (a click paints a dab). [ and ] change the size; the options set the brush, its shape, pressure, smoothing and paint mode."),
@@ -3004,7 +3004,7 @@ impl App {
                 let mut curve = k(260.0, 140.0);
                 curve[1] = anicraft_engine::geom::Vec2::new(220.0, 180.0);
                 curve[2] = anicraft_engine::geom::Vec2::new(300.0, 100.0);
-                self.pen = Some(pathtools::PenPath { knots: vec![k(120.0, 160.0), curve, k(380.0, 150.0)], dragging: false });
+                self.pen = Some(pathtools::PenPath { knots: vec![k(120.0, 160.0), curve, k(380.0, 150.0)], ..Default::default() });
             }
             _ => {}
         }
