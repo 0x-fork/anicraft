@@ -205,6 +205,9 @@ fn tiles_for(z: f32, stage_px: (u32, u32), px: [f32; 4], margin: u32, bg: Option
     out
 }
 
+/// Most selected elements whose own transformation points Free Transform marks (ADR 0109).
+const MAX_ORIGIN_MARKS: usize = 400;
+
 fn to_v(p: Pos2) -> Vec2 {
     Vec2::new(p.x, p.y)
 }
@@ -218,7 +221,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     crate::camera_tool::tick(app, ui.ctx(), now);
     let canvas_was = std::mem::replace(&mut app.stage_cache.canvas, canvas);
     let laid_out = std::mem::replace(&mut app.stage_cache.laid_out, true);
-    let resp = ui.allocate_rect(canvas, Sense::click_and_drag());
+    // While a colour picker popup is open the stage is its eyedropper (ADR 0109): a click
+    // picks the colour there instead of using the tool, so the tools get no presses.
+    let picker = crate::colour::picking(ui.ctx());
+    let resp = ui.allocate_rect(canvas, if picker.is_some() { Sense::hover() } else { Sense::click_and_drag() });
     // The drawing surface: Ctrl+F6 lands here, and screen readers hear the tool in hand.
     crate::a11y::anchor(ui, crate::a11y::Region::Stage, canvas, &resp);
     let ppp = ui.ctx().pixels_per_point();
@@ -427,6 +433,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             rotate_cursor(&ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("stage_cursor"))), p, p - centre);
         }
     }
+    if let Some(picker) = picker {
+        crate::erasertool::picker_dropper(app, ui, &resp, picker, pointer.map(|p| (p, to_v(to_stage(p)))), zoom);
+    }
 
     if resp.clicked() || resp.drag_started() || resp.secondary_clicked() {
         // Ctrl+X/C/V go back to artwork.
@@ -613,7 +622,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     let delta = total.mul(&inv);
                     if delta.m.iter().zip(Affine::IDENTITY.m).any(|(a, b)| (a - b).abs() > 1e-6) {
                         let [a, b, cc, d, e, f] = delta.m;
-                        let ok = app.s.execute("modify.transform", &json!({"a": a, "b": b, "c": cc, "d": d, "e": e, "f": f})).is_ok();
+                        let mut p = json!({"a": a, "b": b, "c": cc, "d": d, "e": e, "f": f});
+                        // Turning, scaling and skewing follow the transformation origin (ADR
+                        // 0109): each object about its own point. A move is the same for all.
+                        if *kind != XfKind::Move {
+                            p["origin"] = json!(app.s.style.transform_origin.key());
+                        }
+                        let ok = app.s.execute("modify.transform", &p).is_ok();
                         if ok {
                             *applied = total;
                         }
@@ -1282,11 +1297,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             painter.rect_filled(hr, 0.0, Color32::WHITE);
             painter.rect_stroke(hr, 0.0, Stroke::new(1.0, T.selection), StrokeKind::Middle);
         }
-        // transformation point (centre)
-        let c = r.center();
-        painter.circle(c, 4.0, Color32::WHITE, Stroke::new(1.0, T.selection));
-        painter.line_segment([c - vec2(6.0, 0.0), c + vec2(6.0, 0.0)], Stroke::new(1.0, T.selection));
-        painter.line_segment([c - vec2(0.0, 6.0), c + vec2(0.0, 6.0)], Stroke::new(1.0, T.selection));
+        // The transformation point: the box's centre, or, when each object is transformed
+        // about its own point (ADR 0109), every object's (past a few hundred objects the box
+        // alone shows, so a huge selection stays quick).
+        let mode = app.s.style.transform_origin;
+        let own = !multi && mode != anicraft_engine::TransformOrigin::Selection && app.s.selection.len() <= MAX_ORIGIN_MARKS;
+        let points: Vec<Pos2> = if own { anicraft_engine::transform_origins(&app.s, mode).into_iter().map(|(_, at)| to_screen(at)).collect() } else { vec![r.center()] };
+        for c in points {
+            painter.circle(c, 4.0, Color32::WHITE, Stroke::new(1.0, T.selection));
+            painter.line_segment([c - vec2(6.0, 0.0), c + vec2(6.0, 0.0)], Stroke::new(1.0, T.selection));
+            painter.line_segment([c - vec2(0.0, 6.0), c + vec2(0.0, 6.0)], Stroke::new(1.0, T.selection));
+        }
     }
     crate::pathtools::draw_overlay(app, &painter, xf, pointer.filter(|p| canvas.contains(*p)));
     crate::widthtool::draw_overlay(app, &painter, xf, pointer.filter(|p| canvas.contains(*p)));

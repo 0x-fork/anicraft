@@ -1,6 +1,6 @@
 # Command reference
 
-Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 365 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
+Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 370 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
 
 This page is generated from the command registry, so it always matches the version of AniCraft it came with.
 
@@ -211,13 +211,15 @@ This page is generated from the command registry, so it always matches the versi
 - **Crop** `modify.crop` · Modify › Combine Objects · changes the document
   Parameters: `{} combine with op crop`
 - **Rotate 90° CW** `modify.rotate_cw` · Modify › Transform · **Ctrl+Shift+9** (macOS **⇧⌘9**) · changes the document
-  Parameters: `{}`
+  Parameters: `{origin?: selection|registration|center (default: the mode set with modify.transform_origin; selection unless changed)} about the centre of the whole selection, or each selected object about its own point`
 - **Rotate 90° CCW** `modify.rotate_ccw` · Modify › Transform · **Ctrl+Shift+7** (macOS **⇧⌘7**) · changes the document
-  Parameters: `{}`
+  Parameters: `{origin?: selection|registration|center (default: the mode set with modify.transform_origin; selection unless changed)} about the centre of the whole selection, or each selected object about its own point`
 - **Flip Horizontal** `modify.flip_h` · Modify › Transform · changes the document
-  Parameters: `{}`
+  Parameters: `{origin?: selection|registration|center (default: the mode set with modify.transform_origin; selection unless changed)} about the centre of the whole selection, or each selected object about its own point`
 - **Flip Vertical** `modify.flip_v` · Modify › Transform · changes the document
-  Parameters: `{}`
+  Parameters: `{origin?: selection|registration|center (default: the mode set with modify.transform_origin; selection unless changed)} about the centre of the whole selection, or each selected object about its own point`
+- **Next Transformation Origin** `modify.transform_origin` · Modify › Transform
+  Parameters: `{mode?: selection|registration|center (default: the next one)} what several selected objects turn, scale and skew about with Free Transform and Modify › Transform: selection (one point for them all, as one arrangement; the default), registration (each about its own point: a symbol instance's or group's registration point, the centre of anything else) or center (each about the centre of its own box). Tool state, not part of the document → {mode}`
 - **Remove Transform** `modify.remove_transform` · Modify › Transform · **Ctrl+Shift+Z** (macOS **⇧⌘Z**) · changes the document
   Parameters: `{}`
 - **Left** `align.left` · Modify › Align · **Ctrl+Alt+1** (macOS **⌥⌘1**) · changes the document
@@ -240,6 +242,12 @@ This page is generated from the command registry, so it always matches the versi
   Parameters: `{path?: element id of a shape (default: the other selected element, a shape), x?, y? (pick the shape at this stage point instead), offset? (px along the path; default by the text's alignment: its start, middle or end), flip?: bool} sets the selected static text along a copy of the shape's outline (its first contour); the shape stays as it is (ADR 0070)`
 - **Release Text from Path** `text.release_path` · Modify › Text · changes the document
   Parameters: `{} the selected text on a path goes back to lines of text (ADR 0070)`
+- **Convert Lines to Fills** `modify.lines_to_fills` · Modify › Shape · changes the document
+  Parameters: `{id? (default: the selected shapes)} each line becomes a fill of its exact outline in the line's colour: caps, joins, dashes and width profile included. A raw line's fill joins the drawing (it merges with the fills it touches); a drawing object keeps its fill and gets the outline as an object above it → {converted, elements: [ids]}`
+- **Expand Fill…** `modify.expand_fill` · Modify › Shape · changes the document
+  Parameters: `{distance (stage units, above 0 up to 1000), direction?: expand|inset (default expand), id? (default: the selected shapes)} moves each fill's outline out or in by the distance: expanding rounds corners, insetting keeps them; holes shrink as the fill grows; a fill thinner than twice an inset is removed. A drawing object's line follows its new outline → {changed, removed}`
+- **Soften Fill Edges…** `modify.soften_fill_edges` · Modify › Shape · changes the document
+  Parameters: `{distance (the soft edge's width in stage units, above 0 up to 1000), steps? (1..=50 bands, default 4), direction?: expand|inset (default expand: the edge is added round the fill; inset: taken from it), id? (default: the selected shapes)} surrounds each fill with bands of its own paint whose alpha steps down outwards: band i of n has (n + 1 - i) / (n + 1) of the fill's alpha. Colour and gradient fills only → {softened, bands}`
 
 ## Commands
 
@@ -558,7 +566,7 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Select Connected** `element.select_connected`
   Parameters: `{x, y, add?, slop?} a raw stroke and the strokes joined to it, or a raw fill and the strokes on and in it`
 - **Transform** `modify.transform` · changes the document
-  Parameters: `{a, b, c, d, e, f} affine applied in stage space (free transform), to the selection on every layer`
+  Parameters: `{a, b, c, d, e, f, origin?: selection|registration|center (default selection)} affine applied in stage space (free transform), to the selection on every layer. With origin registration or center, the matrix's scale, rotation and skew are applied to each selected object about its own point instead (see modify.transform_origin) and its move (e, f) is left out`
 - **Pen Path** `draw.path` · changes the document
   Parameters: `{d: SVG path data (stage space), fill?, stroke?, stroke_width?, object?}`
 - **Pencil Stroke** `draw.freehand` · changes the document
@@ -711,6 +719,8 @@ These commands have no menu item: the panels, the stage and the timeline use the
   Parameters: `{x, y, id? (default: the topmost stroke there on the active layer), slop?}`
 - **Stroke Style** `stroke.set_style` · changes the document
   Parameters: `{cap?: none|round|square, join?: miter|round|bevel, miter? (limit, 1..=100; a corner whose point is longer than this many widths is bevelled), style?: solid|dashed|dotted, dash? ([on, off, ..] lengths in the shape's units; implies dashed), dash_offset?, dot_spacing? (between dots, edge to edge; implies dotted), id? (default: the selected shapes)}`
+- **Sample Colour** `paint.sample`
+  Parameters: `{x, y, scale? (the view's zoom, 0.01..=64, default 1: the colour of one screen pixel there)} the colour drawn at a point of what is being edited, over the stage colour: fills, gradients, bitmaps, lines, symbols and effects alike, as the CPU renderer draws them (the colour picker's eyedropper, #288) → {color: "#rrggbb", r, g, b}`
 - **Run Plug-in** `plugin.run` · changes the document
   Parameters: `{id, params?: {…} (see plugin.list; missing ones take their defaults)} one undo step`
 - **Remove Plug-in** `plugin.remove`
