@@ -765,7 +765,7 @@ impl<'a> Builder<'a> {
                             self.report.skip("tween spins (turned the shortest way)");
                         }
                         let (easing, groups) = self.easing(f);
-                        k.tween = Some(Tween { easing, kind, orient, groups });
+                        k.tween = Some(Tween { easing, kind, orient, groups, keep_area: false });
                     }
                     craft_xfl::document::TweenType::MotionObject => self.report.skip("motion tweens (kept as keyframes)"),
                     craft_xfl::document::TweenType::Other => {}

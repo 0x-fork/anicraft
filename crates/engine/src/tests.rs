@@ -2574,3 +2574,50 @@ fn bevel_and_gradient_filters_render_save_and_export() {
     // Lottie reports them, as it does every filter.
     assert!(anicraft_render::lottie::to_lottie(&s.doc, "f", 0, 0, false).report.keys().any(|k| k.starts_with("filters")));
 }
+
+/// The stage-space anchors of shape `id`.
+fn stage_anchors(s: &Session, id: u64) -> Vec<(f32, f32)> {
+    let p = shape_path(s, id);
+    (0..p.cmds.len()).filter(|&c| p.point(c, 0).is_some()).map(|c| stage_anchor(s, id, c)).map(|q| (q.x.round(), q.y.round())).collect()
+}
+
+#[test]
+fn path_extend_continues_an_open_path_from_either_end_and_closes_it() {
+    // ADR 0115: the Pen picks an open drawing object up at an end and draws on.
+    let mut s = Session::default();
+    run(&mut s, "draw.path", json!({"d": "M0 0 L100 0 L100 50", "object": true}));
+    let id = s.selection.ids().next().unwrap().0;
+    // Moved and turned, so stage space isn't the shape's own.
+    run(&mut s, "element.translate", json!({"dx": 20, "dy": 10}));
+    assert_eq!(stage_anchors(&s, id), [(20.0, 10.0), (120.0, 10.0), (120.0, 60.0)]);
+    // From its end: the piece's start is the end point, and its segments are appended.
+    let v = run(&mut s, "path.extend", json!({"id": id, "d": "M120 60 C120 90 90 110 60 110 L20 110"}));
+    assert_eq!(v["closed"], false);
+    assert_eq!(stage_anchors(&s, id), [(20.0, 10.0), (120.0, 10.0), (120.0, 60.0), (60.0, 110.0), (20.0, 110.0)]);
+    assert!(matches!(shape_path(&s, id).cmds[3], anicraft_geom::PathCmd::CubicTo(..)), "the curve is kept");
+    // From its start: drawn away from it, joined so the path keeps its direction.
+    run(&mut s, "path.extend", json!({"id": id, "d": "M20 10 L-30 10 C-30 30 -30 50 -30 60", "end": "start"}));
+    assert_eq!(stage_anchors(&s, id), [(-30.0, 60.0), (-30.0, 10.0), (20.0, 10.0), (120.0, 10.0), (120.0, 60.0), (60.0, 110.0), (20.0, 110.0)]);
+    assert!(matches!(shape_path(&s, id).cmds[1], anicraft_geom::PathCmd::CubicTo(..)));
+    // One undo step each.
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(stage_anchors(&s, id).len(), 5);
+    // Onto its own other end, closing it.
+    let v = run(&mut s, "path.extend", json!({"id": id, "d": "M20 110 L20 10", "close": true}));
+    assert_eq!(v["closed"], true);
+    let p = shape_path(&s, id);
+    assert!(matches!(p.cmds.last(), Some(anicraft_geom::PathCmd::Close)));
+    assert_eq!(p.editable_anchors().len(), 5, "the closing point is the start, once");
+    // A closed path has no end to continue, and hostile pieces are refused without a change.
+    let before = shape_path(&s, id);
+    for bad in [json!({"id": id, "d": "M0 0 L10 10"}), json!({"id": id, "d": "L10 10"}), json!({"id": id, "d": "M0 0"}), json!({"id": id, "d": "M0 0 L1 1 M5 5 L6 6"}), json!({"id": id, "d": "M0 0 L10 10", "end": "middle"}), json!({"d": "M0 0 L10 10"}), json!({"id": id, "d": 5})] {
+        assert!(s.execute("path.extend", &bad).is_err(), "{bad}");
+    }
+    assert_eq!(shape_path(&s, id), before);
+    let mut s = Session::default();
+    run(&mut s, "draw.path", json!({"d": "M0 0 L100 0", "object": true}));
+    let id = s.selection.ids().next().unwrap().0;
+    assert!(s.execute("path.extend", &json!({"id": id, "d": "M100 0 L1e30 0"})).is_err(), "too large");
+    assert!(s.execute("path.extend", &json!({"id": id, "d": "M100 0 L100 0 Z"})).is_err(), "a closed piece");
+    assert_eq!(stage_anchors(&s, id), [(0.0, 0.0), (100.0, 0.0)]);
+}

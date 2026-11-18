@@ -1277,7 +1277,7 @@ impl Session {
             .map(|l| {
                 json!({
                     "id": l.id.0, "name": l.name, "visible": l.visible, "locked": l.locked, "volume": l.volume, "muted": l.muted,
-                    "keyframes": l.keyframes.iter().map(|k| json!({"start": k.start, "duration": k.duration, "elements": k.elements.len(), "tween": k.tween.as_ref().map(|t| t.easing.label()), "motion": k.motion.as_ref().map(|m| m.tracks.iter().map(|t| t.property.key()).collect::<Vec<_>>()), "sound": k.sound.as_ref().map(|f| json!({"sound": f.sound.0, "sync": f.sync.key(), "repeat": f.repeat, "loop": f.looping, "effect": f.effect.key()})), "script": k.script.as_ref().map(anicraft_doc::FrameScript::describe)})).collect::<Vec<_>>()
+                    "keyframes": l.keyframes.iter().map(|k| json!({"start": k.start, "duration": k.duration, "elements": k.elements.len(), "tween": k.tween.as_ref().map(|t| t.easing.label()), "motion": k.motion.as_ref().map(|m| m.tracks.iter().map(|t| t.property.key()).collect::<Vec<_>>()), "keep_area": k.motion.as_ref().map_or(k.tween.as_ref().is_some_and(|t| t.keep_area), |m| m.keep_area), "sound": k.sound.as_ref().map(|f| json!({"sound": f.sound.0, "sync": f.sync.key(), "repeat": f.repeat, "loop": f.looping, "effect": f.effect.key()})), "script": k.script.as_ref().map(anicraft_doc::FrameScript::describe)})).collect::<Vec<_>>()
                 })
             })
             .collect();
@@ -1376,6 +1376,8 @@ mod tests;
 #[cfg(test)]
 mod parenting_tests;
 
+#[cfg(test)]
+mod keep_area_tests;
 #[cfg(test)]
 mod motion_tests;
 #[cfg(test)]

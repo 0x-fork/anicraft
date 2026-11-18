@@ -22,6 +22,15 @@ pub fn specs() -> Vec<CommandSpec> {
         c("timeline.remove_tween", "Remove Tween", "Insert", None, "{layer?, frame?} (a motion tween leaves its object as it is on the first frame)", true, remove_tween),
         c("timeline.set_easing", "Set Tween Easing", "", None, "{easing: a preset name (Linear, QuadIn … ElasticInOut) | {classic: -100..100} | {bezier: [x1, y1, x2, y2]} | {custom: {points: [..]} | [[x, y], ..]} | {saved: name} | {plugin: id, ease: id} (an ease plug-in's; the tween keeps its sampled curve), group?: all|position|rotation|scale|color|filters (classic tweens: that property group's own ease), layer?, frame?}", true, set_easing),
         c("timeline.set_orient", "Orient to Path", "", None, "{orient: bool, layer?, frame?}", true, set_orient),
+        c(
+            "timeline.set_keep_area",
+            "Keep Area",
+            "",
+            None,
+            "{keep_area: bool, layer?, frame?}: squash and stretch that keeps the object's area (ADR 0115). The span's tween (classic, shape or motion) moves scale X and Y geometrically between keys instead of in straight lines, so keys of one area keep it on every frame; on a motion tween a scale axis without keys of its own follows the other inversely. Off by default",
+            true,
+            set_keep_area,
+        ),
         c("timeline.set_label", "Frame Label", "", None, "{label, layer?, frame?}", true, set_label),
         c("timeline.goto", "Go to Frame", "", None, "{frame}", false, goto),
         c("timeline.next_frame", "Next Frame", "Control", Some("."), "{}", false, |s, _| step(s, 1)),
@@ -128,6 +137,22 @@ fn set_orient(s: &mut Session, p: &Value) -> Result<Value> {
     let t = k.tween.as_mut().ok_or_else(|| EngineError::State("this span has no tween; create one first".into()))?;
     t.orient = orient;
     Ok(json!({"orient": orient}))
+}
+
+/// Keep area (ADR 0115): the span's tween, of any kind, scales geometrically.
+fn set_keep_area(s: &mut Session, p: &Value) -> Result<Value> {
+    let on = opt_bool(p, "keep_area")?.ok_or_else(|| EngineError::Param("param 'keep_area' (true or false) is required".into()))?;
+    let k = keyframe_mut(s, p)?;
+    let kind = if let Some(m) = k.motion.as_mut() {
+        m.keep_area = on;
+        "motion"
+    } else if let Some(t) = k.tween.as_mut() {
+        t.keep_area = on;
+        if t.kind == TweenKind::Shape { "shape" } else { "classic" }
+    } else {
+        return Err(EngineError::State("this span has no tween; create one first".into()));
+    };
+    Ok(json!({"keep_area": on, "tween": kind}))
 }
 
 fn set_layer_type(s: &mut Session, p: &Value) -> Result<Value> {
@@ -713,11 +738,12 @@ fn tween_of_kind(s: &mut Session, p: &Value, kind: TweenKind) -> Result<Value> {
     // tween keeps its property groups' eases (a shape tween has one ease, as in Animate).
     let easing = given.unwrap_or_else(|| k.tween.as_ref().map(|t| t.easing.clone()).unwrap_or_default());
     let orient = k.tween.as_ref().is_some_and(|t| t.orient);
+    let keep_area = k.tween.as_ref().is_some_and(|t| t.keep_area);
     let groups = if kind == TweenKind::Classic { k.tween.as_ref().map(|t| t.groups.clone()).unwrap_or_default() } else { Vec::new() };
     // It replaces a motion tween, keeping the object as it is on the first frame.
     crate::cmds_motion::bake_first_frame(k);
     let label = easing.label();
-    k.tween = Some(Tween { easing, kind, orient, groups });
+    k.tween = Some(Tween { easing, kind, orient, groups, keep_area });
     // Shape hints only mean something to a shape tween.
     if kind != TweenKind::Shape {
         k.hints.clear();
