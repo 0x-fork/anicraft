@@ -20,6 +20,10 @@
   * `anicraft --check-theme <file>` checks a theme without opening a window, and
     `anicraft --theme <file>.json` uses one for a single run.
 
+* **Convert Audio to Keyframes and Auto Lip-Sync say when a sound can drift** (ADR 0114
+  follow-up, M8): with a sound whose sync is Event or Start, the dialog notes that the keys
+  can drift from what is heard after a jump on the timeline, and that Stream keeps them locked.
+
 * **Convert Audio to Keyframes and Auto Lip-Sync** (ADR 0114, #332, M5).
   * **Convert Audio to Keyframes** (Modify › Timeline, or **To Keyframes…** in a sound
     keyframe's Properties): the sound's loudness on each frame drives an object on another

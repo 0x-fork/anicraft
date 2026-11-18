@@ -2628,11 +2628,12 @@ impl App {
                     self.run("timeline.goto", json!({"frame": 14}));
                 }
             }
-            Some("audiokeys") => {
+            Some(which @ ("audiokeys" | "audiokeysevent")) => {
                 // Convert Audio to Keyframes (ADR 0114): the beat as a stream, its dialog open
                 // on the demo's star, whose scale follows the beat (previewed on the timeline).
+                // `audiokeysevent`: as an Event sound, with the dialog's note that keys can drift.
                 if self.import_demo_beat() {
-                    self.run("sound.set", json!({"frame": 0, "sync": "stream"}));
+                    self.run("sound.set", json!({"frame": 0, "sync": if which == "audiokeysevent" { "event" } else { "stream" }}));
                     let star = self.s.timeline().layers.iter().find(|l| l.name == "Star").map(|l| l.id.0);
                     crate::audio_keys::open(self, crate::audio_keys::Kind::Keys);
                     if let Some(id) = star {

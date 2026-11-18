@@ -450,9 +450,9 @@ mod tests {
     /// gradient accent bars, and nothing about it is noted as low in contrast.
     #[test]
     fn the_guides_sample_theme_is_a_good_theme() {
-        let chapter = include_str!("../docs/guide/preferences-shortcuts-accessibility.md");
-        let sample = chapter.split("```json
-").nth(1).and_then(|s| s.split("```").next()).expect("the chapter has a sample theme");
+        // (Whatever line endings the checkout gave the chapter.)
+        let chapter = include_str!("../docs/guide/preferences-shortcuts-accessibility.md").replace("\r\n", "\n");
+        let sample = chapter.split("```json\n").nth(1).and_then(|s| s.split("```").next()).expect("the chapter has a sample theme");
         let t = parse(sample).unwrap_or_else(|e| panic!("{}", e.message()));
         assert_eq!((t.name.as_deref(), t.base, t.notes.len()), (Some("Ember"), Palette::Graphite, 0), "{:?}", t.notes);
         assert!(t.tokens.icon_accent.a() > 0 && t.tokens.accent_end != t.tokens.accent);

@@ -164,6 +164,13 @@ fn sounds(app: &App) -> Vec<((u64, u32), String)> {
     out
 }
 
+/// Whether the sound the dialog reads is not a Stream sound (ADR 0114): it keeps time with the
+/// frames only while the movie plays straight through, so the dialog says so.
+fn can_drift(app: &App, sound: (u64, u32)) -> bool {
+    let key = app.s.timeline().layers.iter().find(|l| l.id.0 == sound.0).and_then(|l| l.keyframes.iter().find(|k| k.start == sound.1));
+    key.and_then(|k| k.sound.as_ref()).is_some_and(|f| f.sync != anicraft_engine::doc::SoundSync::Stream)
+}
+
 /// The sound the dialog reads, as the engine finds it.
 fn source(app: &App, sound: (u64, u32)) -> Option<Source> {
     keys::source(&app.s, &json!({"sound_layer": sound.0, "sound_frame": sound.1})).ok()
@@ -428,6 +435,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     let sound_list = sounds(app);
     let symbol = mouth_symbol(app, &d).map(|s| (s.timeline.frame_count().max(1), s.clone()));
     let stereo = src.sound.channels == 2;
+    let drifts = can_drift(app, d.sound);
     let mut changed = false;
     let (mut ok, mut cancel) = (false, false);
     let mut retarget = false;
@@ -466,6 +474,10 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         form_row(ui, FORM_LABEL_DIALOG, tr!("Frames"), |ui| {
             ui.label(text(Type::Data, tr!("{from} to {to}", from = src.from + 1, to = src.to + 1)));
         });
+        if drifts {
+            // The keys are right for the frames; what is heard follows them only with Stream.
+            theme::form_note(ui, FORM_LABEL_DIALOG, text(Type::Caption, tr!("After a timeline jump the keys can drift from this sound. Stream sync keeps them locked.")));
+        }
         form_row(ui, FORM_LABEL_DIALOG, tr!("Layer"), |ui| {
             if let Some(l) = choice(ui, "audio_keys_layer", tr!("Layer that gets the keys"), d.layer, &layer_list, tr!("The layer whose object the sound drives: the keys are written on it")) {
                 d.layer = l;
@@ -834,6 +846,41 @@ mod tests {
         assert_eq!((app.audio_keys_last.smoothing, app.audio_keys_last.max), (0, 200.0));
         app.run("edit.undo", json!({}));
         assert!(app.s.doc == before, "one undo step");
+    }
+
+    /// ADR 0114's follow-up: both dialogs say when the sound isn't a Stream sound, and say
+    /// nothing when it is.
+    #[test]
+    fn a_sound_that_is_not_stream_synced_gets_a_note_about_drift() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let (mut app, _) = app(&ctx, "drift");
+        let sound = app.s.layer.0;
+        let noted = |app: &mut App, ctx: &egui::Context| {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| show(app, ui.ctx()));
+            out.textures_delta.clear();
+            out.platform_output.accesskit_update.is_some_and(|t| t.nodes.iter().any(|(_, n)| n.value().is_some_and(|v| v.contains("Stream sync keeps them locked"))))
+        };
+        for kind in [Kind::Keys, Kind::Lips] {
+            app.run("sound.set", json!({"frame": 0, "sync": "stream"}));
+            open(&mut app, kind);
+            // Auto Lip-Sync opens only with a graphic symbol to drive; the note is in the part
+            // of the dialog both share, so Convert Audio to Keyframes covers it here.
+            let Some(at) = app.audio_keys.as_ref().map(|d| d.sound) else {
+                assert_eq!(kind, Kind::Lips, "Convert Audio to Keyframes opens on the square");
+                continue;
+            };
+            assert_eq!(at.0, sound);
+            assert!(!can_drift(&app, at) && !noted(&mut app, &ctx), "{kind:?}: a stream sound stays in time");
+            cancel(&mut app);
+            for sync in ["event", "start"] {
+                app.run("sound.set", json!({"frame": 0, "sync": sync}));
+                open(&mut app, kind);
+                assert!(can_drift(&app, at) && noted(&mut app, &ctx), "{kind:?}, {sync}");
+                cancel(&mut app);
+            }
+        }
+        assert!(!can_drift(&app, (9999, 0)), "no such sound: nothing to say");
     }
 
     #[test]
