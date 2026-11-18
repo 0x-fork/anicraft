@@ -276,6 +276,7 @@ fn settle(app: &mut App) {
     if app.pen.is_some() {
         crate::pathtools::commit_pen(app, false);
     }
+    crate::audio_keys::cancel(app);
     if app.s.in_gesture() {
         app.s.end_gesture();
     }

@@ -427,6 +427,8 @@ fn enabled(app: &App, id: &str) -> bool {
         "modify.lines_to_fills" => selected_shape(app, |sh| sh.stroke.is_some()),
         "modify.expand_fill" => selected_shape(app, |sh| sh.fill.is_some()),
         "modify.soften_fill_edges" => selected_shape(app, |sh| sh.fill.as_ref().is_some_and(|f| !matches!(f, anicraft_engine::doc::Paint::Bitmap { .. }))),
+        // Convert Audio to Keyframes and Auto Lip-Sync read a sound on this timeline (ADR 0114).
+        "sound.to_keyframes" | "sound.lip_sync" => app.s.timeline().layers.iter().any(|l| l.has_sounds()),
         "layer.delete" => app.s.timeline().layers.len() > 1,
         "scene.delete" => app.s.doc.scenes.len() > 1,
         // Ctrl+E opens the selected instance, or goes back to the document (ADR 0045).
