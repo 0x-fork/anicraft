@@ -302,7 +302,7 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Clear Recent Files** `prefs.recent_clear`
   Parameters: `{pinned? (default false: pinned favourites stay)} → {removed}`
 - **Add to Applications Menu** `desktop.integrate`
-  Parameters: `{appimage: absolute path to the .AppImage, data_home: absolute path (the user's $XDG_DATA_HOME, e.g. ~/.local/share), refresh? (default true: run update-mime-database and update-desktop-database)} writes the launcher, icons and file types there; again only rewrites what changed`
+  Parameters: `{appimage: absolute path to the .AppImage, data_home: absolute path (the user's $XDG_DATA_HOME, e.g. ~/.local/share), refresh? (default true: run update-mime-database and update-desktop-database, and bring an existing icon cache up to date)} writes the launcher, icons and file types there; again only rewrites what changed`
 - **Remove from Applications Menu** `desktop.remove`
   Parameters: `{data_home, refresh? (default true)} deletes the launcher, icons and file types desktop.integrate wrote; nothing when the entry there isn't AniCraft's`
 - **Applications Menu Status** `desktop.status`

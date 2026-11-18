@@ -11,7 +11,7 @@ use crate::prefs::RenderMode;
 use crate::theme::{T, to_color32};
 use anicraft_engine::geom::{Affine, Vec2};
 use anicraft_engine::render::View;
-use anicraft_engine::render_service::{DEFAULT_CACHE_BYTES, FrameImage, FrameJob, RenderService, make_job_for};
+use anicraft_engine::render_service::{FrameImage, FrameJob, RenderService, make_job_for};
 use crate::a11y::Named;
 use anicraft_engine::cmds_raw::Grab;
 use egui::{Color32, CursorIcon, Key, Modifiers, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
@@ -902,7 +902,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     if vis.width() >= 1.0 && vis.height() >= 1.0 {
         if app.stage_cache.service.is_none() {
             let ctx = ui.ctx().clone();
-            app.stage_cache.service = Some(RenderService::new(DEFAULT_CACHE_BYTES, Some(Box::new(move || ctx.request_repaint()))));
+            app.stage_cache.service = Some(RenderService::new(crate::platform::stage_cache_bytes(crate::platform::OS), Some(Box::new(move || ctx.request_repaint()))));
         }
         if let Some(svc) = &app.stage_cache.service {
             // The stage's size in pixels: a change brings a GPU retry forward (ADR 0092).
