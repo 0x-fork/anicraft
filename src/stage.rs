@@ -11,7 +11,7 @@ use crate::prefs::RenderMode;
 use crate::theme::{T, to_color32};
 use anicraft_engine::geom::{Affine, Vec2};
 use anicraft_engine::render::View;
-use anicraft_engine::render_service::{DEFAULT_CACHE_BYTES, FrameImage, FrameJob, RenderService, make_job_for};
+use anicraft_engine::render_service::{FrameImage, FrameJob, RenderService, make_job_for};
 use crate::a11y::Named;
 use anicraft_engine::cmds_raw::Grab;
 use egui::{Color32, CursorIcon, Key, Modifiers, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
@@ -387,6 +387,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     Some(XfKind::Scale { hx, hy }) if hx * hy < 0 => CursorIcon::ResizeNeSw,
                     Some(XfKind::Scale { hx: 0, .. }) => CursorIcon::ResizeVertical,
                     Some(XfKind::Scale { .. }) => CursorIcon::ResizeHorizontal,
+                    Some(XfKind::Skew { hy: 0, .. }) => CursorIcon::ResizeVertical,
+                    Some(XfKind::Skew { .. }) => CursorIcon::ResizeHorizontal,
                     Some(XfKind::Rotate) => CursorIcon::Alias,
                     Some(XfKind::Move) => CursorIcon::Move,
                     None => CursorIcon::Default,
@@ -670,7 +672,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             }
             Drag::Bend { .. } | Drag::RawPoint { .. } | Drag::RawHandle { .. } => end_raw_drag(app),
             Drag::Transform { .. } | Drag::SliceGuide { .. } | Drag::Points { .. } | Drag::Hint { .. } | Drag::MotionMove { .. } | Drag::CameraPan { .. } | Drag::CameraRotate { .. } | Drag::BonePose { .. } | Drag::ArmatureMove { .. } | Drag::WarpPin { .. } => app.s.end_gesture(),
-            Drag::Bone { from, head, cur } => crate::bone_tool::drag_end(app, xf, from, head, cur),
+            Drag::Bone { from, parent, head, cur } => crate::bone_tool::drag_end(app, xf, from, parent, head, cur),
             Drag::Guide { index, .. } => crate::rulers::drag_end(app, index, geo, ui.input(|i| i.pointer.latest_pos())),
             Drag::Width { .. } => crate::widthtool::drag_end(app),
             Drag::Gradient { .. } => crate::gradient_tool::drag_end(app),
@@ -753,7 +755,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 Tool::Text if !panning => {
                     commit_text(app);
                     if !open_text_at(app, sp, 3.0 / zoom.max(1e-3)) {
-                        app.text_edit = Some(crate::app::TextEditing { at: sp, element: None, text: String::new(), original: String::new(), focus: true });
+                        app.text_edit = Some(crate::app::TextEditing::new(sp, None, None, &app.s.text_style));
                     }
                 }
                 Tool::Bone if !panning => crate::bone_tool::click(app, xf, p),
@@ -900,7 +902,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     if vis.width() >= 1.0 && vis.height() >= 1.0 {
         if app.stage_cache.service.is_none() {
             let ctx = ui.ctx().clone();
-            app.stage_cache.service = Some(RenderService::new(DEFAULT_CACHE_BYTES, Some(Box::new(move || ctx.request_repaint()))));
+            app.stage_cache.service = Some(RenderService::new(crate::platform::stage_cache_bytes(crate::platform::OS), Some(Box::new(move || ctx.request_repaint()))));
         }
         if let Some(svc) = &app.stage_cache.service {
             // The stage's size in pixels: a change brings a GPU retry forward (ADR 0092).
@@ -1113,6 +1115,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         let mut budget = MAX_DOTS;
         let mut gradient_budget = GradientMeshBudget::default();
         let dl = app.s.display_list();
+        let mut occluders = Occluders::new(&dl, &to_px, canvas, gap);
 
         for (index, item) in dl.items.iter().enumerate().filter(|(_, i)|
             app.s.selection.contains(i.layer, i.element)
@@ -1136,23 +1139,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 gap,
             );
 
-            exclude_overlying_artwork(
-                &mut fills,
-                &dl.items[index + 1..],
-                &dl,
-                &to_px,
-                canvas,
-                gap,
-            );
-
-            exclude_overlying_artwork(
-                &mut strokes,
-                &dl.items[index + 1..],
-                &dl,
-                &to_px,
-                canvas,
-                gap,
-            );
+            occluders.exclude(&mut fills, index + 1);
+            occluders.exclude(&mut strokes, index + 1);
 
             let (fill_colour, stroke_colour) = selection_colours(item);
 
@@ -1166,14 +1154,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             );
 
             // Foreground artwork must still hide the backing.
-            exclude_overlying_artwork(
-                &mut backing_spans,
-                &dl.items[index + 1..],
-                &dl,
-                &to_px,
-                canvas,
-                gap,
-            );
+            occluders.exclude(&mut backing_spans, index + 1);
 
             for span in &backing_spans {
                 backing.add_colored_rect(*span, stroke_backing);
@@ -1462,7 +1443,8 @@ fn xf_snap(s: &mut anicraft_engine::Session, ring: &mut Option<Vec2>, kind: XfKi
             let pts = [pos2(b[0], b[1]), pos2(b[2], b[1]), pos2(b[2], b[3]), pos2(b[0], b[3]), pos2((b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5)];
             pts.into_iter().min_by(|p, q| p.distance(start).total_cmp(&q.distance(start))).unwrap_or(start)
         }
-        XfKind::Rotate => {
+        // Rotation and skew don't snap.
+        XfKind::Rotate | XfKind::Skew { .. } => {
             *ring = None;
             return c;
         }
@@ -2360,209 +2342,194 @@ fn subtract_occlusion_spans(
 }
 
 fn clip_occluder_to_coverage_masks(
-    path: &anicraft_engine::geom::Path,
-    rule: anicraft_engine::geom::FillRule,
-    clip_id: u32,
+    mut visible: anicraft_engine::geom::Path,
+    mut rule: anicraft_engine::geom::FillRule,
+    mut id: u32,
     dl: &anicraft_engine::doc::DisplayList,
     to_px: &Affine,
+    regions: &mut std::collections::HashMap<u32, Option<anicraft_engine::geom::Path>>,
 ) -> Option<anicraft_engine::geom::Path> {
     use anicraft_engine::geom::{FillRule, planar};
 
-    let mut visible = path.clone();
-    let mut visible_rule = rule;
-    let mut id = clip_id;
-
-    // Follow the mask and any enclosing parent masks.
-    for _ in 0..dl.clip_parents.len() {
-        // Soft masks need their actual transparency values.
-        // Do not treat their entire geometry as opaque.
+    loop {
+        let parent = dl.clip_parents.get(id as usize).copied()?;
+        // A soft mask requires composited alpha or luminance to establish coverage.
         if dl.clip_mode(id).is_soft() {
             return None;
         }
 
-        // A single mask can contain several filled shapes.
-        let masks: Vec<_> = dl.items.iter()
-            .filter(|item| {
-                item.masks == Some(id) && item.fill.is_some()
-            })
-            .map(|item| {
-                (
-                    item.path.transformed(
-                        &to_px.mul(&item.transform)
-                    ),
-                    item.fill_rule,
-                )
-            })
-            .collect();
+        // Fill and stroke outlines and all items beneath the same mask share its union.
+        let region = regions.entry(id).or_insert_with(|| {
+            let masks: Vec<_> = dl.items.iter()
+                .filter(|item| item.masks == Some(id) && item.fill.is_some())
+                .map(|item| (item.path.transformed(&to_px.mul(&item.transform)), item.fill_rule))
+                .collect();
+            if masks.is_empty() {
+                return None;
+            }
+            let parts: Vec<_> = masks.iter().map(|(path, rule)| (path, *rule)).collect();
+            planar::union(&parts)
+        }).as_ref()?;
+        visible = planar::intersect(&visible, rule, region)?;
+        rule = FillRule::EvenOdd;
 
-        if masks.is_empty() {
-            return None;
-        }
-
-        let parts: Vec<_> = masks.iter()
-            .map(|(path, rule)| (path, *rule))
-            .collect();
-
-        let region = planar::union(&parts)?;
-
-        // Keep only foreground geometry revealed by the mask.
-        visible = planar::intersect(
-            &visible,
-            visible_rule,
-            &region,
-        )?;
-
-        visible_rule = FillRule::EvenOdd;
-
-        match dl.clip_parents.get(id as usize).copied()? {
+        match parent {
             Some(parent) if parent < id => id = parent,
             Some(_) => return None,
             None => return Some(visible),
         }
     }
-
-    None
 }
 
-/// Hide selection stipple behind opaque fills and strokes
-/// that appear later in drawing order, including on other layers.
-/// Translucent and bitmap fills need separate handling.
+/// Most occluding outlines built in a frame. Past it the stipple shows through what is above
+/// it, as it did before occlusion; it only bounds a pathological drawing.
+const MAX_OCCLUDERS: usize = 4_000;
+
+/// A display item that can hide a selection's stipple: where its opaque parts are on screen
+/// and, once something selected lies under them, their outlines.
+struct Occluder {
+    /// Screen bounds of the opaque parts (the stroke's reach included).
+    bounds: Rect,
+    fill: bool,
+    stroke: bool,
+    /// Visible fill and stroke outlines in screen space, built on first use.
+    lines: Option<[Vec<anicraft_engine::geom::Polyline>; 2]>,
+}
+
+/// The artwork that hides selection stipple: opaque fills and strokes later in drawing order,
+/// including on other layers. Coverage masks restrict the outlines. Soft masks and groups
+/// that fade or otherwise change coverage are left to the artwork compositor.
+///
+/// A frame asks once per selected fill, stroke and backing, so the work is shared: each item's
+/// bounds are found once, an item is only looked at where its bounds meet the selected spans,
+/// and its outline is built once however many selected shapes lie under it (a selected raw
+/// drawing of 720 pieces took 600 ms a frame when every piece outlined everything above it).
+struct Occluders<'a> {
+    dl: &'a anicraft_engine::doc::DisplayList,
+    to_px: Affine,
+    clip: Rect,
+    gap: f32,
+    /// One entry per item once anything asks; `None` for items that hide nothing.
+    known: Vec<Option<Occluder>>,
+    mask_regions: std::collections::HashMap<u32, Option<anicraft_engine::geom::Path>>,
+    built: usize,
+    batch: Vec<Rect>,
+}
+
+impl<'a> Occluders<'a> {
+    fn new(dl: &'a anicraft_engine::doc::DisplayList, to_px: &Affine, clip: Rect, gap: f32) -> Self {
+        Self { dl, to_px: *to_px, clip, gap, known: Vec::new(), mask_regions: Default::default(), built: 0, batch: Vec::new() }
+    }
+
+    /// What `item` hides, if anything.
+    fn occluder(
+        item: &anicraft_engine::doc::DisplayItem,
+        dl: &anicraft_engine::doc::DisplayList,
+        to_px: &Affine,
+    ) -> Option<Occluder> {
+        use anicraft_engine::doc::Paint;
+        if item.guide || item.masks.is_some() || item.outline.is_some() || dl.effective_alpha(item) < 0.999
+            || item.clip.is_some_and(|id| dl.clip_mode(id).is_soft())
+        {
+            return None;
+        }
+        // Filters, blend modes and group clips can change coverage even at full opacity.
+        let mut group_id = item.group;
+        while let Some(id) = group_id {
+            let group = dl.groups.get(id as usize)?;
+            if group.alpha < 1.0 || !group.blend.is_normal() || !group.filters.is_empty() || group.clip.is_some()
+                || group.parent.is_some_and(|parent| parent >= id)
+            {
+                return None;
+            }
+            group_id = group.parent;
+        }
+        let solid = |c: anicraft_engine::doc::Rgba| item.color.apply(c).a >= 0.999;
+        let fill = match &item.fill {
+            Some(Paint::Solid(c)) => solid(*c),
+            Some(Paint::Linear { stops, .. } | Paint::Radial { stops, .. }) => !stops.is_empty() && stops.iter().all(|s| solid(s.color)),
+            // Bitmap transparency cannot be established from the paint alone.
+            Some(Paint::Bitmap { .. }) | None => false,
+        };
+        // Translucent strokes hide nothing: that overlap needs its own visual treatment.
+        let stroke = item.stroke.as_ref().is_some_and(|s| solid(s.color));
+        if !fill && !stroke {
+            return None;
+        }
+        let m = to_px.mul(&item.transform);
+        let reach = item.stroke.as_ref().filter(|_| stroke).map_or(0.0, |s| s.reach() * m.mean_scale());
+        let b = item.path.bounds().transformed(&m).inflate(reach + 1.0);
+        let bounds = Rect::from_min_max(pos2(b.min.x, b.min.y), pos2(b.max.x, b.max.y));
+        (bounds.is_finite() && bounds.is_positive()).then_some(Occluder { bounds, fill, stroke, lines: None })
+    }
+
+    /// Takes what the items from `from` on cover out of `spans`.
+    fn exclude(&mut self, spans: &mut Vec<Rect>, from: usize) {
+        use anicraft_engine::geom::{FillRule, Path};
+        let Some(area) = spans.iter().copied().reduce(|a, b| a.union(b)) else { return };
+        let Self { dl, to_px, clip, gap, known, mask_regions, built, batch } = self;
+        if known.is_empty() {
+            known.extend(dl.items.iter().map(|item| Self::occluder(item, dl, to_px)));
+        }
+        // Only the rows and columns the spans are in need scanning.
+        let clip = clip.intersect(area.expand(1.0));
+        for (item, slot) in dl.items.iter().zip(known.iter_mut()).skip(from) {
+            if spans.is_empty() {
+                break;
+            }
+            let Some(o) = slot.as_mut().filter(|o| o.bounds.intersects(area)) else { continue };
+            if o.lines.is_none() {
+                if *built >= MAX_OCCLUDERS {
+                    continue;
+                }
+                *built += 1;
+                let m = to_px.mul(&item.transform);
+                let mut flatten_outline = |path: Path, rule| match item.clip {
+                    Some(id) => clip_occluder_to_coverage_masks(path, rule, id, dl, to_px, mask_regions)
+                        .map_or_else(Vec::new, |visible| visible.flatten(&Affine::IDENTITY, 0.5)),
+                    None => path.flatten(&Affine::IDENTITY, 0.5),
+                };
+                let fill = if o.fill {
+                    if item.clip.is_some() {
+                        flatten_outline(item.path.transformed(&m), item.fill_rule)
+                    } else {
+                        item.path.flatten(&m, 0.5)
+                    }
+                } else {
+                    Vec::new()
+                };
+                let stroke = match &item.stroke {
+                    Some(st) if o.stroke => {
+                        let outline = anicraft_engine::render::stroke::stroke_outline(&item.path, &m, st, 0.5);
+                        flatten_outline(outline, FillRule::NonZero)
+                    }
+                    _ => Vec::new(),
+                };
+                o.lines = Some([fill, stroke]);
+            }
+            let Some([fill, stroke]) = &o.lines else { continue };
+            // The planar intersection returns loops filled using even-odd.
+            let fill_rule = if item.clip.is_some() { FillRule::EvenOdd } else { item.fill_rule };
+            let stroke_rule = if item.clip.is_some() { FillRule::EvenOdd } else { FillRule::NonZero };
+            if !fill.is_empty() {
+                subtract_occlusion_spans(spans, fill, fill_rule, clip, batch, *gap);
+            }
+            if !stroke.is_empty() {
+                subtract_occlusion_spans(spans, stroke, stroke_rule, clip, batch, *gap);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 fn exclude_overlying_artwork(
     fills: &mut Vec<Rect>,
-    above: &[anicraft_engine::doc::DisplayItem],
     dl: &anicraft_engine::doc::DisplayList,
     to_px: &Affine,
     clip: Rect,
     gap: f32,
 ) {
-    use anicraft_engine::geom::FillRule;
-
-    if fills.is_empty() {
-        return;
-    }
-
-    let mut occluders = Vec::new();
-
-    for item in above {
-        if item.guide
-            || item.masks.is_some()
-            || item.outline.is_some()
-        {
-            continue;
-        }
-
-        // Account for opacity inherited from symbol instances
-        // and other enclosing rendering groups.
-        if dl.effective_alpha(item) < 0.999 {
-            continue;
-        }
-
-        // Opaque fills above the selection hide its stipple,
-        // just as opaque strokes do.
-        if let Some(fill) = &item.fill {
-            use anicraft_engine::doc::Paint;
-
-            let opaque = match fill {
-                Paint::Solid(colour) => {
-                    item.color.apply(*colour).a >= 0.999
-                }
-                Paint::Linear { stops, .. }
-                | Paint::Radial { stops, .. } => {
-                    !stops.is_empty()
-                        && stops.iter().all(|stop| {
-                            item.color.apply(stop.color).a >= 0.999
-                        })
-                }
-                // Bitmap transparency cannot be established
-                // from the paint alone.
-                Paint::Bitmap { .. } => false,
-            };
-
-            if opaque {
-                let m = to_px.mul(&item.transform);
-
-                if let Some(clip_id) = item.clip {
-                    // Transform foreground artwork into screen space,
-                    // then intersect it with its coverage masks.
-                    let screen_path = item.path.transformed(&m);
-
-                    if let Some(visible) = clip_occluder_to_coverage_masks(
-                        &screen_path,
-                        item.fill_rule,
-                        clip_id,
-                        dl,
-                        to_px,
-                    ) {
-                        subtract_occlusion_spans(
-                            fills,
-                            &visible.flatten(&Affine::IDENTITY, 0.5),
-                            FillRule::EvenOdd,
-                            clip,
-                            &mut occluders,
-                            gap,
-                        );
-                    }
-                } else {
-                    // Unmasked artwork retains its existing behaviour.
-                    subtract_occlusion_spans(
-                        fills,
-                        &item.path.flatten(&m, 0.5),
-                        item.fill_rule,
-                        clip,
-                        &mut occluders,
-                        gap,
-                    );
-                }
-            }
-        }
-
-        let Some(stroke) = &item.stroke else {
-            continue;
-        };
-
-        // Start with opaque strokes; translucent overlap needs
-        // its own visual treatment.
-        if item.color.apply(stroke.color).a < 0.999 {
-            continue;
-        }
-
-        let m = to_px.mul(&item.transform);
-        let outline = anicraft_engine::render::stroke::stroke_outline(
-            &item.path,
-            &m,
-            stroke,
-            0.5,
-        );
-
-        if let Some(clip_id) = item.clip {
-            // The stroke outline is already in screen space.
-            if let Some(visible) = clip_occluder_to_coverage_masks(
-                &outline,
-                FillRule::NonZero,
-                clip_id,
-                dl,
-                to_px,
-            ) {
-                subtract_occlusion_spans(
-                    fills,
-                    &visible.flatten(&Affine::IDENTITY, 0.5),
-                    FillRule::EvenOdd,
-                    clip,
-                    &mut occluders,
-                    gap,
-                );
-            }
-        } else {
-            subtract_occlusion_spans(
-                fills,
-                &outline.flatten(&Affine::IDENTITY, 0.5),
-                FillRule::NonZero,
-                clip,
-                &mut occluders,
-                gap,
-            );
-        }
-    }
+    Occluders::new(dl, to_px, clip, gap).exclude(fills, 0);
 }
 
 /// Remove areas covered by `occluders` from a collection of rectangles.
@@ -2650,6 +2617,7 @@ fn subtract_spans(spans: &mut Vec<Rect>, occluders: &[Rect]) {
 #[cfg(test)]
 mod pattern_tests {
     use super::*;
+    use anicraft_engine::doc::DisplayList;
     use anicraft_engine::geom::{FillRule, Path};
 
     fn gradient_pattern_mesh(mesh: &mut egui::Mesh, spans: &[Rect], gradient: &SelectionGradient, gap: f32) {
@@ -2745,8 +2713,7 @@ mod pattern_tests {
 
         exclude_overlying_artwork(
             &mut selected,
-            &above,
-            &anicraft_engine::doc::DisplayList::default(),
+            &DisplayList { items: above, ..Default::default() },
             &Affine::IDENTITY,
             clip,
             GAP,
@@ -2798,8 +2765,7 @@ mod pattern_tests {
 
         exclude_overlying_artwork(
             &mut selected,
-            &above,
-            &anicraft_engine::doc::DisplayList::default(),
+            &DisplayList { items: above, ..Default::default() },
             &Affine::IDENTITY,
             clip,
             GAP,
@@ -2815,7 +2781,7 @@ mod pattern_tests {
     /// not completely hide selected artwork beneath it.
     #[test]
     fn translucent_parent_group_does_not_occlude_selection() {
-        use anicraft_engine::doc::{BlendMode, DisplayList, Group};
+        use anicraft_engine::doc::{BlendMode, Group};
 
         let clip = Rect::from_min_max(
             pos2(0.0, 0.0),
@@ -2847,26 +2813,20 @@ mod pattern_tests {
         foreground.group = Some(0);
         dl.items.push(foreground);
 
-        exclude_overlying_artwork(
-            &mut selected,
-            &dl.items,
-            &dl,
-            &Affine::IDENTITY,
-            clip,
-            GAP,
-        );
-
-        assert!(
-            selected.iter().any(|r| r.contains(pos2(50.0, 50.0))),
-            "a translucent parent group must not fully occlude selection"
-        );
+        for alpha in [0.5, 0.9995] {
+            dl.groups[0].alpha = alpha;
+            exclude_overlying_artwork(&mut selected, &dl, &Affine::IDENTITY, clip, GAP);
+            assert!(
+                selected.iter().any(|r| r.contains(pos2(50.0, 50.0))),
+                "a translucent parent group must not fully occlude selection"
+            );
+        }
 
         // A fully opaque instance should hide the selection.
         dl.groups[0].alpha = 1.0;
 
         exclude_overlying_artwork(
             &mut selected,
-            &dl.items,
             &dl,
             &Affine::IDENTITY,
             clip,
@@ -2884,8 +2844,6 @@ mod pattern_tests {
     /// inside the area revealed by its mask.
     #[test]
     fn masked_foreground_only_occludes_inside_mask() {
-        use anicraft_engine::doc::DisplayList;
-
         let clip = Rect::from_min_max(
             pos2(0.0, 0.0),
             pos2(100.0, 100.0),
@@ -2920,14 +2878,12 @@ mod pattern_tests {
         foreground.clip = Some(0);
         dl.items.push(foreground);
 
-        exclude_overlying_artwork(
-            &mut selected,
-            &dl.items,
-            &dl,
-            &Affine::IDENTITY,
-            clip,
-            GAP,
-        );
+        let mut backing = selected.clone();
+        let mut occluders = Occluders::new(&dl, &Affine::IDENTITY, clip, GAP);
+        occluders.exclude(&mut selected, 0);
+        occluders.exclude(&mut backing, 0);
+        assert_eq!(selected, backing);
+        assert_eq!(occluders.built, 1, "the masked outline should be reused for the backing");
 
         // Covered by the visible foreground.
         assert!(
@@ -2946,7 +2902,6 @@ mod pattern_tests {
     /// where the stroke is visible through its mask.
     #[test]
     fn masked_foreground_stroke_only_occludes_inside_mask() {
-        use anicraft_engine::doc::DisplayList;
         use anicraft_engine::geom::Vec2;
 
         let clip = Rect::from_min_max(
@@ -2985,7 +2940,6 @@ mod pattern_tests {
 
         exclude_overlying_artwork(
             &mut selected,
-            &dl.items,
             &dl,
             &Affine::IDENTITY,
             clip,
@@ -4294,10 +4248,10 @@ mod pattern_tests {
 
         // An overlying stroke excludes the covered part of the fill.
         let mut fills = make_fills();
+        let mut foreground = DisplayList { items: vec![stroke], ..Default::default() };
         exclude_overlying_artwork(
             &mut fills,
-            std::slice::from_ref(&stroke),
-            &anicraft_engine::doc::DisplayList::default(),
+            &foreground,
             &Affine::IDENTITY,
             clip,
             GAP,
@@ -4308,14 +4262,12 @@ mod pattern_tests {
 
         // A stroke on another layer is not treated as part of
         // this raw drawing's fill/stroke boundary.
-        let mut other_layer = stroke;
-        other_layer.layer = LayerId(1);
+        foreground.items[0].layer = LayerId(1);
 
         let mut fills = make_fills();
         exclude_overlying_artwork(
             &mut fills,
-            &[other_layer],
-            &anicraft_engine::doc::DisplayList::default(),
+            &foreground,
             &Affine::IDENTITY,
             clip,
             GAP,
@@ -4611,8 +4563,7 @@ mod pattern_tests {
 
         exclude_overlying_artwork(
             &mut strokes,
-            &[red],
-            &anicraft_engine::doc::DisplayList::default(),
+            &DisplayList { items: vec![red], ..Default::default() },
             &Affine::IDENTITY,
             clip,
             GAP,
@@ -4679,8 +4630,7 @@ mod pattern_tests {
 
         exclude_overlying_artwork(
             &mut strokes,
-            &[red],
-            &anicraft_engine::doc::DisplayList::default(),
+            &DisplayList { items: vec![red], ..Default::default() },
             &Affine::IDENTITY,
             clip,
             GAP,
@@ -4745,23 +4695,28 @@ mod pattern_tests {
 fn open_text_at(app: &mut App, sp: Pos2, tolerance: f32) -> bool {
     let Some((_, id)) = app.s.hit_test(to_v(sp), tolerance) else { return false };
     let found = app.s.visible_elements().into_iter().find(|e| e.id == id).and_then(|e| match &e.kind {
-        anicraft_engine::doc::ElementKind::Text(t) => Some((e.transform.apply(Vec2::ZERO), t.text.clone())),
+        anicraft_engine::doc::ElementKind::Text(t) => Some((e.transform.apply(Vec2::ZERO), t.clone())),
         _ => None,
     });
-    let Some((at, text)) = found else { return false };
+    let Some((at, block)) = found else { return false };
     app.run("element.select", json!({"ids": [id.0]}));
-    app.text_edit = Some(crate::app::TextEditing { at: pos2(at.x, at.y), element: Some(id), original: text.clone(), text, focus: true });
+    app.text_edit = Some(crate::app::TextEditing::new(pos2(at.x, at.y), Some(id), Some(&block), &app.s.text_style));
     true
 }
 
 /// Commits the text being typed: new text is created, edited text replaced (one undo step
-/// each); emptied text is deleted, and unchanged text commits nothing.
+/// each), with its styled runs (ADR 0085); emptied text is deleted, and unchanged text commits
+/// nothing.
 pub fn commit_text(app: &mut App) {
-    let Some(te) = app.text_edit.take() else { return };
+    let Some(mut te) = app.text_edit.take() else { return };
+    te.sync();
     match te.element {
         None if te.text.trim().is_empty() => {}
         None => {
-            app.run("text.create", json!({"text": te.text, "x": te.at.x, "y": te.at.y}));
+            let mut p = te.edit_params();
+            p["x"] = json!(te.at.x);
+            p["y"] = json!(te.at.y);
+            app.run("text.create", p);
         }
         Some(_) if te.text == te.original => {}
         Some(id) => {
@@ -4769,33 +4724,67 @@ pub fn commit_text(app: &mut App) {
             if te.text.trim().is_empty() {
                 app.run("edit.delete", json!({}));
             } else {
-                app.run("text.edit", json!({"text": te.text}));
+                app.run("text.edit", te.edit_params());
             }
         }
     }
 }
 
-/// The field text is typed in, over the stage at the text's top-left corner. Esc or a click
-/// elsewhere finishes; Enter starts a new line.
+/// The field text is typed in, over the stage at the text's top-left corner, each run shown in
+/// its own colour, size and style (ADR 0085). Esc or a click elsewhere finishes (a click in
+/// Properties' text styles keeps it open); Enter starts a new line.
 fn text_editor(app: &mut App, ui: &mut egui::Ui, stage_origin: Pos2, zoom: f32) {
+    let focused_id = egui::Id::new("stage_text_edit_field");
+    let had_focus = ui.ctx().memory(|m| m.has_focus(focused_id));
+    crate::rich_edit::watch_clipboard(app, ui.ctx(), had_focus);
+    let paper = crate::theme::stage_text_colour(anicraft_engine::doc::Rgba { a: 1.0, ..app.s.doc.stage.background });
+    let held = app.text_props_rect.zip(ui.ctx().input(|i| i.pointer.interact_pos())).is_some_and(|(r, p)| r.contains(p)) || egui::Popup::is_any_open(ui.ctx());
+    // As wide as the block being edited (at the zoom), so its lines break as they do.
+    let block_w = app.text_edit.as_ref().and_then(|te| te.element).and_then(|id| app.s.visible_elements().into_iter().find(|e| e.id == id)).and_then(|e| match &e.kind {
+        anicraft_engine::doc::ElementKind::Text(t) => Some(t.width.unwrap_or(t.box_width)),
+        _ => None,
+    });
     let Some(te) = app.text_edit.as_mut() else { return };
     let at = stage_origin + vec2(te.at.x * zoom, te.at.y * zoom);
-    let size = (app.s.text_style.size * zoom).clamp(12.0, 64.0);
+    let size = (rt_size(te) * zoom).clamp(12.0, 64.0);
+    let width = 260.0f32.max(size * 8.0).max(block_w.unwrap_or(0.0) * zoom + 8.0).min(4000.0);
     let mut done = false;
+    let (runs, last) = (te.runs.clone(), te.last.clone());
     egui::Area::new(egui::Id::new("stage_text_edit")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
-        egui::Frame::new().fill(T.panel).stroke(Stroke::new(1.0, T.selection)).inner_margin(4.0).show(ui, |ui| {
-            let r = ui.add(egui::TextEdit::multiline(&mut te.text).font(crate::theme::stage_text_font(size)).desired_rows(1).desired_width(260.0f32.max(size * 8.0)).hint_text(tr!("Type text"))).named(tr!("Text on the stage"));
+        egui::Frame::new().fill(paper).stroke(Stroke::new(1.0, T.selection)).inner_margin(4.0).show(ui, |ui| {
+            let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
+                let job = crate::rich_edit::layout_job(&runs, &last, buf.as_str(), zoom, wrap);
+                ui.fonts_mut(|f| f.layout_job(job))
+            };
+            let r = ui
+                .add(egui::TextEdit::multiline(&mut te.text).id(focused_id).font(crate::theme::stage_text_font(size)).desired_rows(1).desired_width(width).background_color(paper).hint_text(tr!("Type text")).layouter(&mut layouter))
+                .named(tr!("Text on the stage"));
+            if let Some(range) = egui::text_edit::TextEditState::load(ui.ctx(), r.id).and_then(|s| s.cursor.char_range()) {
+                te.sel = (range.secondary.index.0 as u32, range.primary.index.0 as u32);
+            }
             if te.focus {
+                // Back in the editor (after a style was picked): the selection as it was.
+                if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), r.id) {
+                    let (a, b) = te.sel;
+                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(a as usize), egui::text::CCursor::new(b as usize))));
+                    state.store(ui.ctx(), r.id);
+                }
                 r.request_focus();
                 te.focus = false;
-            } else if r.lost_focus() {
+            } else if r.lost_focus() && !held {
                 done = true;
             }
         });
     });
+    te.sync();
     if done {
         commit_text(app);
     }
+}
+
+/// The size the editor's caret line is shown at: the run at the caret's.
+fn rt_size(te: &crate::app::TextEditing) -> f32 {
+    anicraft_engine::doc::rich_text::style_at(&te.runs, te.sel.1).size
 }
 
 // ----- free transform ---------------------------------------------------------------------------
@@ -4803,6 +4792,8 @@ fn text_editor(app: &mut App, ui: &mut egui::Ui, stage_origin: Pos2, zoom: f32) 
 /// Screen-space handle size and the rotation zone just outside each corner.
 const HANDLE: f32 = 8.0;
 const ROTATE_ZONE: f32 = 22.0;
+/// How far from a box edge line (screen space) a press still grabs it to skew.
+const SKEW_ZONE: f32 = 5.0;
 
 fn bounds_arr(b: anicraft_engine::geom::Rect) -> Option<[f32; 4]> {
     (!b.is_empty()).then_some([b.min.x, b.min.y, b.max.x, b.max.y])
@@ -4819,6 +4810,19 @@ fn xf_zone(r: Rect, p: Pos2) -> Option<XfKind> {
     for (h, hx, hy) in handles(r) {
         if (p.x - h.x).abs() <= HANDLE && (p.y - h.y).abs() <= HANDLE {
             return Some(XfKind::Scale { hx, hy });
+        }
+    }
+    // The line between two handles skews (Animate parity, #174); the handles above win at the ends.
+    let near = |a: f32, b: f32| (a - b).abs() <= SKEW_ZONE;
+    if (r.left() - SKEW_ZONE..=r.right() + SKEW_ZONE).contains(&p.x) && (r.top() - SKEW_ZONE..=r.bottom() + SKEW_ZONE).contains(&p.y) {
+        if near(p.y, r.top()) {
+            return Some(XfKind::Skew { hx: 0, hy: -1 });
+        } else if near(p.y, r.bottom()) {
+            return Some(XfKind::Skew { hx: 0, hy: 1 });
+        } else if near(p.x, r.left()) {
+            return Some(XfKind::Skew { hx: -1, hy: 0 });
+        } else if near(p.x, r.right()) {
+            return Some(XfKind::Skew { hx: 1, hy: 0 });
         }
     }
     if !r.contains(p) && [r.left_top(), r.right_top(), r.left_bottom(), r.right_bottom()].iter().any(|c| c.distance(p) <= ROTATE_ZONE) {
@@ -4867,6 +4871,20 @@ pub(crate) fn xf_total(kind: XfKind, b: [f32; 4], start: Pos2, cur: Pos2, shift:
             }
             let clamp = |s: f32| if s.abs() < 0.01 { 0.01f32.copysign(if s == 0.0 { 1.0 } else { s }) } else { s };
             about(px, py, Affine::scale(clamp(sx), clamp(sy)))
+        }
+        XfKind::Skew { hx, hy } => {
+            // Top and bottom edges slide sideways, left and right edges slide up and down; the
+            // opposite edge stays put (Alt: the centre does), so the grabbed edge follows the pointer.
+            let k = |moved: f32, arm: f32| if arm.abs() < 1e-3 { 0.0 } else { (moved / arm).clamp(-8.0, 8.0) };
+            if hy != 0 {
+                let py = if alt { cy } else { [y1, cy, y0][(hy + 1) as usize] };
+                let shear = k(cur.x - start.x, start.y - py);
+                about(cx, py, Affine { m: [1.0, 0.0, shear, 1.0, 0.0, 0.0] })
+            } else {
+                let px = if alt { cx } else { [x1, cx, x0][(hx + 1) as usize] };
+                let shear = k(cur.y - start.y, start.x - px);
+                about(px, cy, Affine { m: [1.0, shear, 0.0, 1.0, 0.0, 0.0] })
+            }
         }
         XfKind::Rotate => {
             let a0 = (start.y - cy).atan2(start.x - cx);
@@ -5104,10 +5122,33 @@ mod xf_tests {
     }
 
     #[test]
+    fn dragging_the_top_edge_shears_sideways_about_the_bottom_edge() {
+        // B is 100 x 50: dragging the top edge 10 right moves the top edge 10 right.
+        let m = xf_total(XfKind::Skew { hx: 0, hy: -1 }, B, pos2(50.0, 0.0), pos2(60.0, 0.0), false, false);
+        assert_eq!(apply(&m, 0.0, 0.0), Vec2::new(10.0, 0.0));
+        assert_eq!(apply(&m, 0.0, 50.0), Vec2::new(0.0, 50.0), "the opposite edge stays put");
+        assert!((m.determinant() - 1.0).abs() < 1e-5, "a shear keeps the area");
+    }
+
+    #[test]
+    fn dragging_the_right_edge_shears_vertically_and_alt_pivots_on_the_centre() {
+        let m = xf_total(XfKind::Skew { hx: 1, hy: 0 }, B, pos2(100.0, 25.0), pos2(100.0, 35.0), false, false);
+        assert_eq!(apply(&m, 100.0, 0.0), Vec2::new(100.0, 10.0));
+        assert_eq!(apply(&m, 0.0, 0.0), Vec2::new(0.0, 0.0));
+        let m = xf_total(XfKind::Skew { hx: 1, hy: 0 }, B, pos2(100.0, 25.0), pos2(100.0, 35.0), false, true);
+        assert_eq!(apply(&m, 50.0, 25.0), Vec2::new(50.0, 25.0), "centre stays put");
+        assert_eq!(apply(&m, 100.0, 25.0), Vec2::new(100.0, 35.0));
+    }
+
+    #[test]
     fn zones() {
         let r = Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0));
         assert_eq!(xf_zone(r, pos2(300.0, 200.0)), Some(XfKind::Scale { hx: 1, hy: 1 }));
         assert_eq!(xf_zone(r, pos2(200.0, 100.0)), Some(XfKind::Scale { hx: 0, hy: -1 }));
+        assert_eq!(xf_zone(r, pos2(150.0, 101.0)), Some(XfKind::Skew { hx: 0, hy: -1 }));
+        assert_eq!(xf_zone(r, pos2(150.0, 199.0)), Some(XfKind::Skew { hx: 0, hy: 1 }));
+        assert_eq!(xf_zone(r, pos2(99.0, 130.0)), Some(XfKind::Skew { hx: -1, hy: 0 }));
+        assert_eq!(xf_zone(r, pos2(301.0, 130.0)), Some(XfKind::Skew { hx: 1, hy: 0 }));
         assert_eq!(xf_zone(r, pos2(312.0, 212.0)), Some(XfKind::Rotate));
         assert_eq!(xf_zone(r, pos2(200.0, 150.0)), Some(XfKind::Move));
         assert_eq!(xf_zone(r, pos2(500.0, 500.0)), None);
@@ -5172,5 +5213,83 @@ mod pasteboard_tests {
         assert!(n <= (2 * MAX_TILES_PER_AXIS + 1).pow(2), "{n} tiles");
         // Clipped and looking away from the stage: nothing to draw.
         assert!(tiles_for(1.0, (100, 100), [-900.0, -900.0, -10.0, -10.0], 0, Some(BG), false).is_empty());
+    }
+}
+
+/// The artwork that hides selection stipple is found once a frame and only where it covers
+/// something selected; `selection_overlay_cost` measures the whole overlay
+/// (`cargo test selection_overlay_cost -- --ignored --nocapture`).
+#[cfg(test)]
+mod occluder_tests {
+    use super::*;
+
+    #[test]
+    fn occluders_are_outlined_once_and_only_where_they_cover() {
+        let mut s = anicraft_engine::Session::new(anicraft_engine::doc::Document::default());
+        // Two squares apart, then one over the first's corner.
+        for (x, y) in [(0, 0), (300, 0), (50, 50)] {
+            let p = json!({"x": x, "y": y, "w": 100, "h": 100, "fill": "#ff0000", "stroke": null, "object": true});
+            assert!(s.execute("draw.rect", &p).is_ok());
+        }
+        let dl = s.display_list();
+        assert_eq!(dl.items.len(), 3);
+        let clip = Rect::from_min_max(pos2(-100.0, -100.0), pos2(1000.0, 1000.0));
+        let mut occluders = Occluders::new(&dl, &Affine::IDENTITY, clip, GAP);
+        let square = |x: f32| vec![Rect::from_min_max(pos2(x, 0.0), pos2(x + 100.0, 100.0))];
+        let area = |spans: &[Rect]| spans.iter().map(|r| r.area()).sum::<f32>();
+        // The first square is under the third's corner: a quarter of it is hidden.
+        for _ in 0..3 {
+            let mut spans = square(0.0);
+            occluders.exclude(&mut spans, 1);
+            assert!((area(&spans) - 7500.0).abs() < 150.0, "{}", area(&spans));
+        }
+        assert_eq!(occluders.built, 1, "the square between them is never outlined, the one on top once");
+        // Nothing is over the second square, and nothing more is outlined to find that out.
+        let mut spans = square(300.0);
+        occluders.exclude(&mut spans, 2);
+        assert_eq!((spans, occluders.built), (square(300.0), 1));
+        // Artwork that fades with a group leaves the selection visible.
+        let mut faded = (*dl).clone();
+        let group_id = faded.groups.len() as u32;
+        faded.groups.push(anicraft_engine::doc::Group {
+            parent: None, alpha: 0.5, blend: anicraft_engine::doc::BlendMode::Normal,
+            filters: Default::default(), clip: None,
+        });
+        if let Some(top) = faded.items.last_mut() {
+            top.group = Some(group_id);
+        }
+        let mut spans = square(0.0);
+        Occluders::new(&faded, &Affine::IDENTITY, clip, GAP).exclude(&mut spans, 1);
+        assert_eq!(spans, square(0.0));
+    }
+
+    #[test]
+    #[ignore = "a measurement, not a check"]
+    fn selection_overlay_cost() {
+        let ctx = egui::Context::default();
+        let session = anicraft_engine::Session::new(anicraft_engine::doc::Document::default());
+        let mut app = App::with_context(&ctx, session, Some(std::path::PathBuf::from("unused.png")));
+        app.tool = Tool::Select;
+        for i in 0..144 {
+            let (x, y) = (20 + (i % 12) * 40, 20 + (i / 12) * 30);
+            app.run("draw.rect", json!({"x": x, "y": y, "w": 30, "h": 22, "fill": "#3366ff", "stroke": "#000000", "stroke_width": 2, "object": false}));
+        }
+        app.run("edit.deselect", json!({}));
+        let input = || egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 940.0))), ..Default::default() };
+        let frames = |app: &mut App| {
+            for _ in 0..3 {
+                ctx.run_ui(input(), |ui| app.frame(ui)).textures_delta.clear();
+            }
+            let t = std::time::Instant::now();
+            for _ in 0..5 {
+                ctx.run_ui(input(), |ui| app.frame(ui)).textures_delta.clear();
+            }
+            t.elapsed().as_secs_f64() * 1000.0 / 5.0
+        };
+        let idle = frames(&mut app);
+        app.run("edit.select_all", json!({}));
+        let pieces = app.s.selection.len();
+        let selected = frames(&mut app);
+        println!("{pieces} raw pieces: {idle:.2} ms a frame unselected, {selected:.2} ms selected");
     }
 }

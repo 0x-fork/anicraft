@@ -6,7 +6,7 @@ onion skin and Edit Multiple Frames.
 
 A note on keys: AniCraft uses **Ctrl** on Windows and Linux and **⌘** (Command) on macOS, and
 **Alt** is **⌥** (Option) on macOS. So **Ctrl+Alt+C** is **⌥⌘C** on a Mac. Every shortcut
-here is a default you can change in the shortcut editor (**F1**); see
+here is a default you can change in the shortcut editor (**Ctrl+Alt+Shift+K**); see
 [Preferences, shortcuts and accessibility](preferences-shortcuts-accessibility.md).
 
 ## A tour of the timeline
@@ -37,7 +37,9 @@ wheel.
   Layer**. It goes above the active layer.
 * **Delete a layer**: select it and click the delete button under the list, or choose
   **Modify › Timeline › Delete Layer**. Undo brings it back.
-* **Reorder layers**: use the up and down buttons under the list, or **Modify › Timeline › Move
+* **Reorder layers**: drag a layer by its name to where you want it. A line shows where it
+  will land; **Esc** cancels the drag. A folder, a mask or a guide moves with everything in it.
+  From the keyboard, use the up and down buttons under the list, or **Modify › Timeline › Move
   Layer Up** and **Move Layer Down**.
 * **Rename a layer**: double-click its name, or right-click it and choose **Rename Layer**.
 
@@ -55,6 +57,15 @@ Each layer row has three toggles:
 
 Outlines are a working aid only. They show on the stage, but Test Movie and every export draw
 the artwork as it really is.
+
+The eye, the padlock and the square **above the layer names** act on every layer at once, as in
+Animate: one click hides, locks or outlines them all, and the next click brings them all back.
+When only some layers are hidden (or locked, or outlined), the first click makes them all alike.
+The camera layer is left alone.
+
+To give the frames more room, drag the line between the layer names and the frames to the left
+(or to the right for long layer names). Double-click the line to put it back. AniCraft remembers
+the width.
 
 ### Layer colours
 
@@ -83,8 +94,9 @@ Folders keep big timelines tidy.
 
 1. Click the folder button under the layer list, or choose **Insert › Timeline › New Folder**.
    The folder appears above the active layer.
-2. Select a layer and use the up and down buttons to move it in under the folder. Moving a layer
-   off either end of the folder takes it out again.
+2. Drag a layer by its name onto the folder to put it inside, or between two layers of an open
+   folder. Drag it above or below a layer outside the folder to take it out again. (With the up
+   and down buttons: move a layer in under the folder, and off either end to take it out.)
 3. Click the folder's chevron to open or close it.
 
 Hiding or locking a folder hides or locks everything inside it. Folders can nest, and a folder
@@ -269,7 +281,7 @@ tween's object on several frames, and dragging the shared pivot.
 
 A movie can have several scenes, each with its own timeline, played one after another.
 
-* Add one with **Insert › Scene**.
+* Add one with **Insert › New Scene**.
 * Switch scenes from the scene menu at the top left of the stage, or with **Shift+Page Up** and
   **Shift+Page Down**.
 * Duplicate, rename, reorder and delete them under **Modify › Scene**. Deleting a scene with
