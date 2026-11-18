@@ -23,4 +23,3 @@ has to renumber because another PR merged first.
 | Number | Pull request | Topic |
 |---|---|---|
 | 0037 | #38 (outside contribution) | Interface languages |
-| 0109 | `m1/shape-commands` (M1) | Convert Lines to Fills, Expand Fill, Soften Fill Edges, picker eyedropper, transform-origin modes |

@@ -516,7 +516,7 @@ mod tests {
         let ctx = egui::Context::default();
         let (a, b) = (Id::new("fill_popup"), Id::new("stroke_popup"));
         let mut c = [10, 20, 30, 128];
-        let mut frame = |ctx: &egui::Context, id: Id, c: &mut [u8; 4]| {
+        let frame = |ctx: &egui::Context, id: Id, c: &mut [u8; 4]| {
             let mut changed = false;
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| changed = picker(ui, id, c, true, None));
             out.textures_delta.clear();

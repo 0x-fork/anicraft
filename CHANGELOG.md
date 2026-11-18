@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+* **Modify › Shape, the colour picker's eyedropper and transformation origins, from user
+  reports** (ADR 0109, M1).
+  * **Convert Lines to Fills** (#179): each selected line becomes a fill of its exact outline
+    in the line's colour, with its caps, joins, dashes, dots and width profile. The outline is
+    made of curves, not flattened points: a straight line becomes four corners. In merged
+    drawing the fill joins the drawing; a drawing object keeps its fill and gets the outline
+    above it. Measured against what the renderer strokes: the same area to within a pixel.
+  * **Expand Fill…**: grow or inset the selected fills by a distance in stage pixels. Growing
+    rounds corners, insetting keeps them.
+  * **Soften Fill Edges…**: a soft edge of 1 to 50 bands of the fill's colour or gradient,
+    fainter outwards, added round the fill or taken from it.
+  * **The colour picker is an eyedropper** (#288): while any colour picker is open, click the
+    stage to take the colour drawn there, from gradients, bitmaps, lines and symbols alike; a
+    chip by the pointer shows it first, and Esc closes the picker without picking.
+  * **Transform about** (#296): with Free Transform, several selected objects turn, scale and
+    skew as one arrangement (as before), each about its own registration point, or each about
+    its own centre. The stage marks each point; Rotate 90° and Flip follow the choice; Modify ›
+    Transform › Next Transformation Origin can be given a key.
+  * Headless, CLI and MCP: `modify.lines_to_fills`, `modify.expand_fill`,
+    `modify.soften_fill_edges`, `paint.sample`, `modify.transform_origin`, and `origin` on
+    `modify.transform`, `modify.rotate_cw/ccw` and `modify.flip_h/v`.
+  * Fixed: zoomed in past about 2000 % on a wide dashed or tapering curved line, a stray disc
+    could appear on the line.
+
 * **Requests from the issue tracker: layers by drag, all-layer buttons, sizes and more** (M8).
   * **Drag a layer to reorder it** (#407, and part of #241 and #331): drag a layer by its name;
     a line shows where it lands, a folder lights up when the layer goes inside it, **Esc**
