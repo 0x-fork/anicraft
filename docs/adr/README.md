@@ -23,4 +23,3 @@ has to renumber because another PR merged first.
 | Number | Pull request | Topic |
 |---|---|---|
 | 0037 | #38 (outside contribution) | Interface languages |
-| 0116 | M5 video import (open) | Importing video through the user's ffmpeg |
