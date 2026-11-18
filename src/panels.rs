@@ -799,6 +799,10 @@ pub(crate) fn properties(app: &mut App, ui: &mut egui::Ui) {
             if on != app.s.style.snap_objects {
                 app.run("draw.snap_to_objects", json!({"on": on}));
             }
+            // What several selected objects turn and scale about (ADR 0109, #296).
+            if app.tool == Tool::Transform {
+                transform_origin_row(app, ui);
+            }
         });
     }
     // ---- the camera, with the Camera tool or its layer active (ADR 0027) ----
@@ -859,6 +863,49 @@ fn blend_row(app: &mut App, ui: &mut egui::Ui, current: anicraft_engine::doc::Bl
         .response
         .set_name(tr!("Blending"));
         mixed(ui, differs);
+    });
+}
+
+/// A transformation origin's name, as Properties and the status line show it.
+pub(crate) fn transform_origin_label(mode: anicraft_engine::TransformOrigin) -> &'static str {
+    match mode {
+        anicraft_engine::TransformOrigin::Selection => tr!("The whole selection"),
+        anicraft_engine::TransformOrigin::Registration => tr!("Each object's own point"),
+        anicraft_engine::TransformOrigin::Center => tr!("Each object's centre"),
+    }
+}
+
+/// What each transformation origin does, for its tooltip.
+fn transform_origin_tip(mode: anicraft_engine::TransformOrigin) -> &'static str {
+    match mode {
+        anicraft_engine::TransformOrigin::Selection => tr!("The selected objects turn, scale and skew together, as one arrangement"),
+        anicraft_engine::TransformOrigin::Registration => tr!("Each selected object turns, scales and skews where it stands: a symbol or group about its registration point, anything else about its centre"),
+        anicraft_engine::TransformOrigin::Center => tr!("Each selected object turns, scales and skews about the centre of its own box"),
+    }
+}
+
+/// The Free Transform tool's Transform about row: the mode stays as set from one selection to
+/// the next (`modify.transform_origin`; the same command on a key moves to the next mode).
+fn transform_origin_row(app: &mut App, ui: &mut egui::Ui) {
+    let current = app.s.style.transform_origin;
+    let key = app.keymap.primary("modify.transform_origin").map(crate::platform::shortcut_label).filter(|k| !k.is_empty());
+    row_prose(ui, tr!("Transform about"), |ui| {
+        let tip = match &key {
+            Some(k) => tr!("What several selected objects are transformed about. {key} moves to the next choice.", key = k),
+            None => tr!("What several selected objects are transformed about. Give Modify › Transform › Next Transformation Origin a key in the shortcut editor to change it from the keyboard.").to_string(),
+        };
+        egui::ComboBox::from_id_salt("prop_transform_origin")
+            .selected_text(transform_origin_label(current))
+            .show_ui(ui, |ui| {
+                for mode in anicraft_engine::TransformOrigin::ALL {
+                    if ui.selectable_label(mode == current, transform_origin_label(mode)).on_hover_text(transform_origin_tip(mode)).clicked() && mode != current {
+                        app.run("modify.transform_origin", json!({"mode": mode.key()}));
+                    }
+                }
+            })
+            .response
+            .on_hover_text(tip)
+            .set_name(tr!("Transform about"));
     });
 }
 

@@ -569,7 +569,7 @@ impl Verts {
         let mut best: Option<(f64, usize)> = None;
         for dx in -1..=1 {
             for dy in -1..=1 {
-                for &i in self.grid.get(&(cx + dx, cy + dy)).map_or(&[][..], Vec::as_slice) {
+                for &i in self.grid.get(&(cx.saturating_add(dx), cy.saturating_add(dy))).map_or(&[][..], Vec::as_slice) {
                     let d = self.pts[i].dist(p);
                     if d < TOL && best.is_none_or(|b| d < b.0) {
                         best = Some((d, i));
