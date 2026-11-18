@@ -913,7 +913,6 @@ fn diamond(p: &egui::Painter, c: Pos2, r: f32, fill: Color32, stroke: Stroke) {
 
 /// The ease of the selected segment, and the tween's own actions.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn footer(app: &mut App, ui: &mut egui::Ui, body: Rect, track: Option<&Track>, sel_key: Option<u32>, start: u32, rows: &[Property], label: &str, keep_area: bool) {
     let bar = Rect::from_min_max(pos2(body.left(), body.bottom() - FOOTER_H), body.right_bottom());
     ui.painter().rect_filled(bar, SQUARE, T.panel_alt);
