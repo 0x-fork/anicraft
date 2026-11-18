@@ -387,6 +387,10 @@ pub struct App {
     /// Open this layer's colour popup on the next frame (screenshots, the audit).
     pub tl_color_open: Option<anicraft_engine::doc::LayerId>,
     pub convert_last: crate::convert_symbol::Last,
+    /// Expand Fill or Soften Fill Edges while its dialog is open, and what each was last given
+    /// (ADR 0109).
+    pub shape_dialog: Option<crate::shape_dialogs::ShapeDialog>,
+    pub shape_last: crate::shape_dialogs::Last,
     pub show_about: bool,
     pub show_files: bool,
     pub show_licenses: bool,
@@ -731,6 +735,8 @@ impl App {
             tl_header_spill: 0.0,
             tl_color_open: None,
             convert_last: Default::default(),
+            shape_dialog: None,
+            shape_last: Default::default(),
             show_about: false,
             show_files: false,
             show_licenses: false,
@@ -1855,6 +1861,49 @@ impl App {
                 self.run("layer.select", json!({"index": 0}));
                 self.run("edit.select_all", json!({}));
             }
+            Some(which @ ("shapecommands" | "expandfill" | "softenfill")) => {
+                // Modify › Shape (ADR 0109) on a new layer: a dashed, tapering line converted to
+                // fills (selected: Properties shows a fill, no line), a star with its fill
+                // expanded, and a blob with a soft edge of twelve steps. "expandfill" and
+                // "softenfill" show their dialogs over a selected shape instead.
+                self.tool = Tool::Select;
+                self.run("layer.new", json!({"name": "Shapes"}));
+                self.run("draw.object_drawing", json!({"on": true}));
+                self.run("draw.star", json!({"cx": 760, "cy": 560, "outer": 70, "points": 5, "fill": "#f3d36b", "stroke": null}));
+                self.run("modify.expand_fill", json!({"distance": 14}));
+                self.run("draw.path", json!({"d": "M 880 600 C 880 500 1010 470 1070 540 C 1130 610 1080 680 990 670 C 930 664 880 650 880 600 Z", "fill": "#e8553b", "stroke": null}));
+                if which == "shapecommands" {
+                    self.run("modify.soften_fill_edges", json!({"distance": 36, "steps": 12}));
+                    self.run("draw.path", json!({"d": "M 80 620 C 200 480 300 720 420 580 C 500 490 600 520 660 640", "fill": null, "stroke": "#1b2a4a", "stroke_width": 18, "profile": "taper_end", "dash": [46, 16], "cap": "round"}));
+                    self.run("modify.lines_to_fills", json!({}));
+                } else {
+                    crate::shape_dialogs::open(self, if which == "expandfill" { crate::shape_dialogs::Kind::Expand } else { crate::shape_dialogs::Kind::Soften });
+                }
+            }
+            Some("origins") => {
+                // Transformation origins (ADR 0109, #296): three hands, each an instance whose
+                // registration point is at one end, selected with Free Transform and turned a
+                // sixth of a turn each about its own point; Properties shows Transform about.
+                self.run("layer.new", json!({"name": "Hands"}));
+                self.run("draw.object_drawing", json!({"on": true}));
+                for (i, (x, y)) in [(260.0f32, 600.0f32), (560.0, 560.0), (860.0, 620.0)].into_iter().enumerate() {
+                    self.run("draw.rect", json!({"x": x - 90.0, "y": y - 9.0, "w": 180, "h": 18, "radius": 9, "fill": "#1b2a4a", "stroke": null}));
+                    if let Some(id) = self.run("modify.convert_to_symbol", json!({"name": format!("Hand {}", i + 1)})).and_then(|v| v["instance"].as_u64()) {
+                        // i18n-exempt: a sample symbol name
+                        self.run("symbol.edit", json!({"id": id}));
+                        self.run("edit.select_all", json!({}));
+                        self.run("element.translate", json!({"dx": 80, "dy": 0}));
+                        self.run("symbol.exit", json!({}));
+                    }
+                }
+                let layer = self.s.layer;
+                let ids: Vec<u64> = self.s.elements_on(layer).iter().map(|e| e.id.0).collect();
+                self.run("element.select", json!({"ids": ids}));
+                self.tool = Tool::Transform;
+                self.run("modify.transform_origin", json!({"mode": "registration"}));
+                let (sin, cos) = (-60f32).to_radians().sin_cos();
+                self.run("modify.transform", json!({"a": cos, "b": sin, "c": -sin, "d": cos, "e": 0, "f": 0, "origin": "registration"}));
+            }
             Some("points") => {
                 // A pencil stroke and a pen path being edited, with one smooth point selected.
                 let wave: Vec<[f32; 2]> = (0..=240).map(|i| [140.0 + i as f32 * 1.5, 330.0 + (i as f32 * 0.06).sin() * 28.0]).collect();
@@ -2901,7 +2950,7 @@ impl App {
 
     /// Any modal (prompt, confirmation, close guard) is open: global shortcuts pause.
     pub fn modal_open(&self) -> bool {
-        self.prompt.is_some() || self.convert.is_some() || self.confirm.is_some() || self.close_dialog || self.plugin_dialog.is_some() || self.templates.save.is_some()
+        self.prompt.is_some() || self.convert.is_some() || self.shape_dialog.is_some() || self.confirm.is_some() || self.close_dialog || self.plugin_dialog.is_some() || self.templates.save.is_some()
     }
 
     /// The single entry point for user-initiated commands: asks first when the engine says the
@@ -3247,6 +3296,23 @@ impl App {
         if id == "modify.convert_to_symbol" {
             // Name, type and Library folder (ADR 0053).
             crate::convert_symbol::open(self);
+            return;
+        }
+        // Modify › Shape › Expand Fill and Soften Fill Edges ask for a distance (ADR 0109).
+        if id == "modify.expand_fill" {
+            crate::shape_dialogs::open(self, crate::shape_dialogs::Kind::Expand);
+            return;
+        }
+        if id == "modify.soften_fill_edges" {
+            crate::shape_dialogs::open(self, crate::shape_dialogs::Kind::Soften);
+            return;
+        }
+        if id == "modify.transform_origin" {
+            // The key or the menu moves to the next mode, and says which it is.
+            if let Some(v) = self.run(id, json!({})) {
+                let mode = v["mode"].as_str().and_then(anicraft_engine::TransformOrigin::from_key).unwrap_or_default();
+                self.status_ok(tr!("Transformation origin: {mode}.", mode = crate::panels::transform_origin_label(mode)));
+            }
             return;
         }
         if id == "edit.paste" {
@@ -4068,6 +4134,7 @@ impl App {
         crate::drop::frame(self, &ctx);
         self.prompt_window(&ctx);
         crate::convert_symbol::window(self, &ctx);
+        crate::shape_dialogs::window(self, &ctx);
         crate::aids_dialog::window(self, &ctx);
         crate::templates::save_window(self, &ctx);
         crate::layer_props::window(self, &ctx);
