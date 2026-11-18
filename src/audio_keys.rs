@@ -395,11 +395,12 @@ fn draw_graph(ui: &mut egui::Ui, d: &Dialog, g: &Graph) -> Option<u32> {
     Some(g.from + i as u32)
 }
 
-/// A drop-down of `(id, name)` choices; the id picked.
-fn choice(ui: &mut egui::Ui, salt: &str, name: &str, current: u64, list: &[(u64, String)], tip: &str) -> Option<u64> {
+/// A drop-down of `(id, name)` choices, told apart from the dialog's others by `widget`; the id
+/// picked.
+fn choice(ui: &mut egui::Ui, widget: &str, name: &str, current: u64, list: &[(u64, String)], tip: &str) -> Option<u64> {
     let mut picked = None;
     let shown = list.iter().find(|(id, _)| *id == current).map_or_else(String::new, |(_, n)| n.clone());
-    egui::ComboBox::from_id_salt(salt).width(theme::fit(ui, 220.0)).selected_text(text(Type::Body, shown)).show_ui(ui, |ui| {
+    egui::ComboBox::from_id_salt(egui::Id::new(("audio_keys_choice", widget))).width(theme::fit(ui, 220.0)).selected_text(text(Type::Body, shown)).show_ui(ui, |ui| {
         for (id, n) in list {
             if ui.selectable_label(*id == current, text(Type::Body, n.clone())).clicked() && *id != current {
                 picked = Some(*id);
