@@ -134,7 +134,7 @@ mod with_a_stand_in {
         let path = dir.join(format!("ffmpeg-{}", pause.replace('.', "_")));
         std::fs::write(&path, script).unwrap();
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
         path.display().to_string()
     }
 
