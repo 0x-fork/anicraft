@@ -366,6 +366,8 @@ pub struct Session {
     pub(crate) step_label: Option<String>,
     /// A marquee's cut that nothing has used yet (ADR 0041).
     provisional: Option<Provisional>,
+    /// Raw shapes a paste left floating (`edit.paste {float: true}`, as the editor pastes).
+    pub(crate) floating: Option<Floating>,
     /// Set by `raw.select_rect` when it cut: each piece and the shape it was cut from, and the
     /// pieces inside the marquee.
     pub(crate) pending_cut: Option<(CutOrigin, Vec<ElementId>)>,
@@ -406,6 +408,14 @@ pub struct Session {
 
 /// Each piece of a marquee's cut, with the shape it was cut from.
 pub(crate) type CutOrigin = Vec<(ElementId, ElementId)>;
+
+/// Raw shapes a paste put on top of the drawing without merging them (#391): each with its
+/// layer, and the frame they were pasted on. They merge when none of them is selected any more.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Floating {
+    pub(crate) items: Vec<(LayerId, ElementId)>,
+    pub(crate) frame: u32,
+}
 
 /// A marquee's cut that nothing has used yet (ADR 0041). In Animate a marquee only selects: the
 /// drawing is cut where it crosses once the selection is moved or changed. Here the cut happens
@@ -466,6 +476,7 @@ impl Session {
             plugins: anicraft_plugins::Registry::default(),
             step_label: None,
             provisional: None,
+            floating: None,
             pending_cut: None,
             gesture_cut: None,
             hit_area: None,
@@ -606,6 +617,7 @@ impl Session {
             let r = (spec.run)(self, params);
             self.settle_cut(id, params);
             self.hold_group_frame();
+            self.settle_floating();
             return r;
         }
         // An edit on a marquee's cut records its step from before the cut (ADR 0041).
@@ -663,6 +675,7 @@ impl Session {
                 }
                 self.fix_selection();
                 self.hold_group_frame();
+                self.settle_floating();
                 Ok(v)
             }
             Err(e) => {
@@ -671,6 +684,45 @@ impl Session {
                 Err(e)
             }
         }
+    }
+
+    /// Merges floating pasted shapes into the drawing once the selection has let go of them
+    /// (#391; in Animate pasted raw artwork stays apart until it is deselected). The merge is
+    /// part of the step around it: undoing the paste brings back the drawing from before it,
+    /// and undoing a command that deselected them brings them back floating and selected.
+    fn settle_floating(&mut self) {
+        let Some(f) = self.floating.as_ref() else { return };
+        if self.gesture.is_some() || f.items.iter().any(|&(layer, id)| self.selection.contains(layer, id)) {
+            return;
+        }
+        let Some(f) = self.floating.take() else { return };
+        let (doc, frame, layer, selection) = (self.doc.clone(), self.frame, self.layer, self.selection.clone());
+        self.frame = f.frame;
+        let mut layers: Vec<LayerId> = Vec::new();
+        for &(l, _) in &f.items {
+            if !layers.contains(&l) && self.timeline().layer(l).is_some() {
+                layers.push(l);
+            }
+        }
+        let mut ok = true;
+        for l in layers {
+            let ids: Vec<ElementId> = f.items.iter().filter(|i| i.0 == l).map(|i| i.1).collect();
+            ok &= self.with_layer(l, |s| merge::settle(s, &ids)).is_ok();
+        }
+        self.frame = frame;
+        if self.timeline().layer(layer).is_some() {
+            self.layer = layer;
+        }
+        self.selection = selection;
+        if !ok {
+            // They stay as they are, on top: a move merges them where they land.
+            self.doc = doc;
+        } else if self.doc != doc {
+            self.state = history::fresh_state();
+            self.revision += 1;
+        }
+        self.dl_cache.replace(None);
+        self.fix_selection();
     }
 
     /// A group open for editing is one layer and one frame (ADR 0073): commands that change
@@ -812,7 +864,7 @@ impl Session {
         if g.doc == self.doc && g.selection == self.selection {
             return;
         }
-        let back = Snapshot { label: String::new(), doc: g.doc.clone(), state: g.state, scene: g.scene, editing: g.editing.clone(), frame: g.frame, layer: g.layer, selection: g.selection.clone(), bytes: 0, commands: None };
+        let back = Snapshot { label: String::new(), doc: g.doc.clone(), state: g.state, scene: g.scene, editing: g.editing.clone(), frame: g.frame, layer: g.layer, selection: g.selection.clone(), floating: self.floating.clone(), bytes: 0, commands: None };
         self.rec.truncate(self.gesture_rec);
         self.restore(back);
         self.revision += 1;
@@ -820,7 +872,7 @@ impl Session {
     }
 
     fn snapshot(&self, label: &str) -> Snapshot {
-        Snapshot { label: label.to_string(), doc: self.doc.clone(), state: self.state, scene: self.scene, editing: self.editing.clone(), frame: self.frame, layer: self.layer, selection: self.selection.clone(), bytes: 0, commands: None }
+        Snapshot { label: label.to_string(), doc: self.doc.clone(), state: self.state, scene: self.scene, editing: self.editing.clone(), frame: self.frame, layer: self.layer, selection: self.selection.clone(), floating: self.floating.clone(), bytes: 0, commands: None }
     }
 
     fn restore(&mut self, s: Snapshot) {
@@ -832,6 +884,7 @@ impl Session {
         self.frame = s.frame;
         self.layer = s.layer;
         self.selection = s.selection;
+        self.floating = s.floating;
         self.dl_cache.replace(None);
     }
 

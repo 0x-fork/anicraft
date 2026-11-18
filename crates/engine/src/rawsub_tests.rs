@@ -392,3 +392,69 @@ fn the_eraser_takes_gradient_fills_too() {
     assert_eq!(fills(&s).len(), 2, "cut in two");
     assert!(before - after > 1500.0, "{before} → {after}");
 }
+
+/// #391: the editor pastes raw artwork floating (`float: true`). It stays whole and selected on
+/// top of the drawing, so it can be dragged off what it landed on; it goes into the drawing
+/// when the selection lets go of it. Undoing the paste takes the merge back with it.
+#[test]
+fn a_floating_paste_stays_whole_and_selected_until_it_is_deselected() {
+    let mut s = raw_session();
+    run(&mut s, "draw.rect", json!({"x": 100, "y": 100, "w": 80, "h": 60, "fill": "#3366ff", "stroke": null}));
+    run(&mut s, "edit.select_all", json!({}));
+    run(&mut s, "edit.copy", json!({}));
+    run(&mut s, "edit.deselect", json!({}));
+    let before = s.doc.clone();
+    assert_eq!(fills(&s).len(), 1);
+
+    // Paste in Place over the original: two shapes, the copy selected, nothing joined.
+    let v = run(&mut s, "edit.paste_in_place", json!({"float": true}));
+    assert_eq!(v["floating"], json!(true));
+    assert_eq!(fills(&s).len(), 2, "the copy floats over the original");
+    assert_eq!(s.selection.id_list(), ids(&v, "pasted"));
+
+    // Dragged away and dropped: the original is whole where it was, the copy beside it.
+    run(&mut s, "element.translate", json!({"dx": 200, "dy": 0}));
+    run(&mut s, "draw.drop", json!({}));
+    let f = fills(&s);
+    assert_eq!(f.len(), 2);
+    assert!(f.iter().all(|e| (area(e) - 4_800.0).abs() < 1.0));
+    assert!(s.floating.is_none(), "dropped: it is part of the drawing");
+
+    // Pasted again and deselected in place: it joins the same-coloured fill under it.
+    run(&mut s, "edit.deselect", json!({}));
+    let two = s.doc.clone();
+    run(&mut s, "edit.paste_in_place", json!({"float": true}));
+    assert_eq!(fills(&s).len(), 3);
+    run(&mut s, "edit.deselect", json!({}));
+    assert_eq!(fills(&s).len(), 2, "deselected: one fill there, not two");
+    assert!(s.selection.is_empty());
+    // One undo: before that paste. Redo: the joined drawing.
+    let joined = s.doc.clone();
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc, two);
+    run(&mut s, "edit.redo", json!({}));
+    assert_eq!(s.doc, joined);
+    for _ in 0..4 {
+        run(&mut s, "edit.undo", json!({}));
+    }
+    assert_eq!(s.doc, before, "everything undoes back to the single rectangle");
+
+    // A command that deselects it merges it too, and undoing that command brings it back
+    // floating and selected.
+    run(&mut s, "edit.paste_in_place", json!({"float": true}));
+    assert_eq!(fills(&s).len(), 2);
+    run(&mut s, "draw.rect", json!({"x": 400, "y": 300, "w": 20, "h": 20, "fill": "#ff0000", "stroke": null}));
+    assert!(s.floating.is_none());
+    assert_eq!(fills(&s).len(), 2, "the copy joined the original; the red square is new");
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.floating.is_some() && s.selection.len() == 1, "floating again after the undo");
+    assert_eq!(fills(&s).len(), 2);
+    run(&mut s, "edit.deselect", json!({}));
+    assert_eq!(fills(&s).len(), 1);
+
+    // Without float (scripts) the paste cuts and joins at once, as before.
+    let v = run(&mut s, "edit.paste_in_place", json!({}));
+    assert_eq!(v["merged"], json!(true));
+    assert!(s.floating.is_none());
+    assert_eq!(fills(&s).len(), 1);
+}

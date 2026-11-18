@@ -3241,10 +3241,16 @@ impl App {
             crate::convert_symbol::open(self);
             return;
         }
+        // Pasted raw artwork floats, selected, until it is deselected (as in Animate), so it
+        // can be dragged off what it landed on before the two join (#391).
         if id == "edit.paste" {
             // Paste in the centre of what you are looking at.
             let c = self.view_center_stage();
-            self.request(id, json!({"x": c.x, "y": c.y}));
+            self.request(id, json!({"x": c.x, "y": c.y, "float": true}));
+            return;
+        }
+        if id == "edit.paste_in_place" {
+            self.request(id, json!({"float": true}));
             return;
         }
         let prompt = match id {
