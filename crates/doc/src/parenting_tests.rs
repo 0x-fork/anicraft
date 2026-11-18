@@ -257,3 +257,26 @@ fn the_arm_sample_is_three_parented_layers() {
     let on_stage = evaluate(&d, 12).items.iter().find(|i| i.layer == hand).unwrap().transform;
     assert!((own.translation() - on_stage.translation()).length() > 50.0);
 }
+
+#[test]
+#[ignore = "timing; run with --ignored --nocapture"]
+fn timing() {
+    let mk = |linked: bool| {
+        let mut layers: Vec<Layer> = (1..=60u64).map(|i| tweened(i, pose(5.0, 0.0, 0.0), pose(5.0, 0.0, 3.0))).collect();
+        if linked {
+            for i in 1..layers.len() {
+                layers[i].rig_parent = Some(LayerId(i as u64));
+            }
+        }
+        doc(layers)
+    };
+    for linked in [false, true] {
+        let d = mk(linked);
+        let t = std::time::Instant::now();
+        let mut n = 0;
+        for i in 0..2000u32 {
+            n += evaluate(&d, i % 10).items.len();
+        }
+        println!("linked={linked}: {:.1} µs per evaluate ({n} items)", t.elapsed().as_secs_f64() * 1e6 / 2000.0);
+    }
+}
