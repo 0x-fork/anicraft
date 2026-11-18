@@ -168,8 +168,8 @@ fn the_chain_is_bounded() {
     // A chain as long as allowed holds; one longer is refused.
     let n = MAX_RIG_DEPTH as u64 + 1;
     let mut layers: Vec<Layer> = (1..=n).map(|i| held(i, Affine::translate(1.0, 0.0))).collect();
-    for i in 1..layers.len() {
-        layers[i].rig_parent = Some(LayerId(i as u64));
+    for (i, l) in layers.iter_mut().enumerate().skip(1) {
+        l.rig_parent = Some(LayerId(i as u64));
     }
     let extra = held(n + 1, Affine::IDENTITY);
     layers.push(extra);
@@ -264,8 +264,8 @@ fn timing() {
     let mk = |linked: bool| {
         let mut layers: Vec<Layer> = (1..=60u64).map(|i| tweened(i, pose(5.0, 0.0, 0.0), pose(5.0, 0.0, 3.0))).collect();
         if linked {
-            for i in 1..layers.len() {
-                layers[i].rig_parent = Some(LayerId(i as u64));
+            for (i, l) in layers.iter_mut().enumerate().skip(1) {
+                l.rig_parent = Some(LayerId(i as u64));
             }
         }
         doc(layers)

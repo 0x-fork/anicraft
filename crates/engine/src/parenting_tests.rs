@@ -143,7 +143,8 @@ fn cycles_and_layers_that_cannot_follow_are_refused() {
     assert!(err(&mut s, json!({"layer": 1, "parent": "x"})).contains("layer id"));
     assert_eq!(s.doc, before, "a refused link changes nothing");
     // Folders, guides and the camera neither follow nor lead.
-    let folder = run(&mut s, "layer.new_folder", json!({}))["layer"].as_u64().unwrap_or_else(|| s.layer.0);
+    let made = run(&mut s, "layer.new_folder", json!({}));
+    let folder = made["layer"].as_u64().unwrap_or(s.layer.0);
     assert!(err(&mut s, json!({"layer": folder, "parent": 1})).contains("normal and mask"));
     assert!(err(&mut s, json!({"layer": 1, "parent": folder})).contains("no object to follow"));
     run(&mut s, "camera.add", json!({}));
