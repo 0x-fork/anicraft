@@ -821,6 +821,18 @@ pub fn is_system_argument(arg: &str) -> bool {
     arg.starts_with("-psn_")
 }
 
+/// Memory the stage keeps drawn frames in on `os` (the frames around the playhead, so scrubbing
+/// and playing don't draw them again). A browser tab's memory is one block that only grows and
+/// is small next to a computer's (#314: a 24-frame document took 900 MB in the web version,
+/// most of it this cache filling to the desktop's budget), so the web keeps a third of it:
+/// 30 frames of a 1920 x 1080 stage.
+pub fn stage_cache_bytes(os: Os) -> usize {
+    match os {
+        Os::Web => 256 * 1024 * 1024,
+        _ => anicraft_engine::render_service::DEFAULT_CACHE_BYTES,
+    }
+}
+
 /// The window's graphics asked for by `--renderer` / `ANICRAFT_RENDERER`, if any: `gl`,
 /// `wgpu` (automatic), `vulkan`, `dx12` or `metal`. Before #207 the last three all meant `wgpu`.
 #[cfg(not(target_arch = "wasm32"))]
@@ -1163,6 +1175,19 @@ mod tests {
         assert_eq!(forced_backend(Some("dx12")), Some(WindowBackend::Dx12));
         assert_eq!(forced_backend(Some("vulkan")), Some(WindowBackend::Vulkan));
         assert_eq!(forced_backend(Some("metal")), Some(WindowBackend::Metal));
+    }
+
+    /// #314: the web version keeps far fewer drawn frames than the desktop (a tab's memory only
+    /// grows), though still a second of a full-HD stage; the desktop's budget is unchanged.
+    #[test]
+    fn the_web_keeps_a_smaller_frame_cache() {
+        let desktop = anicraft_engine::render_service::DEFAULT_CACHE_BYTES;
+        let web = stage_cache_bytes(Os::Web);
+        assert!(web * 3 <= desktop, "{web} of {desktop}");
+        assert!(web >= 24 * 1920 * 1080 * 4, "a second of full HD at 24 fps still fits");
+        for os in [Os::Windows, Os::Mac, Os::Linux, Os::Other] {
+            assert_eq!(stage_cache_bytes(os), desktop, "{os:?}");
+        }
     }
 
     #[test]
