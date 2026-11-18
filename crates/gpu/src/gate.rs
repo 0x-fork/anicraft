@@ -137,6 +137,9 @@ mod tests {
     #[test]
     fn nothing_is_submitted_while_the_gate_is_closed() {
         fn run(gated: bool) -> (u64, u64) {
+            // The run without the gate only shows that the detector works: there the threads
+            // are submitting nearly all the time, so it can't miss them on a busy machine.
+            let work = if gated { Duration::from_micros(20) } else { Duration::from_millis(2) };
             let frames = Arc::new(AtomicU64::new(0));
             let gate = Arc::new(SubmitGate::new(|| {}));
             let submitting = Arc::new(AtomicU64::new(0));
@@ -151,7 +154,7 @@ mod tests {
                                 submitting.fetch_add(1, Ordering::SeqCst);
                                 // A moment's work, without the sleep's coarse clock.
                                 let t = Instant::now();
-                                while t.elapsed() < Duration::from_micros(20) {
+                                while t.elapsed() < work {
                                     std::hint::spin_loop();
                                 }
                                 submitting.fetch_sub(1, Ordering::SeqCst);
