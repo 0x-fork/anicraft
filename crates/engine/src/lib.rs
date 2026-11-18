@@ -48,6 +48,8 @@ pub mod cmds_plugin;
 mod cmds_scene;
 pub mod cmds_sound;
 pub mod cmds_audio_keys;
+pub mod cmds_data;
+pub mod data_import;
 pub mod cmds_text;
 mod cmds_timeline;
 mod cmds_view;
@@ -186,6 +188,7 @@ pub fn commands() -> Vec<CommandSpec> {
     v.extend(cmds_erase::specs());
     v.extend(cmds_paint::specs());
     v.extend(cmds_swatch::specs());
+    v.extend(cmds_data::specs());
     v.extend(cmds_text::specs());
     v.extend(cmds_width::specs());
     v.extend(cmds_stroke::specs());

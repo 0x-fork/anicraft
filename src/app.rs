@@ -397,6 +397,10 @@ pub struct App {
     /// (its preview is a gesture it keeps open until OK or Cancel), and what it was last given.
     pub audio_keys: Option<crate::audio_keys::Dialog>,
     pub audio_keys_last: crate::audio_keys::Settings,
+    /// The data table the table viewer shows, while it is open (ADR 0118).
+    pub data_view: Option<anicraft_engine::doc::DataId>,
+    /// Import Again: the table the next Import Data Table replaces.
+    pub data_reimport: Option<anicraft_engine::doc::DataId>,
     pub show_about: bool,
     pub show_files: bool,
     pub show_licenses: bool,
@@ -776,6 +780,8 @@ impl App {
             convert_last: Default::default(),
             shape_dialog: None,
             audio_keys: None,
+            data_view: None,
+            data_reimport: None,
             audio_keys_last: crate::audio_keys::Settings::default(),
             shape_last: Default::default(),
             show_about: false,
@@ -2590,6 +2596,12 @@ impl App {
                 self.brush_samples = (0..=30).map(|i| (anicraft_engine::geom::Vec2::new(720.0 + i as f32 * 12.0, 310.0), None)).collect();
                 crate::erasertool::commit(self, crate::pathtools::Xf { origin: egui::Pos2::ZERO, zoom: 1.0 });
             }
+            Some(which @ ("datachart" | "datatable")) => {
+                // Data tables that drive animation (ADR 0118): a bar chart whose bars follow a
+                // table's columns, one selected with its bindings in Properties; `datatable`
+                // also has the table viewer open.
+                crate::data_ui::sample_chart(self, which == "datatable");
+            }
             Some("eyedropper") => {
                 // The sample's sky gradient picked with the Eyedropper: the fill swatch holds it.
                 self.run("paint.pick", json!({"x": 640, "y": 40}));
@@ -3267,6 +3279,14 @@ impl App {
         {
             o.insert("folder".into(), json!(f.display().to_string()));
         }
+        // Import Again (ADR 0118): the file picked replaces the table it was asked for.
+        if id == "data.import_table"
+            && let Some(t) = self.data_reimport.take()
+            && params.get("table").is_none()
+            && let Some(o) = params.as_object_mut()
+        {
+            o.insert("table".into(), json!(t.0));
+        }
         // New and Open bring their document in a tab of its own (ADR 0112): the one being
         // edited stays open, so there is nothing to ask about.
         if crate::tabs::opens_document(id) {
@@ -3366,6 +3386,15 @@ impl App {
                 // In a browser the file goes to the downloads (ADR 0036).
                 let path = v["saved"].as_str().unwrap_or("");
                 self.status_ok(if platform::WEB { tr!("Saved {path} to your downloads", path = path) } else { tr!("Saved {path}", path = path) });
+            }
+            "data.import_table" => crate::data_ui::imported(self, &v),
+            "data.unbind" => {
+                let n = v["removed"].as_u64().unwrap_or(0);
+                self.status_ok(trn!("Removed {n} data binding. {undo} to undo.", "Removed {n} data bindings. {undo} to undo.", n, undo = self.undo_key()));
+            }
+            "data.bake" => {
+                let n = v["keys"].as_u64().unwrap_or(0);
+                self.status_ok(trn!("Baked the data into {n} new keyframe. {undo} to undo.", "Baked the data into {n} new keyframes. {undo} to undo.", n, undo = self.undo_key()));
             }
             "file.import" | "file.import_to_library" if v.get("sound").is_some() => {
                 let id = anicraft_engine::doc::SoundId(v["sound"].as_u64().unwrap_or(0));
@@ -3640,6 +3669,17 @@ impl App {
             crate::audio_keys::open(self, crate::audio_keys::Kind::Lips);
             return;
         }
+        // Modify › Data › Bind to Data binds the selected instance's next property to a table's
+        // column, to be changed in Properties (ADR 0118; headless, the command takes them).
+        if id == "data.bind" {
+            crate::data_ui::bind_from_menu(self);
+            return;
+        }
+        // A plain Import Data Table makes a new table (Import Again names the one to replace
+        // after asking for the file).
+        if id == "data.import_table" {
+            self.data_reimport = None;
+        }
         if id == "modify.transform_origin" {
             // The key or the menu moves to the next mode, and says which it is.
             if let Some(v) = self.run(id, json!({})) {
@@ -3690,10 +3730,12 @@ impl App {
             // The document's swatches (ADR 0078): a swatch file, or a GIMP palette to import.
             "swatch.export" => Some((tr_noop!("Export swatches (a swatch file)"), "path", "swatches.json".to_string())),
             "swatch.import" => Some((tr_noop!("Import swatches (a swatch file or a GIMP palette)"), "path", "swatches.json".to_string())),
+            // A table of numbers for the Library (ADR 0118).
+            "data.import_table" => Some((tr_noop!("Import a data table (CSV, TSV or JSON)"), "path", "data.csv".to_string())),
             _ => None,
         };
         if let Some((title, key, text)) = prompt {
-            let is_file = matches!(key, "path" | "dir") && (id.starts_with("file.") || matches!(id, "plugin.install" | "macro.run" | "macro.import" | "brush.preset_export" | "brush.preset_import" | "filter.preset_export" | "filter.preset_import" | "swatch.export" | "swatch.import"));
+            let is_file = matches!(key, "path" | "dir") && (id.starts_with("file.") || matches!(id, "plugin.install" | "macro.run" | "macro.import" | "brush.preset_export" | "brush.preset_import" | "filter.preset_export" | "filter.preset_import" | "swatch.export" | "swatch.import" | "data.import_table"));
             if is_file && platform::WEB && platform::reads_file(id) {
                 // The browser's file picker (ADR 0036). The file arrives on a later frame
                 // (`open_picked`); a save or export asks for the download's name below.
@@ -4596,6 +4638,7 @@ impl App {
         crate::desktop_ui::offer(self, &ctx);
         crate::plugins_ui::show(self, &ctx);
         crate::audio_keys::show(self, &ctx);
+        crate::data_ui::show(self, &ctx);
         crate::plugin_export_ui::show(self, &ctx);
         crate::dock_float::floating(self, &ctx);
         crate::workspaces_window::show(self, &ctx);
