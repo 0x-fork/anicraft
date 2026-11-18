@@ -198,9 +198,7 @@ pub fn field(el: &X, fonts: &Fonts, faces: &mut HashMap<String, FaceMatch>, repo
     if native.orientation().is_some_and(|o| o != "horizontal") {
         report.skip("vertical text (drawn horizontal)");
     }
-    if native.has_filters() {
-        report.skip("filters on text");
-    }
+    // Filters on text come across: the importer sets them on each block (ADR 0099).
     let mut flags = Flags::default();
     let styled = read_runs(el, &native, fonts, faces, report, &mut flags);
     if flags.justified {

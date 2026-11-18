@@ -1219,6 +1219,8 @@ mod tests_filter;
 #[cfg(test)]
 mod tests_filter_tracks;
 #[cfg(test)]
+mod tests_filter_colour;
+#[cfg(test)]
 mod desktop_tests;
 #[cfg(test)]
 mod merge_tests;

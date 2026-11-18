@@ -944,8 +944,14 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             });
         }
         row(ui, tr!("Scale"), |ui| {
-            let a = ui.add(egui::DragValue::new(&mut sx).suffix(" %").speed(0.5).range(1.0..=10000.0).max_decimals(1)).named(tr!("Scale width"));
-            let b = ui.add(egui::DragValue::new(&mut sy).suffix(" %").speed(0.5).range(1.0..=10000.0).max_decimals(1)).named(tr!("Scale height"));
+            // Negative is a mirror (Flip). Only edits are clamped: a scale merely shown is never
+            // rewritten (#116). The engine refuses a scale too near zero.
+            let a = ui
+                .add(egui::DragValue::new(&mut sx).suffix(" %").speed(0.5).range(-10000.0..=10000.0).clamp_existing_to_range(false).max_decimals(1))
+                .named(tr!("Scale width"));
+            let b = ui
+                .add(egui::DragValue::new(&mut sy).suffix(" %").speed(0.5).range(-10000.0..=10000.0).clamp_existing_to_range(false).max_decimals(1))
+                .named(tr!("Scale height"));
             if a.changed() || b.changed() {
                 live(app, tr_noop!("Scale"), "element.set_transform", json!({"sx": sx / 100.0, "sy": sy / 100.0}));
             }
@@ -960,11 +966,14 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
         if !matches!(e.kind, ElementKind::Camera) {
             colour_effect_rows(app, ui, &e.color, m.color, EffectOf::Selection);
         }
-        // Blending and filters, on movie clips and buttons.
+        // Blending and filters, on movie clips and buttons; filters on text too (ADR 0099).
         if let ElementKind::Symbol { symbol, filters, .. } = &e.kind
             && app.s.doc.symbol(*symbol).is_some_and(|x| x.kind != SymbolKind::Graphic)
         {
             filter_rows(app, ui, filters, m.filters);
+        }
+        if let ElementKind::Text(t) = &e.kind {
+            filter_rows(app, ui, &t.filters, m.filters);
         }
         if let ElementKind::Symbol { symbol, blend, .. } = &e.kind
             && app.s.doc.symbol(*symbol).is_some_and(|x| x.kind != SymbolKind::Graphic)
@@ -1372,6 +1381,7 @@ pub fn sync_filter_presets(app: &mut App) {
         return;
     }
     app.prefs.filter_presets = app.s.filter_presets.clone();
+    app.prefs.filter_presets_hidden = app.s.filter_presets.hidden().to_vec();
     if app.shot.is_none()
         && let Err(e) = app.prefs.save()
     {
@@ -1388,6 +1398,8 @@ enum FilterAct {
     Paste,
     Apply(String),
     Delete(String),
+    /// Hide a built-in preset from the menu, or show it again.
+    Hide(String, bool),
 }
 
 /// A filter's grip: drag it up or down the list to reorder, or, focused, Alt+Up and Alt+Down
@@ -1428,7 +1440,10 @@ fn filter_rows(app: &mut App, ui: &mut egui::Ui, current: &[anicraft_engine::doc
     let n = list.len();
     let mut changed: Option<&'static str> = None;
     let mut act: Option<FilterAct> = None;
-    let presets: Vec<(String, String)> = app.s.filter_presets.presets().iter().map(|p| (p.name.clone(), p.filters.iter().map(|f| crate::i18n::t(f.filter.label())).collect::<Vec<_>>().join(", "))).collect();
+    let what = |p: &anicraft_engine::filter_library::FilterPreset| p.filters.iter().map(|f| crate::i18n::t(f.filter.label())).collect::<Vec<_>>().join(", ");
+    let presets: Vec<(String, String)> = app.s.filter_presets.presets().iter().map(|p| (p.name.clone(), what(p))).collect();
+    // The built-in presets (ADR 0099): name, what is in it, and whether the menu lists it.
+    let builtin: Vec<(&'static str, String, bool)> = anicraft_engine::filter_library::BUILTIN_NAMES.into_iter().zip(anicraft_engine::filter_library::builtins().iter()).map(|(name, p)| (name, what(p), !app.s.filter_presets.is_hidden(name))).collect();
     let copied = app.s.filter_clipboard.as_ref().map_or(0, Vec::len);
     let mut naming = app.filter_naming.name.clone();
     row_prose(ui, tr!("Filters"), |ui| {
@@ -1446,6 +1461,20 @@ fn filter_rows(app: &mut App, ui: &mut egui::Ui, current: &[anicraft_engine::doc
         .set_name(tr!("Add filter"));
         let pr = crate::timeline::icon_button(ui, tr!("Filter presets: apply, save, rename, delete, import, export"), None, Icon::Folder);
         egui::Popup::menu(&pr).id(egui::Id::new("anicraft.filters.presets")).show(|ui| {
+            // The built-in presets the menu lists, then your own.
+            let shown: Vec<&(&'static str, String, bool)> = builtin.iter().filter(|b| b.2).collect();
+            if !shown.is_empty() {
+                ui.label(text(Type::Caption, tr!("Built-in")));
+            }
+            for (name, what, _) in shown.iter().copied() {
+                if ui.button(crate::i18n::t(name)).on_hover_text(tr!("Apply: {filters} (replaces the filters)", filters = what.as_str())).clicked() {
+                    act = Some(FilterAct::Apply((*name).to_string()));
+                }
+            }
+            if !shown.is_empty() {
+                ui.separator();
+                ui.label(text(Type::Caption, tr!("Yours")));
+            }
             if presets.is_empty() {
                 ui.label(text(Type::Caption, tr!("No presets yet. Set up filters, then Save as Preset.")));
             }
@@ -1455,6 +1484,16 @@ fn filter_rows(app: &mut App, ui: &mut egui::Ui, current: &[anicraft_engine::doc
                 }
             }
             ui.separator();
+            // Built-in presets can't be deleted: untick one to take it off this menu.
+            ui.menu_button(tr!("Built-in Presets"), |ui| {
+                ui.label(text(Type::Caption, tr!("Untick one to hide it from this menu")));
+                for (name, _, listed) in &builtin {
+                    let mut on = *listed;
+                    if crate::theme::checkbox(ui, &mut on, crate::i18n::t(name)).named(&tr!("Show the built-in preset {name}", name = crate::i18n::t(name))).changed() {
+                        act = Some(FilterAct::Hide((*name).to_string(), !on));
+                    }
+                }
+            });
             if ui.add_enabled(n > 0, egui::Button::new(tr!("Save as Preset…"))).on_hover_text(tr!("Keep these filters under a name, for any document")).clicked() {
                 naming = Some((String::new(), None));
             }
@@ -1729,6 +1768,9 @@ fn filter_rows(app: &mut App, ui: &mut egui::Ui, current: &[anicraft_engine::doc
                 app.run("filter.preset_apply", json!({"name": name}));
             }
             FilterAct::Delete(name) => app.request("filter.preset_delete", json!({"name": name})),
+            FilterAct::Hide(name, hidden) => {
+                app.run("filter.preset_hide", json!({"name": name, "hidden": hidden}));
+            }
         }
         return;
     }
@@ -3171,5 +3213,79 @@ mod tests {
         for t in [Tool::Pen, Tool::Rect, Tool::Oval, Tool::Star, Tool::Brush, Tool::PaintBucket] {
             assert!(!stroke_only(t), "{t:?} fills");
         }
+    }
+
+    use crate::app::App;
+    use anicraft_engine::Session;
+    use anicraft_engine::geom::Affine;
+    use serde_json::json;
+
+    /// A few headless frames of the whole window, Properties panel included.
+    fn frames(ctx: &egui::Context, app: &mut App) {
+        let input =
+            || egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 940.0))), ..Default::default() };
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(input(), |ui| app.frame(ui));
+            out.textures_delta.clear();
+        }
+    }
+
+    fn transform(app: &App) -> Affine {
+        app.s.visible_elements().first().map(|e| e.transform).unwrap_or_default()
+    }
+
+    /// #116: the Scale fields show a flipped (negative) or very large scale as it is. Showing
+    /// it never writes a clamped value back (that squashed a flipped shape to 1 %).
+    #[test]
+    fn showing_a_flipped_or_huge_scale_leaves_it_alone() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        app.run("draw.rect", json!({"x": 100, "y": 100, "w": 200, "h": 80}));
+        frames(&ctx, &mut app);
+        let b0 = app.s.selection_bounds();
+        app.run("modify.flip_v", json!({}));
+        frames(&ctx, &mut app);
+        let t = transform(&app);
+        assert!((t.m[0] - 1.0).abs() < 1e-4 && (t.m[3] + 1.0).abs() < 1e-4, "flipped vertically, not squashed: {t:?}");
+        app.run("modify.flip_h", json!({}));
+        frames(&ctx, &mut app);
+        let t = transform(&app);
+        assert!((t.m[0] + 1.0).abs() < 1e-4 && (t.m[3] + 1.0).abs() < 1e-4, "flipped both ways: {t:?}");
+        let b1 = app.s.selection_bounds();
+        assert!((b1.width() - b0.width()).abs() < 0.5 && (b1.height() - b0.height()).abs() < 0.5, "same size: {b0:?} vs {b1:?}");
+        // Bigger than the fields' range (10000 %): kept too.
+        app.run("modify.transform", json!({"a": 150, "b": 0, "c": 0, "d": 150, "e": 0, "f": 0}));
+        frames(&ctx, &mut app);
+        let t = transform(&app);
+        assert!((t.m[0] + 150.0).abs() < 1e-2 && (t.m[3] + 150.0).abs() < 1e-2, "{t:?}");
+        // A scale of zero is still refused, and leaves the shape as it was.
+        assert!(app.s.execute("element.set_transform", &json!({"sy": 0})).is_err());
+        assert!(app.s.execute("modify.transform", &json!({"a": 1, "b": 0, "c": 0, "d": 0, "e": 0, "f": 0})).is_err());
+        assert_eq!(transform(&app), t);
+    }
+
+    /// #116: dragging the bottom edge of the transform box up past the top edge mirrors the
+    /// shape; the Properties panel doesn't squash it back to 1 %.
+    #[test]
+    fn dragging_an_edge_past_the_opposite_one_mirrors() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        app.run("draw.rect", json!({"x": 0, "y": 0, "w": 100, "h": 50}));
+        frames(&ctx, &mut app);
+        // The bottom edge goes from y 50 to y -50, past the top edge.
+        let m = crate::stage::xf_total(
+            crate::app::XfKind::Scale { hx: 0, hy: 1 },
+            [0.0, 0.0, 100.0, 50.0],
+            egui::pos2(50.0, 50.0),
+            egui::pos2(50.0, -50.0),
+            false,
+            false,
+        );
+        assert!(m.m[3] < -0.5, "the drag itself mirrors: {m:?}");
+        let [a, b, c, d, e, f] = m.m;
+        assert!(app.s.execute("modify.transform", &json!({"a": a, "b": b, "c": c, "d": d, "e": e, "f": f})).is_ok());
+        frames(&ctx, &mut app);
+        let t = transform(&app);
+        assert!((t.m[0] - 1.0).abs() < 1e-4 && (t.m[3] - m.m[3]).abs() < 1e-3, "still mirrored as dragged: {t:?}");
     }
 }

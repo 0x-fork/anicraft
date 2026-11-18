@@ -30,6 +30,38 @@
     craft-fonts embed Noto Sans Georgian as a fallback face and offer Georgian (`ka`) once its
     catalog is in craft-i18n; a build without the face doesn't offer it, and a damaged font
     file is never loaded.
+* **Fixes and polish from outside contributors.** Thank you all.
+  * **Shape tweens carry a raw shape's line with its fill** (#119, NetterSilver): when the two keyframes' lines have different numbers of pieces (a triangle into a hexagon), the pieces join into outlines that morph as the fill does, with no side left bare and no line left standing; a line on one keyframe only grows in or shrinks away, and shape hints steer the line too.
+  * **Flipping no longer squashes a shape to 1 %** (#116, jayzed80): the Scale fields in Properties show a mirrored scale as a negative percentage and never rewrite a value they only show.
+  * **SVG path data**: long runs of implicit line, curve and move commands keep every point (Mex).
+  * **Scripts**: `Math.round` keeps negative zero and `Math.min`/`Math.max` order signed zeros as ECMAScript does, in Test Movie and the HTML player alike (Mex); a surrogate pair written as two `\u` escapes in a string makes one character (NetterSilver).
+  * **Strokes**: an odd dash list of 9 to 15 lengths repeats whole instead of being cut mid-pattern, and a dotted line's spacing stays in range under overshooting eases (NetterSilver).
+  * **Geometry**: a rounded rectangle with a negative size is the same box as the plain one (NetterSilver), and a matrix whose inverse would overflow has none (Mex).
+  * **Commands**: a `bezier` ease with a malformed entry is refused rather than half-read, and a colour starting with `##` is not a colour (NetterSilver).
+  * **CLI and MCP**: `anicraft-cli <subcommand> --help` (and `help <subcommand>`) print that subcommand's usage (#153, jayzed80); the usage says which frame numbers are 1-based and which 0-based (#152, jayzed80); the MCP render caption reads `1280×720` (#311, Efe Şahinbaş); `--help` lists the light theme (Mex).
+  * **Docs**: plug-in element kinds and `null` bounds, opening Animate files directly from the CLI, and status notes that had gone out of date (Mex). Localisation tests for Hebrew dual plurals and the product name (nocturney).
+* **Licences: the shared libraries' exceptions, and the licence check back in CI.** `symphonia` (MPL-2.0, sound decoding through `craft-audio`) and `jpeg-encoder` (IJG, JPEG export through `craft-image-codecs`) are accepted as crate-scoped exceptions, named in `NOTICE` and `ATTRIBUTION.md`, with the reasons in `docs/legal/compliance.md`. CI runs `cargo deny check licenses bans sources` in its own job again, since the shared gate doesn't.
+* **Filters: animated colours and switches, built-in presets, and filters on text** (ADR 0099,
+  M5).
+  * **Filter colours animate** in a motion tween: a glow's or shadow's colour, a bevel's shadow
+    and highlight, and each stop of a gradient filter's ramp. The Motion Editor has a row per
+    colour with a swatch (pick a colour to key it at the playhead); click the row for its Red,
+    Green, Blue and Alpha curves. Colours change the way a Tint does.
+  * **Quality, Inner, Knockout and Hide object animate as steps**: a key holds until the next
+    one, so a switch turns on exactly at its frame.
+  * Editing a filter's colour or a switch in Properties inside a tween keys it, like its numbers.
+  * **Classic tweens between different filter lists** now fade: a filter only one keyframe has
+    fades in or out, and the ones both have change from one to the other (before, the first
+    keyframe's filters held).
+  * **Built-in filter presets**: Soft Shadow, Hard Shadow, Neon Glow, Outline, Emboss, Engrave,
+    Soft Focus and Greyscale. They can't be deleted; untick one under **Built-in Presets** to
+    take it off the menu (`filter.preset_hide`).
+  * **Filters on text**: static, dynamic and input text take filters in Properties as movie
+    clips do, on the stage, in Test Movie and in every export, and they tween. Animate files'
+    filters on text fields now come in instead of being reported.
+  * Headless: `motion.set_key {property: "filter.0.color", color: "#ff3ea5"}` keys a whole
+    colour; channels and switches are `filter.0.color_red`, `filter.0.knockout` and so on.
+
 * **Mixed armatures: symbols and shapes in one armature** (ADR 0098, M7).
   * A body drawn as a shape that bends can carry a head, hands or props that are symbol
     instances, and an instance's bone can end on a shape that then gets bones of its own. One
