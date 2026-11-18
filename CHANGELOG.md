@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+* **Fixes from your reports: drawing, selection, transform and the timeline** (M1, ADR 0108).
+  * **Fixed: a drawing could vanish under a new brush stroke** (fixes #308). Where a stroke
+    crossed an older one at a shallow angle, the merge could lose the older fill, sometimes
+    the whole drawing. Such a merge is now refused and the new stroke stays whole on top, so
+    nothing drawn is lost.
+  * **Pasted merge-drawing shapes float** (fixes #391): Paste in Center and Paste in Place leave
+    them whole and selected, as in Animate, so a copy can be dragged off its original. They
+    join the drawing when deselected or let go after a move; Undo takes the paste back in one
+    step.
+  * **Paste takes a picture copied in another app** (fixes #263): a paint program's pixels or a
+    screenshot lands in the middle of the view as a bitmap, from the menu and with
+    **Ctrl+V**. Desktop app only; vectors from other apps are not read yet.
+  * **Timeline**: with several frames selected, **F6** and **F7** key every frame of the range,
+    not only the first (fixes #272). Selected keyframes show a hand pointer and drag away, a
+    press on the left of a keyframe no longer resizes the span before it, and a drag from an
+    unselected keyframe says how to move one (fixes #344). F7 on a keyframe keeps its drawing
+    and makes the blank keyframe on the next frame (fixes #372, already in 0.3.0).
+  * **Fill and Stroke in Properties**: turning a fill off and on brings back its colour or
+    gradient instead of white (fixes #292); with only an outline selected, Fill fills what it
+    surrounds (fixes #291); Stroke has a checkbox too, and the width stops at a hairline (0.1)
+    instead of removing the stroke (fixes #393).
+  * **Free Transform shows a rotate cursor** just outside the corners (fixes #194), so the
+    rotate zone can be found.
+  * **A relaxed double-click counts** (fixes #192): two clicks up to half a second apart are a
+    double-click, as on the desktop; before, selecting a fill with its outline often took
+    several tries.
+  * **A dragged edge bends into an even arc** wherever it is grabbed (fixes #186), instead of
+    bulging beside the pointer.
+  * **Resizing the Timeline or a dock keeps the artwork where it is on screen** (fixes #423;
+    after Call4han's #424). A view still as Fit in Window left it goes on fitting.
+  * **Selection dots hide behind masked artwork** only where its mask shows it (after
+    Untoldent's follow-up to #404), at the same speed.
+  * Checked and kept fixed with tests: a flipped symbol or image is no longer squashed by the
+    Properties panel, and undoes (fixes #310, #371); Break Apart works on an imported image
+    and a second time on text (fixes #341, #299).
 * **Fixes and polish from outside contributors** (M8). Thank you all.
   * **Fixed: no menus on macOS** (fixes #187, #247, #398; Oskar Raszkiewicz). The window keeps
     the standard macOS title bar and the menu row sits under it; before, the title bar covered

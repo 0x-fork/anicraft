@@ -4220,7 +4220,7 @@ fn rt_size(te: &crate::app::TextEditing) -> f32 {
 fn rotate_cursor(painter: &egui::Painter, at: Pos2, outward: egui::Vec2) {
     const R: f32 = 9.0;
     const SWEEP: f32 = 1.05;
-    let dir = if outward.length() > 1e-3 { outward.normalized() } else { vec2(0.7071, -0.7071) };
+    let dir = if outward.length() > 1e-3 { outward.normalized() } else { vec2(std::f32::consts::FRAC_1_SQRT_2, -std::f32::consts::FRAC_1_SQRT_2) };
     let mid = dir.y.atan2(dir.x);
     // The arc's circle sits towards the box, so the arc passes through the pointer.
     let c = at - dir * R;

@@ -71,6 +71,13 @@ cargo deny check advisories              # RustSec security advisories (needs ne
   user's own files: AniCraft ships none in the binary; the sample plug-ins are source under
   `examples/plugins` (MIT OR Apache-2.0).
 
+### Pictures from the system clipboard (2026-11-17, ADR 0108)
+
+Paste reads a picture copied in another app through `arboard` (MIT OR Apache-2.0), with its
+`image-data` feature. eframe already depends on that crate with that feature for text, so it
+was in `Cargo.lock` and in the inventory; it is now also a direct dependency of the desktop
+app. No crate was added to the build, and the web build does not use it.
+
 ### Opening documents on macOS (2026-11-11, ADR 0062)
 
 New crate, from crates.io, macOS builds only: `fmv-macos-events` 0.1.0 (MIT OR Apache-2.0),

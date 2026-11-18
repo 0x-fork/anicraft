@@ -3368,7 +3368,8 @@ impl App {
         };
         // The engine imports files: the picture goes through one, removed again at once.
         let dir = std::env::temp_dir().join(format!("anicraft-paste-{}", std::process::id()));
-        let path = dir.join("Pasted image.png");
+        // The file's name becomes the bitmap's name in the Library, so it is translated.
+        let path = dir.join(format!("{}.png", tr!("Pasted image")));
         if let Err(e) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, png)) {
             self.status_err(tr!("The copied picture could not be pasted: {error}", error = e.to_string()));
             return;

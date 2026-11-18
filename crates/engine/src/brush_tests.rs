@@ -379,16 +379,19 @@ impl Lcg {
     }
 }
 
+/// About one turn (6.28 exactly, not τ: the seeds below were found with it).
+const TURN: f32 = 157.0 / 25.0;
+
 /// A hand-like stroke: a wobbly curve between two random points.
 fn wobbly(r: &mut Lcg, n: usize) -> Vec<[f32; 2]> {
     let (x0, y0, x1, y1) = (60.0 + r.next() * 380.0, 60.0 + r.next() * 280.0, 60.0 + r.next() * 380.0, 60.0 + r.next() * 280.0);
-    let (amp, waves, phase) = (5.0 + r.next() * 40.0, 0.5 + r.next() * 2.5, r.next() * 6.28);
+    let (amp, waves, phase) = (5.0 + r.next() * 40.0, 0.5 + r.next() * 2.5, r.next() * TURN);
     let (dx, dy) = (x1 - x0, y1 - y0);
     let len = (dx * dx + dy * dy).sqrt().max(1.0);
     (0..=n)
         .map(|i| {
             let t = i as f32 / n as f32;
-            let w = amp * (t * waves * 6.28 + phase).sin();
+            let w = amp * (t * waves * TURN + phase).sin();
             [x0 + dx * t - dy / len * w, y0 + dy * t + dx / len * w]
         })
         .collect()

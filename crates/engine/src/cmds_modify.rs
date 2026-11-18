@@ -225,7 +225,7 @@ fn paste_with(s: &mut Session, offset: Vec2, float: bool) -> Result<Value> {
     }
     s.selection = sel;
     // Floating shapes wait for the selection to let go of them (`Session::settle_floating`).
-    s.floating = (!floating.is_empty()).then(|| crate::Floating { items: floating, frame: s.frame });
+    s.floating = (!floating.is_empty()).then_some(crate::Floating { items: floating, frame: s.frame });
     let mut layers: Vec<LayerId> = Vec::new();
     for l in &targets {
         if !layers.contains(l) {

@@ -508,7 +508,7 @@ fn fill_on_a_selected_raw_outline_fills_what_it_surrounds() {
     assert!(fills(&s).is_empty());
     // Double-click the outline: its sides, and nothing else.
     run(&mut s, "element.select_connected", json!({"x": 100, "y": 140}));
-    assert!(s.selection.len() >= 1);
+    assert!(!s.selection.is_empty());
     run(&mut s, "element.set_fill", json!({"on": true}));
     let f = fills(&s);
     assert_eq!(f.len(), 1, "the rectangle is filled again");

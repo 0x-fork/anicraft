@@ -126,6 +126,10 @@ As in Animate, the keys keep you moving along the timeline:
   layer you're on up to it.
 * With a frame selected, the keys act on that frame's layer, and the selection moves with the
   playhead.
+* With several frames selected, **F6** makes every one of them a keyframe of what it showed, and
+  **F7** makes every one a blank keyframe, on each selected layer: select a stretch of frames
+  and press **F7** to set up frame-by-frame drawing. Keyframes already in the range keep their
+  drawings.
 
 An empty frame shows a hint in **Properties › Frame**: press **F7** to start drawing there.
 
@@ -141,9 +145,11 @@ Removing or clearing frames that hold artwork asks first.
 
 ### Moving keyframes and resizing spans
 
-* **Move keyframes**: drag selected keyframes left or right in time, or up and down onto other
-  layers. An outline shows where they will land. Keys they land on are replaced, and the source
-  keeps empty frames, as in Animate.
+* **Move keyframes**: click a keyframe to select it (or select a range), then drag it left or
+  right in time, or up and down onto other layers, as in Animate. Over selected keyframes the
+  pointer is a hand, to show they can be dragged; an outline shows where they will land. Keys
+  they land on are replaced, and the source keeps empty frames. **Alt**-drag copies a tween
+  span. A drag that starts on a frame that isn't selected selects a range instead.
 * **Change a span's length**: drag the end of a span. The pointer turns into a resize cursor,
   and a label shows the length in frames and seconds. Later frames move with it.
 
