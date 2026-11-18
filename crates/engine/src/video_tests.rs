@@ -633,3 +633,195 @@ fn a_reference_layer_shows_the_video_from_a_bounded_cache() {
     assert_eq!(s.timeline().layers.len(), layers, "undo takes the layer away again");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A stand-in for ffmpeg (a shell script, so Unix only): the whole path from the command to the
+/// document runs wherever the tests do, and ffmpeg's side of the pipe can be made hostile.
+#[cfg(unix)]
+mod fake {
+    use super::*;
+
+    /// Writes the stand-in to `dir` and gives its path. Asked about a file it describes an
+    /// 8 × 6, one-second, 12 fps video with sound; asked for the sound it writes a tenth of a
+    /// second of silence as a WAV; asked for pictures it sends what `kind` says:
+    /// `good` (twelve 8 × 6 pictures filled with the bytes `A`, `B`, …, or as many as were asked
+    /// for), `slow` (the same, a fifth of a second apart), `endless`, `noisy` (good, after
+    /// 200 KB of messages), `big`, `junk`, `sizes`, `short` or `none`.
+    fn ffmpeg(dir: &Path, kind: &str) -> String {
+        let frame = r#"frame() { printf 'P6\n8 6\n255\n'; head -c 144 /dev/zero | tr '\000' "$(printf "\\$(printf %03o $((65 + $1)))")"; }"#;
+        let good = r#"n=0; while [ $n -lt 12 ] && [ $n -lt "$frames" ]; do frame $n; n=$((n + 1)); done"#;
+        let pictures = match kind {
+            "good" => good.to_string(),
+            "slow" => r#"n=0; while [ $n -lt 12 ] && [ $n -lt "$frames" ]; do frame $n; sleep 0.2; n=$((n + 1)); done"#.to_string(),
+            "endless" => "n=0; while :; do frame $((n % 20)); n=$((n + 1)); done".to_string(),
+            "noisy" => format!("head -c 200000 /dev/zero | tr '\\000' 'x' >&2; {good}"),
+            "big" => r#"printf 'P6\n9000 9000\n255\n'; head -c 1000 /dev/zero"#.to_string(),
+            "junk" => "printf 'GIF89a: not what was asked for'".to_string(),
+            "sizes" => r#"frame 0; printf 'P6\n4 4\n255\n'; head -c 48 /dev/zero"#.to_string(),
+            "short" => r#"frame 0; printf 'P6\n8 6\n255\n'; head -c 70 /dev/zero"#.to_string(),
+            "none" => "echo 'Conversion failed!' >&2".to_string(),
+            other => panic!("no stand-in called {other}"),
+        };
+        let wav = r#"{ printf 'RIFF\014\105\000\000WAVEfmt \020\000\000\000\001\000\002\000\104\254\000\000\020\261\002\000\004\000\020\000data\350\104\000\000'; head -c 17640 /dev/zero; } > "$last""#;
+        let script = [
+            "#!/bin/sh",
+            r#"frames=1000000; ppm=0; wav=0; prev=""; last="""#,
+            r#"for a in "$@"; do"#,
+            r#"  case "$prev" in -frames:v) frames="$a";; esac"#,
+            r#"  case "$a" in ppm) ppm=1;; wav) wav=1;; esac"#,
+            r#"  prev="$a"; last="$a""#,
+            "done",
+            frame,
+            r#"if [ "$wav" = 1 ]; then"#,
+            wav,
+            "  exit 0",
+            "fi",
+            r#"if [ "$ppm" = 1 ]; then"#,
+            &pictures,
+            "  exit 0",
+            "fi",
+            r#"echo "  Duration: 00:00:01.00, start: 0.000000, bitrate: 1 kb/s" >&2"#,
+            r#"echo "  Stream #0:0: Video: fake, rgb24, 8x6, 12 fps" >&2"#,
+            r#"echo "  Stream #0:1: Audio: pcm_s16le, 44100 Hz, stereo" >&2"#,
+            "exit 1",
+            "",
+        ]
+        .join("\n");
+        let path = dir.join(format!("ffmpeg-{kind}"));
+        std::fs::write(&path, script).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.display().to_string()
+    }
+
+    /// A file to import (the stand-in never opens it) and a session at 12 fps on frame 2.
+    fn setup(tag: &str) -> (PathBuf, String, Session) {
+        let dir = temp_dir(tag);
+        let clip = dir.join("clip.mp4");
+        std::fs::write(&clip, b"a video, as far as the stand-in cares").unwrap();
+        let mut s = Session::new(blank());
+        run(&mut s, "doc.set_stage", json!({"fps": 12}));
+        run(&mut s, "timeline.goto", json!({"frame": 2}));
+        (dir, clip.display().to_string(), s)
+    }
+
+    #[test]
+    fn a_stand_in_ffmpeg_imports_frames_sound_and_a_reference() {
+        let (dir, clip, mut s) = setup("fake");
+        let good = ffmpeg(&dir, "good");
+        let before = snap(&s.doc);
+        let layers = s.timeline().layers.len();
+        let info = run(&mut s, "file.video_info", json!({"path": clip, "ffmpeg": good}));
+        assert_eq!((info["width"].as_u64(), info["height"].as_u64(), info["seconds"].as_f64(), info["audio"].as_bool(), info["plan"]["frames"].as_u64()), (Some(8), Some(6), Some(1.0), Some(true), Some(12)));
+        // Frames: twelve pictures on frames 2 to 13, each its own, with the sound under them.
+        let out = run(&mut s, "file.import_video", json!({"path": clip, "ffmpeg": good}));
+        assert_eq!((out["frames"].as_u64(), out["width"].as_u64(), out["height"].as_u64(), out["from"].as_u64(), out["truncated"].as_bool()), (Some(12), Some(8), Some(6), Some(2), Some(false)));
+        let layer = s.active_layer().unwrap().clone();
+        let keys: Vec<(u32, u32)> = layer.keyframes.iter().skip(1).map(|k| (k.start, k.duration)).collect();
+        assert_eq!(keys, (0..12).map(|j| (2 + j, 1)).collect::<Vec<_>>());
+        for (j, k) in layer.keyframes.iter().skip(1).enumerate() {
+            let anicraft_doc::ElementKind::Shape(shape) = &k.elements[0].kind else { panic!("a shape") };
+            let Some(anicraft_doc::Paint::Bitmap { bitmap, .. }) = shape.fill else { panic!("a bitmap fill") };
+            let px = s.doc.bitmap(bitmap).unwrap().pixels().unwrap();
+            assert_eq!(&px.rgba[..4], &[65 + j as u8, 65 + j as u8, 65 + j as u8, 255], "picture {j} is the video's picture {j}");
+        }
+        let sid = anicraft_doc::SoundId(out["sound"].as_u64().unwrap());
+        assert!((s.doc.sound(sid).unwrap().seconds() - 0.1).abs() < 1e-6);
+        let on = s.timeline().layers.iter().find_map(|l| l.keyframes.iter().find(|k| k.sound.as_ref().is_some_and(|f| f.sound == sid))).unwrap();
+        assert_eq!((on.start, on.sound.as_ref().unwrap().sync), (2, anicraft_doc::SoundSync::Stream), "the sound starts with the pictures");
+        assert_eq!(s.timeline().layers.len(), layers + 2);
+        run(&mut s, "edit.undo", json!({}));
+        assert_eq!(snap(&s.doc), before, "one undo step");
+        // On twos, without sound, capped: three pictures held two frames each, and told.
+        let out = run(&mut s, "file.import_video", json!({"path": clip, "ffmpeg": good, "step": 2, "max_frames": 3, "audio": false}));
+        assert_eq!((out["frames"].as_u64(), out["truncated"].as_bool(), out["sound"].is_null()), (Some(3), Some(true), true));
+        let keys: Vec<(u32, u32)> = s.active_layer().unwrap().keyframes.iter().skip(1).map(|k| (k.start, k.duration)).collect();
+        assert_eq!(keys, vec![(2, 2), (4, 2), (6, 2)]);
+        run(&mut s, "edit.undo", json!({}));
+        // A reference layer: under the active layer, twelve frames from frame 2, and the cache
+        // shows the video's own pictures on the timeline's frames.
+        let out = run(&mut s, "file.import_video", json!({"path": clip, "ffmpeg": good, "mode": "reference"}));
+        assert_eq!((out["frames"].as_u64(), out["width"].as_u64(), out["height"].as_u64()), (Some(12), Some(8), Some(6)));
+        let layer = s.timeline().layers.last().unwrap().clone();
+        assert_eq!((layer.kind, layer.locked, layer.end_frame()), (LayerKind::Guide, true, 14));
+        let v = layer.video.as_deref().unwrap().clone();
+        let cache = Cache::with_ffmpeg(1 << 20, Some(good.clone().into()));
+        assert!(matches!(cache.lookup(&v, 2, 12.0, true), Lookup::Pending(None)));
+        assert!(cache.wait_idle(std::time::Duration::from_secs(60)));
+        let generation = cache.generation();
+        assert!(generation > 0 && !cache.pending());
+        for n in 0..12u32 {
+            let Lookup::Ready(f) = cache.lookup(&v, 2 + n, 12.0, true) else { panic!("frame {n}") };
+            assert_eq!((f.pixels.width, f.pixels.height, f.pixels.rgba[0]), (8, 6, 65 + n as u8));
+        }
+        assert!(matches!(cache.lookup(&v, 14, 12.0, true), Lookup::Outside));
+        assert_eq!(cache.usage(), (8 * 6 * 4 * 12, 1));
+        let shown = video::shown(&cache, &s.doc, 2, true);
+        assert!(shown.frames.is_some_and(|f| f.len() == 1 && f[0].element == v.id));
+        cache.forget(&v.path);
+        assert_eq!(cache.usage(), (0, 0));
+        assert!(cache.generation() > generation);
+        // Relinked to another file, retimed, then taken off.
+        let other = dir.join("other.mp4");
+        std::fs::write(&other, b"another").unwrap();
+        let out = run(&mut s, "layer.set_video", json!({"layer": layer.id.0, "path": other.display().to_string(), "ffmpeg": good, "start": 4, "offset": 0.5}));
+        assert_eq!((out["video"]["start"].as_u64(), out["video"]["offset"].as_f64(), out["video"]["missing"].as_bool()), (Some(4), Some(0.5), Some(false)));
+        assert!(out["video"]["path"].as_str().unwrap().ends_with("other.mp4"));
+        run(&mut s, "layer.set_video", json!({"layer": layer.id.0, "remove": true}));
+        // A reference can't start past the video's end.
+        assert!(s.execute("file.import_video", &json!({"path": clip, "ffmpeg": good, "mode": "reference", "start": 5})).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hostile_ffmpeg_output_is_refused_and_changes_nothing() {
+        let (dir, clip, mut s) = setup("hostile");
+        let before = snap(&s.doc);
+        // A picture larger than asked for, something that is no picture, pictures that change
+        // size, a stream cut mid-picture, and nothing at all: each is an error with a reason,
+        // and the document is as it was.
+        for (kind, says) in [("big", "larger"), ("junk", "not a picture"), ("sizes", "different sizes"), ("short", "middle of a picture"), ("none", "Conversion failed")] {
+            let bad = ffmpeg(&dir, kind);
+            for mode in ["frames", "reference"] {
+                // (A reference takes one picture, so it never sees the second, wrong one.)
+                if mode == "reference" && matches!(kind, "sizes" | "short") {
+                    continue;
+                }
+                let e = s.execute("file.import_video", &json!({"path": clip, "ffmpeg": bad, "mode": mode})).unwrap_err().to_string();
+                assert!(e.contains(says), "{kind} as {mode}: {e}");
+                assert_eq!(snap(&s.doc), before, "{kind} as {mode}");
+            }
+            // The stage's cache fails the same way, with a reason, and tries again when told.
+            let v = VideoRef { id: anicraft_doc::ElementId(1), path: clip.clone(), width: 8, height: 6, transform: anicraft_geom::Affine::IDENTITY, start: 0, offset: 0.0, duration: 1.0 };
+            let cache = Cache::with_ffmpeg(1 << 20, Some(bad.into()));
+            let _ = cache.lookup(&v, 0, 12.0, true);
+            assert!(cache.wait_idle(std::time::Duration::from_secs(60)));
+            let found = cache.lookup(&v, 0, 12.0, true);
+            assert!(matches!(found, Lookup::Failed(_)), "{kind}: {found:?}");
+            cache.retry();
+            assert!(matches!(cache.lookup(&v, 0, 12.0, false), Lookup::Pending(_)), "a retry forgets the failure");
+        }
+        // A program that never stops sending is stopped at the cap.
+        let endless = ffmpeg(&dir, "endless");
+        let out = run(&mut s, "file.import_video", json!({"path": clip, "ffmpeg": endless, "max_frames": 7, "audio": false}));
+        assert_eq!((out["frames"].as_u64(), out["truncated"].as_bool()), (Some(7), Some(true)));
+        run(&mut s, "edit.undo", json!({}));
+        // One that floods its messages doesn't stall the pictures.
+        let noisy = ffmpeg(&dir, "noisy");
+        let out = run(&mut s, "file.import_video", json!({"path": clip, "ffmpeg": noisy, "audio": false}));
+        assert_eq!(out["frames"], 12);
+        run(&mut s, "edit.undo", json!({}));
+        // Cancelled part-way through a slow decode: stopped, and nothing changed.
+        let slow = ffmpeg(&dir, "slow");
+        let control = Arc::new(crate::publish::Control::default());
+        s.job = Some(control.clone());
+        let stopper = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            control.cancel();
+        });
+        assert!(matches!(s.execute("file.import_video", &json!({"path": clip, "ffmpeg": slow})), Err(EngineError::Cancelled)));
+        stopper.join().unwrap();
+        s.job = None;
+        assert_eq!(snap(&s.doc), before);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

@@ -53,6 +53,8 @@ pub struct VideoImport {
     /// Seconds into the video to begin at, and seconds to take (0: to the end).
     pub start: f64,
     pub length: f64,
+    /// The ffmpeg to use; `None`: found as Export Video finds it.
+    ffmpeg: Option<String>,
     work: Option<Work>,
     /// The tab the import is for: a result arriving on another document is dropped.
     tab: u64,
@@ -72,13 +74,19 @@ fn file_name(path: &std::path::Path) -> String {
 
 /// Opens the window for the video at `path`; ffmpeg describes the file on another thread.
 pub fn open(app: &mut App, path: PathBuf) {
+    open_using(app, path, None);
+}
+
+/// [`open`] with the ffmpeg at `ffmpeg` (`None`: the one on this computer).
+pub fn open_using(app: &mut App, path: PathBuf, ffmpeg: Option<String>) {
     app.playing = false;
     let (tx, rx) = channel();
     let file = path.clone();
+    let program = video::program(ffmpeg.as_deref());
     let started = std::thread::Builder::new().name("anicraft-video-probe".into()).spawn(move || {
-        let _ = tx.send(video::probe(&video::program(None), &file));
+        let _ = tx.send(video::probe(&program, &file));
     });
-    let mut d = VideoImport { path, info: None, mode: Mode::Frames, step: 1, max_edge: video::DEFAULT_EDGE, audio: true, start: 0.0, length: 0.0, work: Some(Work::Probing(rx)), tab: app.tabs.active_id() };
+    let mut d = VideoImport { path, ffmpeg, info: None, mode: Mode::Frames, step: 1, max_edge: video::DEFAULT_EDGE, audio: true, start: 0.0, length: 0.0, work: Some(Work::Probing(rx)), tab: app.tabs.active_id() };
     if started.is_err() {
         d.work = None;
         d.info = Some(Err(tr!("The video could not be read: this computer would not start another thread.").to_string()));
@@ -88,7 +96,7 @@ pub fn open(app: &mut App, path: PathBuf) {
 
 /// The window with a description already in hand (screenshots and tests: no ffmpeg needed).
 pub fn open_with(app: &mut App, path: PathBuf, probe: Probe) {
-    let mut d = VideoImport { path, info: None, mode: Mode::Frames, step: 1, max_edge: video::DEFAULT_EDGE, audio: probe.audio, start: 0.0, length: 0.0, work: None, tab: app.tabs.active_id() };
+    let mut d = VideoImport { path, ffmpeg: None, info: None, mode: Mode::Frames, step: 1, max_edge: video::DEFAULT_EDGE, audio: probe.audio, start: 0.0, length: 0.0, work: None, tab: app.tabs.active_id() };
     described(app, &mut d, probe);
     app.video_import = Some(d);
 }
@@ -119,6 +127,9 @@ pub fn params(d: &VideoImport) -> Value {
     if d.start > 0.0 {
         p["start"] = json!(d.start);
     }
+    if let Some(f) = &d.ffmpeg {
+        p["ffmpeg"] = json!(f);
+    }
     if d.mode == Mode::Frames {
         p["step"] = json!(d.step);
         p["max_edge"] = json!(d.max_edge);
@@ -131,7 +142,7 @@ pub fn params(d: &VideoImport) -> Value {
 }
 
 /// Import was pressed: ffmpeg decodes on another thread, counted and cancellable.
-fn begin(app: &mut App) {
+pub(crate) fn begin(app: &mut App) {
     let Some(p) = app.video_import.as_ref().map(params) else { return };
     let req = match video::request(&app.s, &p) {
         Ok(r) => r,

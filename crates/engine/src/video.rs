@@ -639,6 +639,8 @@ struct Shared {
     generation: AtomicU64,
     closed: AtomicBool,
     budget: u64,
+    /// The ffmpeg to decode with; `None`: found as [`program`] finds it, each time.
+    ffmpeg: Option<OsString>,
 }
 
 /// What the cache has for a frame.
@@ -675,7 +677,12 @@ impl Drop for Cache {
 
 impl Cache {
     pub fn new(budget: u64) -> Cache {
-        Cache { shared: Arc::new(Shared { state: Mutex::new(State::default()), wake: Condvar::new(), idle: Condvar::new(), generation: AtomicU64::new(0), closed: AtomicBool::new(false), budget }) }
+        Cache::with_ffmpeg(budget, None)
+    }
+
+    /// A cache that decodes with the ffmpeg at `ffmpeg` (`None`: the one [`program`] finds).
+    pub fn with_ffmpeg(budget: u64, ffmpeg: Option<OsString>) -> Cache {
+        Cache { shared: Arc::new(Shared { state: Mutex::new(State::default()), wake: Condvar::new(), idle: Condvar::new(), generation: AtomicU64::new(0), closed: AtomicBool::new(false), budget, ffmpeg }) }
     }
 
     /// Changes whenever a picture arrives (or fails): time to draw the stage again.
@@ -798,7 +805,7 @@ fn work(shared: &Shared) {
                 st = shared.wake.wait_timeout(st, std::time::Duration::from_millis(500)).unwrap_or_else(PoisonError::into_inner).0;
             }
         };
-        let result = decode_chunk(&program(None), &key);
+        let result = decode_chunk(&shared.ffmpeg.clone().unwrap_or_else(|| program(None)), &key);
         let mut guard = lock(&shared.state);
         let st = &mut *guard;
         st.decoding = None;
