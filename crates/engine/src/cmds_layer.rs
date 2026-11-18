@@ -228,6 +228,7 @@ fn properties(s: &Session, id: LayerId) -> Result<Value> {
         "visible": l.visible,
         "locked": l.locked,
         "onion": l.onion,
+        "video": crate::cmds_video::video_json(l),
     }))
 }
 
