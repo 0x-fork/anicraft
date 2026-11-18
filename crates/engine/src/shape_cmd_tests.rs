@@ -39,7 +39,7 @@ fn solid(sh: &Shape) -> Option<Rgba> {
 /// The stage as the CPU renderer draws it, as coverage of ink (0 white .. 1 black) per pixel.
 fn ink(s: &Session) -> Vec<f32> {
     let (pm, _) = anicraft_render::render(&s.display_list(), &View::stage(&s.doc, 1.0)).unwrap();
-    pm.to_rgba8().chunks_exact(4).map(|px| 1.0 - f32::from(px[0]) / 255.0).collect()
+    pm.to_rgba8().as_chunks::<4>().0.iter().map(|px| 1.0 - f32::from(px[0]) / 255.0).collect()
 }
 
 /// How far two renders are apart: the summed difference in pixels of ink, and the largest
@@ -89,7 +89,7 @@ impl Mask {
                 }
             }
             xs.sort_by(f32::total_cmp);
-            for pair in xs.chunks_exact(2) {
+            for pair in xs.as_chunks::<2>().0 {
                 // Samples whose centres lie in [pair[0], pair[1]).
                 let from = (pair[0] * SS as f32 - 0.5).ceil().max(0.0) as usize;
                 let to = ((pair[1] * SS as f32 - 0.5).ceil().max(0.0) as usize).min(w);
