@@ -31,7 +31,7 @@ use crate::planar::{self, Item};
 use crate::{Affine, FillRule, Path, PathCmd, Rect, Vec2};
 
 /// How far a ribbon's side may be from the true offset curve, in the path's units.
-pub const TOLERANCE: f64 = 0.01;
+pub const TOLERANCE: f64 = 0.0025;
 /// Most halvings of one segment's ribbon (so at most 256 ribbons per segment).
 const MAX_DEPTH: u32 = 8;
 /// Most pieces one outline is built from; past that it is declined.
@@ -156,17 +156,19 @@ impl Seg {
     fn new(c: [D; 4], line: bool, to_local: Option<&Affine>) -> Seg {
         let n = if line { 1 } else { LEN_SAMPLES };
         let mut seg = Seg { c, line, out_tab: Vec::with_capacity(n + 1), loc_tab: Vec::with_capacity(n + 1) };
-        let local = |p: D| to_local.map_or(p, |m| D::of(m.apply(p.vec())));
-        let (mut prev, mut out, mut loc) = (c[0], 0.0, 0.0);
+        // Simpson's rule on the speed: exact for lines, and to a millionth for curves.
+        let local = |v: D| to_local.map_or(v, |m| D::of(m.apply_vector(v.vec())));
+        let (mut out, mut loc) = (0.0, 0.0);
         seg.out_tab.push(0.0);
         seg.loc_tab.push(0.0);
-        for j in 1..=n {
-            let p = seg.point(j as f64 / n as f64);
-            out += p.sub(prev).len();
-            loc += local(p).sub(local(prev)).len();
+        let h = 1.0 / n as f64;
+        for j in 0..n {
+            let t = j as f64 * h;
+            let (a, m, b) = (seg.d1(t), seg.d1(t + h * 0.5), seg.d1(t + h));
+            out += h / 6.0 * (a.len() + 4.0 * m.len() + b.len());
+            loc += h / 6.0 * (local(a).len() + 4.0 * local(m).len() + local(b).len());
             seg.out_tab.push(out);
             seg.loc_tab.push(loc);
-            prev = p;
         }
         seg
     }
@@ -460,8 +462,9 @@ impl Builder<'_> {
                 let (a0, a1, am) = (o0.angle(), o1.angle(), mid.angle());
                 let mut sweep = wrap(a1 - a0);
                 let to_mid = wrap(am - a0);
-                // Go round the side that passes through the gap's middle.
-                if to_mid * sweep < 0.0 || to_mid.abs() > sweep.abs() {
+                // Where the path nearly turns back, go round the side that passes through the
+                // gap's middle; on a gentler bend the short way is the outside.
+                if u.dot(v) < -0.5 && (to_mid * sweep < 0.0 || to_mid.abs() > sweep.abs()) {
                     sweep -= std::f64::consts::TAU.copysign(sweep);
                 }
                 arc(&mut path, p, radius, a0, sweep);

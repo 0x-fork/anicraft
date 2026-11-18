@@ -47,6 +47,7 @@ mod cmds_timeline;
 mod cmds_view;
 mod cmds_width;
 mod cmds_stroke;
+pub mod cmds_shape;
 pub mod cmds_swatch;
 pub mod confirm;
 pub mod editing;
@@ -177,6 +178,7 @@ pub fn commands() -> Vec<CommandSpec> {
     v.extend(cmds_text::specs());
     v.extend(cmds_width::specs());
     v.extend(cmds_stroke::specs());
+    v.extend(cmds_shape::specs());
     v.extend(cmds_plugin::specs());
     v.extend(cmds_sound::specs());
     v.extend(cmds_actions::specs());
