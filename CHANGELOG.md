@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+* **The transformation point, a box that turns with the object, and layer opacity, from user
+  reports** (ADR 0111, M1).
+  * **Move the transformation point** (#302, #280, #178, #183): with Free Transform, drag the
+    white circle to where the object should turn; it snaps to the box's corners, sides and
+    centre (Alt places it freely) and can sit outside the box. Double-click it to centre it
+    again. Rotating turns about it, and Alt scales and skews about it.
+  * **A symbol instance keeps its point**: it is saved with the instance and used by Free
+    Transform, Rotate 90° and Flip, the Scale and Rotation fields in Properties, and classic
+    and motion tweens, so an arm keyed at two angles swings from its shoulder. Properties
+    shows it as **Pivot** with **Reset**; Modify › Transform › Reset Transformation Point.
+    Shapes, groups, text and several objects have a point while they stay selected with Free
+    Transform. Files and tweens made before this are unchanged.
+  * **The box turns with the object** (#175): one selected object shows its own box, turned,
+    scaled and skewed as it is, and its handles stretch it along its own sides.
+  * **Layer opacity** (#279): 0 to 100 % in Layer Properties and in the layer's right-click
+    menu, shown beside the layer's name. The layer fades as one (overlapping shapes don't show
+    through each other), a folder fades the layers in it, and it is in the movie: the stage,
+    Test Movie and every export.
+  * Headless, CLI and MCP: `modify.transformation_point`, `modify.reset_transformation_point`,
+    `layer.set_opacity`, and `opacity` on `layer.set_properties` and `layer.properties`.
+  * Changed: with Free Transform, a press on the very centre of the box now takes the
+    transformation point; drag anywhere else inside the box to move the object.
+
 * **Fixes from your reports: drawing, selection, transform and the timeline** (M1, ADR 0108).
   * **Fixed: a drawing could vanish under a new brush stroke** (fixes #308). Where a stroke
     crossed an older one at a shallow angle, the merge could lose the older fill, sometimes

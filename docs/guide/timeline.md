@@ -83,8 +83,22 @@ row taller. This is handy for layers you work on a lot, or for seeing sound wave
 Double-click a layer's icon (or right-click it and choose **Properties…**, or choose **Modify ›
 Timeline › Layer Properties**) to open the Layer Properties window. Here you can set, all at
 once, the layer's name, whether it shows and is locked, its type (Normal, Mask, Masked, Guide
-or Guided), its outline colour, outlines, onion skin and height. **OK** applies everything as
-one undo step; **Cancel** changes nothing.
+or Guided), its outline colour, outlines, onion skin, opacity and height. **OK** applies
+everything as one undo step; **Cancel** changes nothing.
+
+### Layer opacity
+
+**Opacity** in Layer Properties sets how strongly a layer shows, from 0 to 100 %. For the usual
+values, right-click the layer and choose **Opacity** › **100 %**, **75 %**, **50 %**, **25 %**
+or **0 %**. A faded layer shows its percentage beside its name.
+
+The layer fades **as one**: its artwork is drawn together first, so where two of its shapes
+overlap you don't see one through the other. A folder's opacity fades every layer in it, on
+top of each layer's own. Mask and guide layers ignore it.
+
+Layer opacity is part of your movie: you see it on the stage, in Test Movie and in every
+export. (Animate's *Transparent* layer setting is only a view while you work; to see through
+a layer while tracing without changing the movie, use **View as Outlines** instead.)
 
 Layer Properties works on one layer at a time. Editing several layers at once isn't there yet.
 

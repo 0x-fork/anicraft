@@ -23,4 +23,3 @@ has to renumber because another PR merged first.
 | Number | Pull request | Topic |
 |---|---|---|
 | 0037 | #38 (outside contribution) | Interface languages |
-| 0111 | m1/transformation-point (M1 track) | The transformation point, a turning box and layer opacity |
