@@ -26,7 +26,7 @@ pub fn specs() -> Vec<CommandSpec> {
         c("element.select", "Select Elements", "", None, "{ids: [..], add?: bool, toggle?: bool, layer?} selects elements on any visible, unlocked layer at the playhead (ids are unique; `layer` looks only there); `toggle` takes each one that is selected out of the selection and adds the others (Shift+Space on a stage element); the active layer becomes the first one's unless it has some of them", false, select),
         c("element.pick", "Select at Point", "", None, "{x, y, add?: bool, view?: stage|camera} the topmost element there on a visible, unlocked layer; `add` (Shift) adds it to the selection, or lets go of it, on any layer; with `view: camera` the point is on the movie's picture as the camera shows it (each layer through its depth)", false, pick),
         c("element.translate", "Move", "", None, "{dx, dy, snap?, from?: [x, y]} moves the selection, on every layer; with `snap` (a distance) one of its corners or ends, or its box's corners or centre (the nearest to `from`), then snaps within that distance by the snap engine's priority (ADR 0076): a point, guide, line or fill edge of the rest, the grid, a whole pixel", true, translate),
-        c("element.set_transform", "Transform", "", None, "{x?, y?, sx?, sy?, rotation? (degrees)}", true, |s, p| s.each_layer(true, |s| set_transform(s, p))),
+        c("element.set_transform", "Transform", "", None, "{x?, y?, sx?, sy?, rotation? (degrees)} x and y place the registration point. A new scale or rotation alone is applied about a symbol instance's transformation point when it has one (modify.transformation_point), else about the registration point", true, |s, p| s.each_layer(true, |s| set_transform(s, p))),
         c("element.set_fill", "Fill Colour", "", None, "{color: \"#rrggbb\" | \"#rrggbbaa\" | null, or on: true | false} (the alpha is the fill's own; 00 is a clear fill, not the same as null. on: false turns the fill off like null; on: true puts back the fill each shape had before, else the tool's fill colour. With only raw lines selected the fill goes to what they surround)", true, |s, p| s.each_layer(false, |s| set_fill(s, p))),
         c("element.set_stroke", "Stroke", "", None, "{on?: true | false (false removes the stroke like color: null; true puts back the stroke each shape had before, else the tool's), color?: \"#rrggbb\" | \"#rrggbbaa\" | null, width?, profile?: uniform|taper_both|taper_start|taper_end|bulge|pinch | [[t, left, right], ..], cap?, join?, miter?, style?, dash?, dash_offset?, dot_spacing? (as stroke.set_style)}", true, |s, p| s.each_layer(false, |s| set_stroke(s, p))),
         c("element.set_alpha", "Alpha", "", None, "{alpha: 0..1} sets the alpha multiplier and keeps the rest of the colour effect (None becomes Alpha; Brightness and Tint become Advanced below 1)", true, |s, p| s.each_layer(true, |s| set_alpha(s, p))),
@@ -377,7 +377,10 @@ fn set_transform(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(v) = rot {
             d.rotation = v.to_radians();
         }
-        e.transform = d.compose();
+        // A new scale or rotation turns an instance about its transformation point (ADR
+        // 0111); a position given places the registration point, as always.
+        let m = d.compose();
+        e.transform = if x.is_none() && y.is_none() { e.about_pivot(m) } else { m };
     }
     // A raw drawing turns and scales as one shape, about the centre of its pieces (#297): every
     // piece takes the change that gives its first piece the values asked for.
