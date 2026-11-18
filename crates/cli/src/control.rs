@@ -295,19 +295,22 @@ fn serve_connection(stream: TcpStream, token: &str, tx: &Sender<Request>, wake: 
             Ok(None) | Err(LineError::Io(_)) => return,
             Err(LineError::TooLong) => {
                 let _ = writeln!(out, "{}", fail(&Value::Null, format!("request longer than {} MiB", MAX_LINE / (1024 * 1024))));
-                return;
+                return close_after_reply(&out, &mut reader);
             }
             Err(LineError::NotText) => {
                 let _ = writeln!(out, "{}", fail(&Value::Null, "the request is not UTF-8 text"));
-                return;
+                return close_after_reply(&out, &mut reader);
             }
         };
         if line.trim().is_empty() {
             continue;
         }
         let (reply, keep_open) = answer(&line, token, tx, wake);
-        if writeln!(out, "{reply}").and_then(|()| out.flush()).is_err() || !keep_open {
+        if writeln!(out, "{reply}").and_then(|()| out.flush()).is_err() {
             return;
+        }
+        if !keep_open {
+            return close_after_reply(&out, &mut reader);
         }
         // Only a request with the right token keeps the connection open: from here on the
         // client may be idle for as long as it likes (an assistant between calls).
@@ -315,6 +318,32 @@ fn serve_connection(stream: TcpStream, token: &str, tx: &Sender<Request>, wake: 
             known = true;
             // On the reading handle itself: Windows keeps the timeout per handle, not per socket.
             let _ = reader.get_ref().set_read_timeout(None);
+        }
+    }
+}
+
+/// Most a refused client may still send after its reply before the connection is cut, and for
+/// how long (see [`close_after_reply`]).
+const DRAIN_BYTES: u64 = 2 * MAX_LINE as u64;
+const DRAIN_TIME: Duration = Duration::from_secs(2);
+
+/// Closes a connection after a refusal so the client still reads the reply. Closing a socket
+/// with unread input makes the system reset the connection, and a reset may discard the reply
+/// before the client reads it (macOS does). So: no more writes, then read and drop what the
+/// client is still sending, bounded in bytes and time, then close.
+fn close_after_reply(out: &TcpStream, reader: &mut BufReader<TcpStream>) {
+    let _ = out.shutdown(std::net::Shutdown::Write);
+    let _ = reader.get_ref().set_read_timeout(Some(DRAIN_TIME));
+    let started = Instant::now();
+    let mut buf = [0u8; 64 * 1024];
+    let mut left = DRAIN_BYTES;
+    // Bytes already buffered count too.
+    let buffered = reader.buffer().len();
+    reader.consume(buffered);
+    while left > 0 && started.elapsed() < DRAIN_TIME {
+        match reader.get_mut().read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => left = left.saturating_sub(n as u64),
         }
     }
 }
