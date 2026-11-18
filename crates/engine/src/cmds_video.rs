@@ -17,7 +17,7 @@ pub fn specs() -> Vec<CommandSpec> {
             label: "Import Video…",
             menu: "File/Import",
             shortcut: None,
-            params: "{path (any video your ffmpeg reads: .mp4, .mov, .webm, .mkv, .avi, .gif…), mode? (frames (default): the video's frames become bitmaps on a new layer from the playhead, one keyframe each at the document's frame rate, with its sound as a stream sound on a layer of its own | reference: a locked guide layer at the bottom that shows the video under the artwork for tracing; the video stays a file and is in no export), step? (frames: one picture every 1–60 document frames; default 1), max_edge? (frames: longest edge of the pictures in pixels, 16–4096; default 1280; a smaller video is never enlarged), start? (seconds into the video to begin at), length? (frames: seconds of video to take), max_frames? (frames: most pictures to take, 1–2000), audio? (frames: default true), ffmpeg? (path; else ANICRAFT_FFMPEG, else ffmpeg on the PATH)} → {mode, layer, frames, width, height, step, truncated, sound, note}. Decoding is done by your ffmpeg (ADR 0116); at most 2000 pictures and 1 GB of decoded pixels are taken, and the rest is left out (truncated)",
+            params: "{path (any video your ffmpeg reads: .mp4, .mov, .webm, .mkv, .avi, .gif…), mode? (frames (default): the video's frames become bitmaps on a new layer from the playhead, one keyframe each at the document's frame rate, with its sound as a stream sound on a layer of its own | reference: a locked guide layer right under the active layer (under its folder, if it is in one) that shows the video beneath what you draw, for tracing; the video stays a file and is in no export), step? (frames: one picture every 1–60 document frames; default 1), max_edge? (frames: longest edge of the pictures in pixels, 16–4096; default 1280; a smaller video is never enlarged), start? (seconds into the video to begin at), length? (frames: seconds of video to take), max_frames? (frames: most pictures to take, 1–2000), audio? (frames: default true), ffmpeg? (path; else ANICRAFT_FFMPEG, else ffmpeg on the PATH)} → {mode, layer, frames, width, height, step, truncated, sound, note}. Decoding is done by your ffmpeg (ADR 0116); at most 2000 pictures and 1 GB of decoded pixels are taken, and the rest is left out (truncated)",
             mutates: true,
             run: import_video,
         },
@@ -169,10 +169,20 @@ fn apply(s: &mut Session, prepared: Prepared) -> Result<Value> {
             layer.keyframes = vec![Arc::new(Keyframe::new(0, at + frames))];
             let result = json!({"mode": "reference", "layer": id.0, "frames": frames, "width": v.width, "height": v.height, "seconds": duration, "path": v.path});
             layer.video = Some(Arc::new(v));
+            let active = s.active_layer_index();
             let tl = crate::editing::edited_mut(&mut s.doc, s.scene, &s.editing)?;
             layer.color = crate::cmds_timeline::layer_color(tl.layers.len() + 1);
-            // At the bottom: under all the artwork. The layer being drawn on stays active.
-            tl.layers.push(Arc::new(layer));
+            // Right under the layer being drawn on (under its whole folder or mask group, at
+            // the top level): what is traced sits on the video, and a backdrop further down
+            // doesn't cover it. That layer stays active.
+            let mut top = active.unwrap_or(0).min(tl.layers.len().saturating_sub(1));
+            for _ in 0..=anicraft_doc::MAX_LAYER_DEPTH {
+                let Some(parent) = tl.layers.get(top).and_then(|l| l.parent) else { break };
+                let Some(i) = tl.layers.iter().position(|l| l.id == parent) else { break };
+                top = i;
+            }
+            let at = tl.group_range(top).end.max(top + 1).min(tl.layers.len());
+            tl.layers.insert(at, Arc::new(layer));
             tl.repair_masks();
             Ok(result)
         }

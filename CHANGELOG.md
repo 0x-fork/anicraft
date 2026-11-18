@@ -8,8 +8,8 @@
     playhead, one keyframe per frame at the document's frame rate, kept together in a Library
     folder, with the video's sound on a layer of its own in time with them. Choose a frame
     step (2 animates on twos), the largest size, and where to start and how much to take.
-  * **Reference layer for tracing**: a locked guide layer at the bottom shows the video under
-    your artwork as you scrub and play. The video stays a file, adds nothing to the document
+  * **Reference layer for tracing**: a locked guide layer right under the layer you are on shows
+    the video beneath what you draw as you scrub and play. The video stays a file, adds nothing to the document
     and is never in the movie or an export. Fade it with the layer's opacity; relink a moved
     file or remove the video in Layer Properties.
   * **Told up front**: before anything starts, the window says how many pictures of what size

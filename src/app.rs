@@ -3476,7 +3476,7 @@ impl App {
                 let mut said = if v["mode"] == "reference" {
                     // The pictures come from the file as the playhead moves.
                     self.video.retry();
-                    trn!("The video is on a locked guide layer at the bottom, for {n} frame. Draw on the layers above it; it is never exported. {undo} to undo.", "The video is on a locked guide layer at the bottom, for {n} frames. Draw on the layers above it; it is never exported. {undo} to undo.", n, undo = undo)
+                    trn!("The video is on a locked guide layer under the layer you are on, for {n} frame. Draw on the layers above it; it is never exported. {undo} to undo.", "The video is on a locked guide layer under the layer you are on, for {n} frames. Draw on the layers above it; it is never exported. {undo} to undo.", n, undo = undo)
                 } else if v["sound"].is_null() {
                     trn!("{n} video frame is on a new layer from frame {from}. {undo} to undo.", "{n} video frames are on a new layer from frame {from}. {undo} to undo.", n, from = from, undo = undo)
                 } else {

@@ -151,7 +151,7 @@ variable `ANICRAFT_FFMPEG` to the full path of the `ffmpeg` program.
 | Import as | What you get | Use it when |
 |---|---|---|
 | **Frames in the document** | The frames become bitmaps on a new layer, one keyframe each, with the sound on a layer below | The clip is short and should be part of the movie |
-| **Reference layer for tracing** | A locked guide layer at the bottom that shows the video under your artwork | You trace or time against footage that should not be exported |
+| **Reference layer for tracing** | A locked guide layer, right under the layer you are on, that shows the video beneath what you draw | You trace or time against footage that should not be exported |
 
 4. Press **Import** (or **Add Reference Layer**).
 
@@ -186,7 +186,9 @@ can delete keyframes you don't need, swap a bitmap, or trace one into shapes on 
 ### A reference layer for tracing
 
 The video shows on the stage under your artwork and follows the playhead as you scrub and play.
-It is a **guide layer**, so it is never in the movie, in Test Movie or in any export. It is
+The layer goes right under the layer you are on (under its folder, if it is in one), so what you
+draw sits on the video and artwork further down, such as a background, stays behind it. Drag
+the layer up or down like any other. It is a **guide layer**, so it is never in the movie, in Test Movie or in any export. It is
 locked, so you can't draw on it by mistake. Draw on the layers above it.
 
 * **Fade it**: double-click the layer's icon to open **Layer Properties** and lower **Opacity**.

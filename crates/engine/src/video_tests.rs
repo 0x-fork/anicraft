@@ -558,6 +558,14 @@ fn a_reference_layer_shows_the_video_from_a_bounded_cache() {
     let v = layer.video.as_deref().unwrap().clone();
     assert_eq!((v.start, v.offset, v.width, v.height), (4, 0.0, 64, 48));
     assert!((v.duration - 2.0).abs() < 0.05 && Path::new(&v.path).is_absolute());
+    // In a document with layers below (the demo's backdrop), it goes right under the layer
+    // being drawn on, which stays active.
+    let mut d = Session::new(anicraft_doc::sample::demo());
+    let on = d.active_layer_index().unwrap();
+    let made = run(&mut d, "file.import_video", json!({"path": clip.display().to_string(), "mode": "reference"}));
+    assert_eq!(d.timeline().layers[on + 1].id.0, made["layer"].as_u64().unwrap());
+    assert_eq!(d.active_layer_index(), Some(on));
+    assert!(d.timeline().layers.len() > on + 2, "with the demo's other layers under it");
     // The cache decodes on demand, a run at a time, and never blocks a look.
     let cache = Cache::new(1 << 20);
     assert!(matches!(cache.lookup(&v, 3, 25.0, true), Lookup::Outside), "before the video starts");

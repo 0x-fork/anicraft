@@ -386,7 +386,7 @@ fn form(app: &App, ui: &mut egui::Ui, d: &mut VideoImport, probe: &Probe) {
             form_note(
                 ui,
                 FORM_LABEL_DIALOG,
-                text(Type::Caption, tr!("A locked guide layer at the bottom shows the video for {frames} frames from frame {from}. Nothing is added to the document but the file's name; frames are read as you go and kept within {memory}.", frames = frames, from = from, memory = megabytes(video::DEFAULT_CACHE_BYTES))),
+                text(Type::Caption, tr!("A locked guide layer under the layer you are on shows the video for {frames} frames from frame {from}. Nothing is added to the document but the file's name; frames are read as you go and kept within {memory}.", frames = frames, from = from, memory = megabytes(video::DEFAULT_CACHE_BYTES))),
             );
         }
     }

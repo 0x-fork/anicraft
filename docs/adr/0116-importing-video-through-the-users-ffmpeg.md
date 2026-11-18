@@ -56,7 +56,8 @@ ffmpeg's public documentation, and the Netpbm PPM specification; nothing was cop
      reader (ADR 0020), placed as a **stream** sound on a layer of its own under the pictures.
      Options: `step` (1–60), `max_edge` (default 1280; never enlarged), `start`, `length`,
      `max_frames`, `audio`.
-   * **`reference`**: a **locked guide layer at the bottom** of the timeline with
+   * **`reference`**: a **locked guide layer right under the active layer** (under its whole folder or
+     mask group, at the top level, so a backdrop further down doesn't cover the video) with
      `Layer.video: VideoRef` (the file's path, the picture's place on the stage, the frame it
      starts on, an offset into the video, its length). The document holds no picture. The
      layer being drawn on stays active.
