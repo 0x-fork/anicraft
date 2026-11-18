@@ -37,6 +37,34 @@
     scene's artwork on the stage (fixes #305).
   * **Camera** (Kushagra Kumar): with the camera layer hidden, Preview Through Camera no longer
     blocks drawing on the stage (fixes #126).
+* **From outside contributors** (M8; thank you).
+  * **Free Transform skews** (by mypenc, #176, for #174). Drag the line between two handles
+    of the selection box to shear the artwork along that edge, as in Animate: the opposite edge
+    stays put, **Alt** skews about the centre, and the cursor shows the direction. One undo
+    step per drag; works with Edit Multiple Frames.
+  * **Fill and stroke alpha** (by Koolskull, #354, ADR 0102). The colour picker has a labelled
+    **Alpha** row (a slider and a percent) for a solid fill and for a stroke, on the Tools
+    squares, the Colour panel and Properties; hex takes `#rrggbbaa`. A clear fill is still a
+    fill; no fill is the type None. Each stop of a gradient keeps its own alpha and its marker
+    shows it. A brush stroke that isn't fully opaque stays its own shape over what is behind
+    it, so crossings darken, and the ink is drawn at that alpha while the pen is down. Opaque
+    strokes join as before.
+  * **Remote control: an assistant edits the window you have open** (by lienatanael-dev, #216,
+    ADR 0104, `docs/control-protocol.md`). `anicraft --control 9878` (or
+    `ANICRAFT_CONTROL_PORT`) lets an assistant edit the open document through a port on this
+    computer only; `anicraft-cli mcp --bridge 9878` is the MCP server's five tools acting on
+    that window. Edits show at once and undo with Ctrl+Z; they wait while you drag, so undo
+    steps never mix; the status bar says "Remote control on (port 9878)". Off unless you start
+    AniCraft this way. Each run has a fresh token in `control.json` in the settings folder
+    (readable only by you; `ANICRAFT_CONTROL_TOKEN` overrides it); anything that isn't a JSON
+    request with that token is refused. Added in review: the port closes with the window, a
+    connection that sends nothing is dropped after 10 s, the token file is always created new
+    and owner-only, and a portable install keeps it in its own folder
+    (`ANICRAFT_CONTROL_FILE` tells the bridge where).
+  * **Georgian, ready for its translation** (by Davit Matchakhelidze, #160). Builds made with
+    craft-fonts embed Noto Sans Georgian as a fallback face and offer Georgian (`ka`) once its
+    catalog is in craft-i18n; a build without the face doesn't offer it, and a damaged font
+    file is never loaded.
 * **Fixes and polish from outside contributors.** Thank you all.
   * **Shape tweens carry a raw shape's line with its fill** (#119, NetterSilver): when the two keyframes' lines have different numbers of pieces (a triangle into a hexagon), the pieces join into outlines that morph as the fill does, with no side left bare and no line left standing; a line on one keyframe only grows in or shrinks away, and shape hints steer the line too.
   * **Flipping no longer squashes a shape to 1 %** (#116, jayzed80): the Scale fields in Properties show a mirrored scale as a negative percentage and never rewrite a value they only show.

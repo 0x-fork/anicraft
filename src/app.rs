@@ -146,7 +146,7 @@ impl Tool {
             Tool::Bind => tr_noop!("Shows the points of shapes with bones: a square follows one bone, a triangle several. Click a bone to see the points it moves (filled). Click a point, or drag a box around points, to make them follow only that bone; Shift shares the bone with the ones they follow, Ctrl takes them from it. Turn on Paint Weights in Properties to brush the bone's influence on, off or smooth, shown as a heat map."),
             Tool::Warp => tr_noop!("Click a shape or a bitmap to pin it (the first pin covers it with a warp mesh). Drag a pin to bend the artwork around the other pins; with one pin it moves. Click a pin and press Delete to remove it. A pin moved at another frame keys it, and pins tween."),
             Tool::GradientTransform => tr_noop!("Click a shape with a gradient or bitmap fill to show its handles. Drag the centre to move the fill, the square to change its width, the circle to change its size, the knob to rotate it (Shift: 15° steps) and, on a radial gradient, the triangle to move its focal point. A bitmap fill also has a square for its height and diamonds to skew it. Each drag is one undo step."),
-            Tool::Transform => tr_noop!("Drag a corner or edge to scale (Shift keeps proportions, Alt scales from the centre), just outside a corner to rotate (Shift snaps 15°), inside to move."),
+            Tool::Transform => tr_noop!("Drag a handle to scale (Shift keeps proportions, Alt scales from the centre), a line between handles to skew (Alt skews about the centre), just outside a corner to rotate (Shift snaps 15°), inside to move."),
             Tool::Rect => tr_noop!("Drag to draw a rectangle. Shift draws a square."),
             Tool::Oval => tr_noop!("Drag to draw an oval. Shift draws a circle."),
             Tool::Star => tr_noop!("Drag from the centre to draw a star or a polygon (Shape in the options)."),
@@ -293,6 +293,9 @@ pub enum XfKind {
     /// Handle position: -1/0/1 on each axis (corner, edge or centre).
     Scale { hx: i8, hy: i8 },
     Rotate,
+    /// Dragging the line between two handles shears along that edge (the sign is which edge:
+    /// `hx` is -1/1 on the left/right edge, `hy` is -1/1 on the top/bottom, the other is 0).
+    Skew { hx: i8, hy: i8 },
 }
 
 /// A small text prompt standing in for native file dialogs (M0).
@@ -350,6 +353,9 @@ impl PolyStarOptions {
 pub struct App {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) updates: crate::updates::Updates,
+    /// The live control port, with `--control` (ADR 0104).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) remote: Option<crate::remote::Remote>,
     pub s: Session,
     pub tool: Tool,
     pub view: StageView,
@@ -697,6 +703,8 @@ impl App {
         let mut app = App {
             #[cfg(not(target_arch = "wasm32"))]
             updates: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            remote: None,
             s: session,
             tool: Tool::Select,
             view: StageView { zoom: 1.0, pan: egui::Vec2::ZERO, fit: true, fitted: None, clip_to_stage: false },
@@ -3948,6 +3956,8 @@ impl eframe::App for App {
         self.recovery.finish(&self.s, clean);
         #[cfg(not(target_arch = "wasm32"))]
         self.updates.finish();
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::remote::finish(self);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -3969,6 +3979,9 @@ impl App {
             }
         }
         self.handle_screenshot(&ctx);
+        // An assistant's edits (ADR 0104), before anything draws: they show in this frame.
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::remote::poll(self, &ctx);
         self.poll_font_scan(&ctx);
         self.follow_system_look(&ctx);
         if let Some(p) = platform::picked_file() {
