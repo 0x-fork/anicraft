@@ -2825,6 +2825,11 @@ fn frame_props(app: &mut App, ui: &mut egui::Ui, layer: &anicraft_engine::doc::L
                     if crate::theme::checkbox(ui, &mut orient, tr!("Orient to path")).on_hover_text(tr!("Turn the object as its motion path turns")).named(tr!("Orient to path")).changed() {
                         app.run("motion.orient", json!({"orient": orient}));
                     }
+                    // Keep area (ADR 0115): squash and stretch that doesn't grow.
+                    let mut keep = m.keep_area;
+                    if crate::theme::checkbox(ui, &mut keep, tr!("Keep area")).on_hover_text(tr!("Squash and stretch without growing: scale goes geometrically between keys, and a scale axis without keys follows the other so the area stays")).named(tr!("Keep area")).changed() {
+                        app.run("timeline.set_keep_area", json!({"keep_area": keep}));
+                    }
                     ui.horizontal(|ui| {
                         if ui.button(tr!("Motion Editor")).on_hover_text(tr!("Edit the property curves and eases")).clicked() {
                             app.show_panel(crate::dock::Panel::MotionEditor);
@@ -2883,6 +2888,11 @@ fn frame_props(app: &mut App, ui: &mut egui::Ui, layer: &anicraft_engine::doc::L
                             if crate::theme::checkbox(ui, &mut orient, tr!("Orient to path")).on_hover_text(tr!("Turn with the motion guide as it bends")).changed() {
                                 app.run("timeline.set_orient", json!({"orient": orient}));
                             }
+                        }
+                        // Keep area (ADR 0115): squash and stretch that doesn't grow.
+                        let mut keep = t.keep_area;
+                        if crate::theme::checkbox(ui, &mut keep, tr!("Keep area")).on_hover_text(tr!("Squash and stretch without growing: scale goes geometrically between keys, so keys of one area keep it on every frame")).named(tr!("Keep area")).changed() {
+                            app.run("timeline.set_keep_area", json!({"keep_area": keep}));
                         }
                         crate::ease_editor::preview(app, ui, &t.easing);
                     }

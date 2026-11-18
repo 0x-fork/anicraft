@@ -130,9 +130,32 @@ unlocked layer at once. **Edit › Deselect All** is **Ctrl+Shift+A**.
 ### The Pen
 
 The **Pen** (**P**) draws precise Bézier curves. Click to place corner points, or drag to pull
-out smooth handles (**Alt** moves one handle on its own). Click the first point to close the
-shape; **Enter**, **Esc** or a click on the last point finishes an open line. **Backspace**
-takes back the last point, and **Alt**-click on a line or a selected shape adds a point to it.
+out smooth handles (**Alt** moves one handle on its own). A dashed line shows the segment your
+next click would add. Hold **Shift** to keep a new point, or a handle, on steps of 45°. Click
+the first point to close the shape; **Enter**, **Esc** or a double-click finishes an open
+line. **Backspace** takes back the last point.
+
+A small mark beside the pointer tells you what a click will do.
+
+On the point you just placed:
+
+* **Click it** (caret mark) to make it a corner: the curve arriving stays as it is, and the
+  next segment leaves the point straight. Click it again (square mark) to finish the line.
+* **Drag from it** to pull a new handle for the next segment only.
+* **Alt-drag it** to draw its curve again. The curve as it was stays in view until you let go.
+
+On a path you drew earlier, select it first: **Ctrl**-click it with the Pen (**⌘** on macOS),
+or use the Selection tool. Its points show. Then:
+
+* Click a **smooth point** (caret mark) to make it a corner. Click a **corner** (minus mark) to
+  delete it.
+* Click the **outline** between two points (plus mark) to add a point.
+* Click an **end of an open path** (slash mark) to carry on drawing it. Click its other end
+  (ring mark) to close it. This works on drawing objects; in merge drawing, a line started on
+  another line's end joins it anyway.
+
+A path that isn't selected is left alone, so you can start a new line on top of it.
+**Alt**-click still adds a point to a selected shape, a merged line or a motion path.
 
 ### The Brush
 

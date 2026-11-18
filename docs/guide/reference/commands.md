@@ -1,6 +1,6 @@
 # Command reference
 
-Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 379 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
+Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 381 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
 
 This page is generated from the command registry, so it always matches the version of AniCraft it came with.
 
@@ -339,6 +339,8 @@ These commands have no menu item: the panels, the stage and the timeline use the
   Parameters: `{easing: a preset name (Linear, QuadIn … ElasticInOut) | {classic: -100..100} | {bezier: [x1, y1, x2, y2]} | {custom: {points: [..]} | [[x, y], ..]} | {saved: name} | {plugin: id, ease: id} (an ease plug-in's; the tween keeps its sampled curve), group?: all|position|rotation|scale|color|filters (classic tweens: that property group's own ease), layer?, frame?}`
 - **Orient to Path** `timeline.set_orient` · changes the document
   Parameters: `{orient: bool, layer?, frame?}`
+- **Keep Area** `timeline.set_keep_area` · changes the document
+  Parameters: `{keep_area: bool, layer?, frame?}: squash and stretch that keeps the object's area (ADR 0115). The span's tween (classic, shape or motion) moves scale X and Y geometrically between keys instead of in straight lines, so keys of one area keep it on every frame; on a motion tween a scale axis without keys of its own follows the other inversely. Off by default`
 - **Frame Label** `timeline.set_label` · changes the document
   Parameters: `{label, layer?, frame?}`
 - **Go to Frame** `timeline.goto`
@@ -595,6 +597,8 @@ These commands have no menu item: the panels, the stage and the timeline use the
   Parameters: `{id, cmds: [..]}`
 - **Convert Anchor Point** `path.convert_point` · changes the document
   Parameters: `{id, cmd, smooth: bool}`
+- **Continue Path** `path.extend` · changes the document
+  Parameters: `{id, d: SVG path data (stage space) of the new piece, drawn away from the end it continues, end?: "end" | "start" (default end), close?: bool}: continues an open path (one subpath, not closed) from one of its ends, as the Pen does (ADR 0115). The piece joins the path's own end point (its M is where the pen started and isn't kept); with close the path is closed after it`
 - **Bend Segment** `path.bend_segment` · changes the document
   Parameters: ``{x, y, dx, dy, id?, cmd?, t?, slop?, merge?: bool} the segment at (x, y) (of shape `id`, else the one there) bends so that point moves by (dx, dy), its ends staying; a raw shape's copies of the edge bend with it and merge again (unless merge is false)``
 - **Move Point** `raw.move_point` · changes the document

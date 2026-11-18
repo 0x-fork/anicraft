@@ -25,6 +25,29 @@
     same keys.
   * Fixed: a test of the graphics-failure handling could fail at random when another test was
     running the app at the same moment; it no longer shares state with them.
+* **Pen tool improvements** (fixes #319, ADR 0115, M1): the Pen now does what Animate's does
+  on the point you just placed and on paths you drew earlier.
+  * **Click the last point** to make it a corner, so the next segment leaves it sharp; click
+    it again, double-click, or press Enter or Esc to finish. **Drag from it** for a new
+    handle. **Alt-drag it** to draw its curve again, with the old curve in view until you
+    let go.
+  * **Shift** keeps new points and handles on steps of 45°, and the segment your next click
+    would add is previewed as it will curve.
+  * **On a selected path**: click a smooth point to make it a corner and a corner to delete
+    it, click the outline to add a point, and click an open end to carry on drawing the same
+    path (its other end closes it). **Ctrl-click** (⌘) selects a path with the Pen.
+  * A mark beside the pointer says what a click will do: plus, minus, caret, ring, slash or
+    square.
+  * Headless, CLI and MCP: `path.extend` continues an open path from either end.
+  * Not yet: continuing a merged line as the same stroke, and real pen cursors.
+* **Keep area for squash and stretch** (fixes #408, ADR 0115, M1): a **Keep area** checkbox
+  on classic, shape and motion tweens (Properties › Frame, and the Motion Editor). The tween
+  scales width and height geometrically, so a squash from 100 × 100 % to 200 × 50 % passes
+  through 141 × 71 % and keeps its area on every frame, where it used to bulge by 12.5 %.
+  * On a motion tween, stretch one direction and the other follows by itself; the Motion
+    Editor draws the curve it follows. Key it yourself at any time.
+  * Off by default and per tween. Tweens without it, and older files, play exactly as before.
+  * Every export shows it. Headless, CLI and MCP: `timeline.set_keep_area`.
 
 * **Layer parenting** (fixes #388, ADR 0113, M7): a layer can follow another layer, as in
   Animate, so a forearm moves with the upper arm while each keeps its own tweens.
