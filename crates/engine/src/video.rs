@@ -322,7 +322,7 @@ pub fn read_ppm<R: Read>(r: &mut R, max_w: u32, max_h: u32) -> std::result::Resu
     let mut rgb = vec![0u8; n * 3];
     r.read_exact(&mut rgb).map_err(|_| "ffmpeg stopped in the middle of a picture".to_string())?;
     let mut rgba = Vec::with_capacity(n * 4);
-    for p in rgb.chunks_exact(3) {
+    for p in rgb.as_chunks::<3>().0 {
         rgba.extend_from_slice(p);
         rgba.push(255);
     }
