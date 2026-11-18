@@ -150,7 +150,7 @@ fn draw_rect(s: &mut Session, p: &Value) -> Result<Value> {
 fn draw_ellipse(s: &mut Session, p: &Value) -> Result<Value> {
     let (x, y, w, h) = rect_params(p)?;
     let (fill, stroke) = style(s, p, true)?;
-    add_shape(s, "ellipse", Path::ellipse(0.0, 0.0, w / 2.0, h / 2.0), Vec2::new(x + w / 2.0, y + h / 2.0), fill, stroke, object_param(s, p)?)
+    add_shape(s, "ellipse", Path::ellipse8(0.0, 0.0, w / 2.0, h / 2.0), Vec2::new(x + w / 2.0, y + h / 2.0), fill, stroke, object_param(s, p)?)
 }
 
 fn draw_star(s: &mut Session, p: &Value) -> Result<Value> {
