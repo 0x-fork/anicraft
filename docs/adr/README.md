@@ -23,4 +23,3 @@ has to renumber because another PR merged first.
 | Number | Pull request | Topic |
 |---|---|---|
 | 0037 | #38 (outside contribution) | Interface languages |
-| 0115 | m1/pen-and-squash | Pen parity (break, adjust, add and delete points) and keep-area scale tweens |
