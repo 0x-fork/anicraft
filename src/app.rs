@@ -675,6 +675,7 @@ impl App {
     /// The app on an egui context (the window's, or a headless one in tests).
     pub fn with_context(ctx: &egui::Context, session: Session, shot: Option<PathBuf>) -> App {
         theme::apply(ctx);
+        platform::pointer_feel(ctx);
         let shot_mode = shot.is_some();
         // Screenshot runs use defaults so automated checks are reproducible.
         let prefs = if shot_mode { prefs::Prefs::default() } else { prefs::Prefs::load() };

@@ -966,6 +966,17 @@ pub fn set_unsaved(unsaved: bool) {
     crate::web::set_unsaved(unsaved);
 }
 
+/// The longest pause between the two clicks of a double-click, in seconds: the half second
+/// Windows and macOS use unless the user changed it. egui's default (0.3 s) is shorter than what
+/// the desktop itself accepts, so a relaxed double-click on the stage or the timeline counted as
+/// two clicks (#192).
+pub const DOUBLE_CLICK_SECONDS: f64 = 0.5;
+
+/// How the pointer feels in this app, the same as in the desktop around it.
+pub fn pointer_feel(ctx: &egui::Context) {
+    ctx.options_mut(|o| o.input_options.max_double_click_delay = DOUBLE_CLICK_SECONDS);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -4644,3 +4644,75 @@ mod occluder_tests {
         println!("{pieces} raw pieces: {idle:.2} ms a frame unselected, {selected:.2} ms selected");
     }
 }
+
+#[cfg(test)]
+mod double_click_tests {
+    use super::*;
+    use egui::{Event, PointerButton};
+
+    fn run_frame(ctx: &egui::Context, app: &mut App, time: f64, events: Vec<Event>) {
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 940.0))), time: Some(time), events, ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| app.frame(ui));
+        out.textures_delta.clear();
+    }
+
+    fn button(pos: Pos2, pressed: bool) -> Event {
+        Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE }
+    }
+
+    /// A raw rectangle with an outline, nothing selected, the Selection tool; where the stage
+    /// point `(x, y)` is on screen.
+    fn scene() -> (App, egui::Context, impl Fn(f32, f32) -> Pos2) {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, anicraft_engine::Session::new(anicraft_engine::doc::Document::default()), Some(std::path::PathBuf::from("unused.png")));
+        app.tool = Tool::Select;
+        app.s.style.object_drawing = false;
+        app.run("draw.rect", json!({"x": 100, "y": 100, "w": 200, "h": 120, "fill": "#ff0000", "stroke": "#000000", "stroke_width": 3}));
+        app.run("edit.deselect", json!({}));
+        for i in 0..3 {
+            run_frame(&ctx, &mut app, i as f64 * 0.1, Vec::new());
+        }
+        let size = vec2(app.s.doc.stage.width as f32, app.s.doc.stage.height as f32);
+        let origin = app.stage_cache.canvas.center() + app.view.pan - size * app.view.zoom * 0.5;
+        let zoom = app.view.zoom;
+        (app, ctx, move |x, y| origin + vec2(x, y) * zoom)
+    }
+
+    /// A double-click: press, release, `gap` seconds, press, release (each its own frame).
+    fn double_click(gap: f64) -> App {
+        let (mut app, ctx, at) = scene();
+        let p = at(200.0, 160.0);
+        let mut t = 1.0;
+        run_frame(&ctx, &mut app, t, vec![Event::PointerMoved(p)]);
+        for click in 0..2 {
+            t += 0.01;
+            run_frame(&ctx, &mut app, t, vec![button(p, true)]);
+            t += 0.04;
+            run_frame(&ctx, &mut app, t, vec![button(p, false)]);
+            if click == 0 {
+                t += gap;
+                run_frame(&ctx, &mut app, t, vec![Event::PointerMoved(p)]);
+            }
+        }
+        for _ in 0..3 {
+            t += 0.02;
+            run_frame(&ctx, &mut app, t, Vec::new());
+        }
+        app
+    }
+
+    /// #192: a double-click on a raw fill selects it with its outline, at any speed a desktop
+    /// counts as a double-click. egui's own limit is 0.3 s between the clicks, which a relaxed
+    /// double-click misses (and a slow frame after the first click used up), so "sometimes it
+    /// took six clicks"; the app now allows the half second Windows and macOS do.
+    #[test]
+    fn a_double_click_on_a_raw_fill_selects_its_outline_fast_or_relaxed() {
+        for gap in [0.02, 0.1, 0.25, 0.4] {
+            let app = double_click(gap);
+            assert_eq!(app.s.selection.len(), 5, "{gap} s apart: the fill and its four sides");
+            assert_eq!(app.s.visible_elements().len(), 5, "nothing moved or merged");
+        }
+        // Two separate clicks stay two clicks: the fill alone.
+        assert_eq!(double_click(0.7).s.selection.len(), 1);
+    }
+}
