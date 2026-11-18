@@ -60,6 +60,8 @@ pub struct Cache {
     /// `(ready, needed)` visible tiles this frame.
     pub ready: (usize, usize),
     pub canvas: Rect,
+    /// The stage has been laid out once, so `canvas` is where it really was last frame.
+    laid_out: bool,
     pub service: Option<RenderService>,
     /// Document state of the picture on screen (an edit makes it differ).
     pub shown_state: Option<anicraft_engine::StateId>,
@@ -73,7 +75,7 @@ pub struct Cache {
 
 impl Default for Cache {
     fn default() -> Self {
-        Cache { tiles: Vec::new(), tick: 0, ms: 0.0, ready: (0, 0), canvas: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), service: None, shown_state: None, gpu: Default::default(), drawn_by: None, pattern: None }
+        Cache { tiles: Vec::new(), tick: 0, ms: 0.0, ready: (0, 0), canvas: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), laid_out: false, service: None, shown_state: None, gpu: Default::default(), drawn_by: None, pattern: None }
     }
 }
 
@@ -217,7 +219,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     crate::camera_tool::on_tool_change(app);
     crate::shape_envelope::settle(app);
     crate::camera_tool::tick(app, ui.ctx(), now);
-    app.stage_cache.canvas = canvas;
+    let canvas_was = std::mem::replace(&mut app.stage_cache.canvas, canvas);
+    let laid_out = std::mem::replace(&mut app.stage_cache.laid_out, true);
     // While a colour picker popup is open the stage is its eyedropper (ADR 0109): a click
     // picks the colour there instead of using the tool, so the tools get no presses.
     let picker = crate::colour::picking(ui.ctx());
@@ -234,6 +237,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && app.view.pan == egui::Vec2::ZERO
     {
         app.view.fit = true;
+    }
+    // Otherwise the artist chose this view, and a panel that grows or shrinks (the Timeline's
+    // top edge, a dock, the rulers, the window) only covers or reveals the stage: the artwork
+    // stays where it is on screen (#423). The pan is measured from the canvas centre, so it
+    // takes up the centre's move.
+    if laid_out && !app.view.fit && canvas_was != canvas && canvas_was.width() > 10.0 && canvas_was.height() > 10.0 {
+        app.view.pan += canvas_was.center() - canvas.center();
     }
     if app.view.fit && canvas.width() > 10.0 && canvas.height() > 10.0 {
         app.view.zoom = ((canvas.width() - 64.0) / size.x).min((canvas.height() - 64.0) / size.y).clamp(0.05, 64.0);
@@ -395,7 +405,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     Some(XfKind::Scale { .. }) => CursorIcon::ResizeHorizontal,
                     Some(XfKind::Skew { hy: 0, .. }) => CursorIcon::ResizeVertical,
                     Some(XfKind::Skew { .. }) => CursorIcon::ResizeHorizontal,
-                    Some(XfKind::Rotate) => CursorIcon::Alias,
+                    // No desktop has a rotate cursor: the app draws its own (#194).
+                    Some(XfKind::Rotate) => CursorIcon::None,
                     Some(XfKind::Move) => CursorIcon::Move,
                     None => CursorIcon::Default,
                 }
@@ -412,6 +423,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             _ => CursorIcon::Default,
         };
         ui.ctx().set_cursor_icon(icon);
+        // Free Transform outside a corner, and while turning: the curved arrow, bent around
+        // the box so it reads as "drag to rotate".
+        if icon == CursorIcon::None
+            && app.tool == Tool::Transform
+            && let Some(p) = pointer
+        {
+            let centre = sel_rect.map_or(canvas.center(), |r| r.center());
+            rotate_cursor(&ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("stage_cursor"))), p, p - centre);
+        }
     }
     if let Some(picker) = picker {
         crate::erasertool::picker_dropper(app, ui, &resp, picker, pointer.map(|p| (p, to_v(to_stage(p)))), zoom);
@@ -1129,7 +1149,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         let mut dots = egui::Mesh::default();
         let mut budget = MAX_DOTS;
         let dl = app.s.display_list();
-        let mut occluders = Occluders::new(&dl.items, &to_px, canvas, gap);
+        let mut occluders = Occluders::of(&dl, &to_px, canvas, gap);
 
         for (index, item) in dl.items.iter().enumerate().filter(|(_, i)|
             app.s.selection.contains(i.layer, i.element)
@@ -2186,12 +2206,23 @@ struct Occluder {
     bounds: Rect,
     fill: bool,
     stroke: bool,
+    /// The mask it shows through, if it is on a masked layer: it hides only what the mask
+    /// reveals of it.
+    clip: Option<u32>,
     /// The fill's and the stroke's outlines in screen space, built on first use.
     lines: Option<[Vec<anicraft_engine::geom::Polyline>; 2]>,
 }
 
+/// A mask's shapes in screen space, each with its fill rule; `None` when the mask hides
+/// nothing reliably here (a soft mask, or one with no shapes).
+type MaskOutlines = Option<Vec<(Vec<anicraft_engine::geom::Polyline>, anicraft_engine::geom::FillRule)>>;
+
 /// The artwork that hides selection stipple: opaque fills and strokes later in drawing order,
-/// including on other layers. Translucent, bitmap, clipped and fading artwork hides nothing.
+/// including on other layers. Translucent, bitmap and fading artwork hides nothing (a symbol
+/// instance below full opacity is a group, so what is in it hides nothing either). Artwork on
+/// a masked layer hides the stipple only where its mask shows it (after outside PR #404's
+/// follow-up by Untoldent, done here on the row spans the pass already works in: no path
+/// booleans, and a mask's outline is built once a frame however many shapes it covers).
 ///
 /// A frame asks once per selected fill, stroke and backing, so the work is shared: each item's
 /// bounds are found once, an item is only looked at where its bounds meet the selected spans,
@@ -2199,6 +2230,9 @@ struct Occluder {
 /// drawing of 720 pieces took 600 ms a frame when every piece outlined everything above it).
 struct Occluders<'a> {
     items: &'a [anicraft_engine::doc::DisplayItem],
+    /// The whole list, for its masks; without it masked artwork hides nothing.
+    dl: Option<&'a anicraft_engine::doc::DisplayList>,
+    masks: std::collections::HashMap<u32, MaskOutlines>,
     to_px: Affine,
     clip: Rect,
     gap: f32,
@@ -2210,13 +2244,18 @@ struct Occluders<'a> {
 
 impl<'a> Occluders<'a> {
     fn new(items: &'a [anicraft_engine::doc::DisplayItem], to_px: &Affine, clip: Rect, gap: f32) -> Self {
-        Self { items, to_px: *to_px, clip, gap, known: Vec::new(), built: 0, batch: Vec::new() }
+        Self { items, dl: None, masks: Default::default(), to_px: *to_px, clip, gap, known: Vec::new(), built: 0, batch: Vec::new() }
     }
 
-    /// What `item` hides, if anything.
-    fn occluder(item: &anicraft_engine::doc::DisplayItem, to_px: &Affine) -> Option<Occluder> {
+    /// For a frame's display list: masked artwork hides what its mask shows of it.
+    fn of(dl: &'a anicraft_engine::doc::DisplayList, to_px: &Affine, clip: Rect, gap: f32) -> Self {
+        Self { dl: Some(dl), ..Self::new(&dl.items, to_px, clip, gap) }
+    }
+
+    /// What `item` hides, if anything. `masked`: artwork under a mask counts.
+    fn occluder(item: &anicraft_engine::doc::DisplayItem, to_px: &Affine, masked: bool) -> Option<Occluder> {
         use anicraft_engine::doc::Paint;
-        if item.guide || item.masks.is_some() || item.outline.is_some() || item.clip.is_some() || item.group.is_some() {
+        if item.guide || item.masks.is_some() || item.outline.is_some() || (item.clip.is_some() && !masked) || item.group.is_some() {
             return None;
         }
         let solid = |c: anicraft_engine::doc::Rgba| item.color.apply(c).a >= 0.999;
@@ -2235,16 +2274,41 @@ impl<'a> Occluders<'a> {
         let reach = item.stroke.as_ref().filter(|_| stroke).map_or(0.0, |s| s.reach() * m.mean_scale());
         let b = item.path.bounds().transformed(&m).inflate(reach + 1.0);
         let bounds = Rect::from_min_max(pos2(b.min.x, b.min.y), pos2(b.max.x, b.max.y));
-        (bounds.is_finite() && bounds.is_positive()).then_some(Occluder { bounds, fill, stroke, lines: None })
+        (bounds.is_finite() && bounds.is_positive()).then_some(Occluder { bounds, fill, stroke, clip: item.clip, lines: None })
+    }
+
+    /// The masks `clip` shows through, innermost first, each as its shapes' outlines. `None`
+    /// when one of them is soft or empty, or the chain is broken: then nothing is hidden.
+    fn mask_chain(dl: &anicraft_engine::doc::DisplayList, masks: &mut std::collections::HashMap<u32, MaskOutlines>, to_px: &Affine, clip: u32, built: &mut usize) -> Option<Vec<u32>> {
+        let mut chain = Vec::new();
+        let mut id = clip;
+        for _ in 0..=dl.clip_parents.len() {
+            let known = masks.entry(id).or_insert_with(|| {
+                if dl.clip_mode(id).is_soft() || *built >= MAX_OCCLUDERS {
+                    return None;
+                }
+                *built += 1;
+                let shapes: Vec<_> = dl.items.iter().filter(|i| i.masks == Some(id) && i.fill.is_some()).map(|i| (i.path.flatten(&to_px.mul(&i.transform), 0.5), i.fill_rule)).collect();
+                (!shapes.is_empty()).then_some(shapes)
+            });
+            known.as_ref()?;
+            chain.push(id);
+            match dl.clip_parents.get(id as usize).copied()? {
+                Some(parent) if parent < id => id = parent,
+                Some(_) => return None,
+                None => return Some(chain),
+            }
+        }
+        None
     }
 
     /// Takes what the items from `from` on cover out of `spans`.
     fn exclude(&mut self, spans: &mut Vec<Rect>, from: usize) {
         use anicraft_engine::geom::FillRule;
         let Some(area) = spans.iter().copied().reduce(|a, b| a.union(b)) else { return };
-        let Self { items, to_px, clip, gap, known, built, batch } = self;
+        let Self { items, dl, masks, to_px, clip, gap, known, built, batch } = self;
         if known.is_empty() {
-            known.extend(items.iter().map(|i| Self::occluder(i, to_px)));
+            known.extend(items.iter().map(|i| Self::occluder(i, to_px, dl.is_some())));
         }
         // Only the rows and columns the spans are in need scanning.
         let clip = clip.intersect(area.expand(1.0));
@@ -2267,12 +2331,28 @@ impl<'a> Occluders<'a> {
                 o.lines = Some([fill, stroke]);
             }
             let Some([fill, stroke]) = &o.lines else { continue };
+            // Under a mask: the spans the mask does not show stay as they are, and only the
+            // rest goes behind the artwork. Each mask in the chain takes its share out.
+            let mut outside: Vec<Rect> = Vec::new();
+            if let Some(c) = o.clip {
+                let Some(chain) = dl.and_then(|dl| Self::mask_chain(dl, masks, to_px, c, built)) else { continue };
+                for id in chain {
+                    let Some(Some(shapes)) = masks.get(&id) else { continue };
+                    let mut hidden = spans.clone();
+                    for (lines, rule) in shapes {
+                        subtract_occlusion_spans(&mut hidden, lines, *rule, clip, batch, *gap);
+                    }
+                    subtract_spans(spans, &hidden);
+                    outside.append(&mut hidden);
+                }
+            }
             if !fill.is_empty() {
                 subtract_occlusion_spans(spans, fill, item.fill_rule, clip, batch, *gap);
             }
             if !stroke.is_empty() {
                 subtract_occlusion_spans(spans, stroke, FillRule::NonZero, clip, batch, *gap);
             }
+            spans.append(&mut outside);
         }
     }
 }
@@ -4156,6 +4236,31 @@ fn rt_size(te: &crate::app::TextEditing) -> f32 {
 
 // ----- free transform ---------------------------------------------------------------------------
 
+/// The rotate cursor at `at`: an arc with an arrowhead at each end, curving around the box whose
+/// centre lies against `outward`. Dark with a light edge, so it shows on any artwork.
+fn rotate_cursor(painter: &egui::Painter, at: Pos2, outward: egui::Vec2) {
+    const R: f32 = 9.0;
+    const SWEEP: f32 = 1.05;
+    let dir = if outward.length() > 1e-3 { outward.normalized() } else { vec2(std::f32::consts::FRAC_1_SQRT_2, -std::f32::consts::FRAC_1_SQRT_2) };
+    let mid = dir.y.atan2(dir.x);
+    // The arc's circle sits towards the box, so the arc passes through the pointer.
+    let c = at - dir * R;
+    let on = |a: f32| c + vec2(a.cos(), a.sin()) * R;
+    let arc: Vec<Pos2> = (0..=12).map(|i| on(mid - SWEEP + 2.0 * SWEEP * i as f32 / 12.0)).collect();
+    // An arrowhead at each end, pointing on along the circle.
+    let head = |a: f32, sign: f32| {
+        let tip = on(a + sign * 0.38);
+        let (radial, back) = (vec2(a.cos(), a.sin()), on(a));
+        vec![tip, back + radial * 4.0, back - radial * 4.0]
+    };
+    for (width, colour) in [(4.0, Color32::WHITE), (1.6, Color32::BLACK)] {
+        painter.add(egui::Shape::line(arc.clone(), Stroke::new(width, colour)));
+    }
+    for (a, sign) in [(mid - SWEEP, -1.0), (mid + SWEEP, 1.0)] {
+        painter.add(egui::Shape::convex_polygon(head(a, sign), Color32::BLACK, Stroke::new(1.0, Color32::WHITE)));
+    }
+}
+
 /// Screen-space handle size and the rotation zone just outside each corner.
 const HANDLE: f32 = 8.0;
 const ROTATE_ZONE: f32 = 22.0;
@@ -4625,6 +4730,53 @@ mod occluder_tests {
         assert_eq!(spans, square(0.0));
     }
 
+    /// Artwork on a masked layer hides the stipple under it only where its mask shows it
+    /// (the idea of outside PR #404's follow-up); under a soft mask it hides nothing, since
+    /// how much shows there is not a yes or no.
+    #[test]
+    fn masked_artwork_hides_only_what_its_mask_shows() {
+        let scene = |mask_mode: Option<&str>| {
+            let mut s = anicraft_engine::Session::new(anicraft_engine::doc::Document::default());
+            let run = |s: &mut anicraft_engine::Session, id: &str, p: serde_json::Value| s.execute(id, &p).unwrap_or_else(|e| panic!("{id}: {e}"));
+            let rect = |x: i32, w: i32, fill: &str| json!({"x": x, "y": 0, "w": w, "h": 100, "fill": fill, "stroke": null, "object": true});
+            // Below: what is selected. Above it: an opaque square, seen through a mask that
+            // shows its left half.
+            run(&mut s, "draw.rect", rect(0, 100, "#00ff00"));
+            let art = run(&mut s, "layer.new", json!({}))["layer"].as_u64().unwrap_or(0);
+            run(&mut s, "draw.rect", rect(0, 100, "#ff0000"));
+            let mask = run(&mut s, "layer.new", json!({}))["layer"].as_u64().unwrap_or(0);
+            run(&mut s, "draw.rect", rect(0, 50, "#000000"));
+            let mut props = json!({"layer": mask, "type": "mask"});
+            if let Some(mode) = mask_mode {
+                props["mask"] = json!(mode);
+            }
+            run(&mut s, "layer.set_properties", props);
+            run(&mut s, "layer.set_properties", json!({"layer": art, "type": "masked"}));
+            s.display_list()
+        };
+        let clip = Rect::from_min_max(pos2(-100.0, -100.0), pos2(1000.0, 1000.0));
+        let square = vec![Rect::from_min_max(pos2(0.0, 0.0), pos2(100.0, 100.0))];
+        let area = |spans: &[Rect]| spans.iter().map(|r| r.area()).sum::<f32>();
+        let dl = scene(None);
+        assert!(dl.items.iter().any(|i| i.clip.is_some()) && dl.items.iter().any(|i| i.masks.is_some()), "a masked item and its mask");
+        let mut occluders = Occluders::of(&dl, &Affine::IDENTITY, clip, GAP);
+        for _ in 0..3 {
+            let mut spans = square.clone();
+            occluders.exclude(&mut spans, 1);
+            assert!((area(&spans) - 5000.0).abs() < 150.0, "the half the mask shows is hidden: {}", area(&spans));
+            assert!(spans.iter().all(|r| r.left() >= 49.0), "and it is the left half: {spans:?}");
+        }
+        assert_eq!(occluders.built, 2, "the mask and the square, each outlined once");
+        // Without the list's masks (or under a soft mask) masked artwork hides nothing.
+        let mut spans = square.clone();
+        Occluders::new(&dl.items, &Affine::IDENTITY, clip, GAP).exclude(&mut spans, 1);
+        assert_eq!(spans, square);
+        let soft = scene(Some("alpha"));
+        let mut spans = square.clone();
+        Occluders::of(&soft, &Affine::IDENTITY, clip, GAP).exclude(&mut spans, 1);
+        assert!((area(&spans) - 10_000.0).abs() < 1.0, "{}", area(&spans));
+    }
+
     #[test]
     #[ignore = "a measurement, not a check"]
     fn selection_overlay_cost() {
@@ -4653,5 +4805,120 @@ mod occluder_tests {
         let pieces = app.s.selection.len();
         let selected = frames(&mut app);
         println!("{pieces} raw pieces: {idle:.2} ms a frame unselected, {selected:.2} ms selected");
+        // The same drawing under an opaque sheet seen through a mask of 48 shapes.
+        app.run("edit.deselect", json!({}));
+        let art = app.run("layer.new", json!({})).and_then(|v| v["layer"].as_u64()).unwrap_or(0);
+        app.run("draw.rect", json!({"x": 0, "y": 0, "w": 520, "h": 400, "fill": "#ffcc00", "stroke": null, "object": true}));
+        let mask = app.run("layer.new", json!({})).and_then(|v| v["layer"].as_u64()).unwrap_or(0);
+        for i in 0..48 {
+            app.run("draw.oval", json!({"x": 10 + (i % 8) * 60, "y": 10 + (i / 8) * 60, "w": 50, "h": 50, "fill": "#000000", "stroke": null, "object": true}));
+        }
+        app.run("layer.set_properties", json!({"layer": mask, "type": "mask"}));
+        app.run("layer.set_properties", json!({"layer": art, "type": "masked"}));
+        app.run("edit.deselect", json!({}));
+        let idle = frames(&mut app);
+        let first = app.s.timeline().layers.last().map(|l| l.id.0).unwrap_or(0);
+        app.run("layer.select", json!({"layer": first}));
+        app.run("edit.select_all", json!({}));
+        let selected = frames(&mut app);
+        println!("under a masked sheet ({} selected): {idle:.2} ms a frame unselected, {selected:.2} ms selected", app.s.selection.len());
+    }
+}
+
+#[cfg(test)]
+mod pointer_tests {
+    use super::*;
+    use egui::{Event, PointerButton};
+
+    fn run_frame(ctx: &egui::Context, app: &mut App, time: f64, events: Vec<Event>) {
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 940.0))), time: Some(time), events, ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| app.frame(ui));
+        out.textures_delta.clear();
+    }
+
+    fn button(pos: Pos2, pressed: bool) -> Event {
+        Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE }
+    }
+
+    /// A raw rectangle with an outline, nothing selected, the Selection tool; where the stage
+    /// point `(x, y)` is on screen.
+    fn scene() -> (App, egui::Context, impl Fn(f32, f32) -> Pos2) {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, anicraft_engine::Session::new(anicraft_engine::doc::Document::default()), Some(std::path::PathBuf::from("unused.png")));
+        app.tool = Tool::Select;
+        app.s.style.object_drawing = false;
+        app.run("draw.rect", json!({"x": 100, "y": 100, "w": 200, "h": 120, "fill": "#ff0000", "stroke": "#000000", "stroke_width": 3}));
+        app.run("edit.deselect", json!({}));
+        for i in 0..3 {
+            run_frame(&ctx, &mut app, i as f64 * 0.1, Vec::new());
+        }
+        let size = vec2(app.s.doc.stage.width as f32, app.s.doc.stage.height as f32);
+        let origin = app.stage_cache.canvas.center() + app.view.pan - size * app.view.zoom * 0.5;
+        let zoom = app.view.zoom;
+        (app, ctx, move |x, y| origin + vec2(x, y) * zoom)
+    }
+
+    /// #194: with Free Transform, just outside a corner of the box the pointer is the app's own
+    /// rotate cursor (the system one is hidden and a curved arrow is drawn), not the shortcut
+    /// arrow that hid the rotate zone; on the corner it is the scale cursor.
+    #[test]
+    fn free_transform_shows_a_rotate_cursor_outside_the_corners() {
+        let (mut app, ctx, at) = scene();
+        app.tool = Tool::Transform;
+        app.run("edit.select_all", json!({}));
+        let hover = |app: &mut App, p: Pos2, t: f64| {
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 940.0))), time: Some(t), events: vec![Event::PointerMoved(p)], ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| app.frame(ui));
+            out.textures_delta.clear();
+            let drawn = out.shapes.iter().filter(|s| s.clip_rect.contains(p) && matches!(&s.shape, egui::Shape::Path(path) if path.closed && path.points.len() == 3 && path.points.iter().all(|q| q.distance(p) < 20.0))).count();
+            (out.platform_output.cursor_icon, drawn)
+        };
+        let b = app.s.selection_bounds();
+        let corner = at(b.max.x, b.max.y);
+        hover(&mut app, corner, 1.0);
+        assert_eq!(hover(&mut app, corner, 1.1).0, CursorIcon::ResizeNwSe, "on the corner handle: scale");
+        let (icon, arrowheads) = hover(&mut app, corner + vec2(13.0, 13.0), 1.2);
+        assert_eq!(icon, CursorIcon::None, "outside the corner: the app's rotate cursor");
+        assert_eq!(arrowheads, 2, "the curved arrow is drawn at the pointer");
+        let (icon, arrowheads) = hover(&mut app, corner - vec2(40.0, 30.0), 1.3);
+        assert_eq!((icon, arrowheads), (CursorIcon::Move, 0), "inside the box: move");
+    }
+
+    /// A double-click: press, release, `gap` seconds, press, release (each its own frame).
+    fn double_click(gap: f64) -> App {
+        let (mut app, ctx, at) = scene();
+        let p = at(200.0, 160.0);
+        let mut t = 1.0;
+        run_frame(&ctx, &mut app, t, vec![Event::PointerMoved(p)]);
+        for click in 0..2 {
+            t += 0.01;
+            run_frame(&ctx, &mut app, t, vec![button(p, true)]);
+            t += 0.04;
+            run_frame(&ctx, &mut app, t, vec![button(p, false)]);
+            if click == 0 {
+                t += gap;
+                run_frame(&ctx, &mut app, t, vec![Event::PointerMoved(p)]);
+            }
+        }
+        for _ in 0..3 {
+            t += 0.02;
+            run_frame(&ctx, &mut app, t, Vec::new());
+        }
+        app
+    }
+
+    /// #192: a double-click on a raw fill selects it with its outline, at any speed a desktop
+    /// counts as a double-click. egui's own limit is 0.3 s between the clicks, which a relaxed
+    /// double-click misses (and a slow frame after the first click used up), so "sometimes it
+    /// took six clicks"; the app now allows the half second Windows and macOS do.
+    #[test]
+    fn a_double_click_on_a_raw_fill_selects_its_outline_fast_or_relaxed() {
+        for gap in [0.02, 0.1, 0.25, 0.4] {
+            let app = double_click(gap);
+            assert_eq!(app.s.selection.len(), 5, "{gap} s apart: the fill and its four sides");
+            assert_eq!(app.s.visible_elements().len(), 5, "nothing moved or merged");
+        }
+        // Two separate clicks stay two clicks: the fill alone.
+        assert_eq!(double_click(0.7).s.selection.len(), 1);
     }
 }

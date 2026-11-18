@@ -167,7 +167,11 @@ mod tests {
                 .collect();
             let mut overlaps = 0;
             let until = Instant::now() + Duration::from_millis(300);
-            while Instant::now() < until {
+            // The run without the gate goes on until its detector has seen an overlap (it must:
+            // the threads submit nearly all the time), however long a busy machine takes to
+            // let them run at all. On CI's Linux runner 300 ms could pass before any did.
+            let patience = Instant::now() + Duration::from_secs(30);
+            while Instant::now() < until || (!gated && overlaps == 0 && Instant::now() < patience) {
                 // A frame: the gate is open for a moment.
                 gate.open();
                 std::thread::sleep(Duration::from_micros(200));

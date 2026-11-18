@@ -11,8 +11,8 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         c("timeline.insert_frame", "Frame", "Insert/Timeline", Some("F5"), "{layer? | layers?: [..] | all_layers?: true (every layer with frames at or after the frame, as F5 with no frame selection; the active layer when none has), frame?, count?, advance?: true (the playhead moves onto the last frame inserted, as the key does in the editor)}", true, insert_frame as crate::RunFn),
         c("timeline.remove_frame", "Remove Frame", "Insert/Timeline", Some("Shift+F5"), "{layer? | layers?: [..], frame?, count?}", true, remove_frame),
-        c("timeline.insert_keyframe", "Keyframe", "Insert/Timeline", Some("F6"), "{layer? | layers?: [..], frame?, advance?: true (on a keyframe the new key goes on the next frame, and the playhead moves onto it, as the key does in the editor)}", true, insert_keyframe),
-        c("timeline.insert_blank_keyframe", "Blank Keyframe", "Insert/Timeline", Some("F7"), "{layer? | layers?: [..], frame?, advance?: true (on a keyframe the blank key goes on the next frame instead of clearing it, and the playhead moves onto it)}", true, insert_blank_keyframe),
+        c("timeline.insert_keyframe", "Keyframe", "Insert/Timeline", Some("F6"), "{layer? | layers?: [..], frame?, count? (every frame of the range becomes a keyframe), advance?: true (on a keyframe the new key goes on the next frame, and the playhead moves onto it, as the key does in the editor)}", true, insert_keyframe),
+        c("timeline.insert_blank_keyframe", "Blank Keyframe", "Insert/Timeline", Some("F7"), "{layer? | layers?: [..], frame?, count? (every frame of the range becomes a blank keyframe; keyframes already there are kept), advance?: true (on a keyframe the blank key goes on the next frame instead of clearing it, and the playhead moves onto it)}", true, insert_blank_keyframe),
         c("timeline.clear_keyframe", "Clear Keyframe", "Insert/Timeline", Some("Shift+F6"), "{layer? | layers?: [..], frame?, count?}", true, clear_keyframe),
         c("timeline.move_keyframes", "Move Keyframes", "", None, "{layer? | layers?: [..], from, to?, by, layer_by? (rows down; negative = up)}", true, move_keyframes),
         c("timeline.move_spans", "Move Spans", "", None, "{layer? | layers?: [..], from, to?, by, layer_by? (rows down; negative = up), copy?: true (Alt-drag: the frames stay where they were too)}: the spans starting in from..=to move whole, keeping their lengths and tweens (as dragging a tween span in Animate), replacing what they land on; the frames they leave are empty", true, move_spans),
@@ -437,24 +437,45 @@ pub(crate) fn insert_keyframe_at(layer: &mut Layer, frame: u32, copy: bool) -> R
     Ok(())
 }
 
+/// F6. Over a range (`count`, as with frames selected in the editor) every frame in it becomes a
+/// keyframe holding what that frame showed, as Animate's Convert to Keyframes does (#272).
 fn insert_keyframe(s: &mut Session, p: &Value) -> Result<Value> {
     let frame = key_frame(s, p)?;
+    let last = last_key_frame(frame, count_param(p)?);
     for id in target_layers(s, p)? {
         let layer = s.layer_mut(Some(id))?;
-        // Inside a motion tween F6 keys every property there; the span stays whole.
-        if !crate::cmds_motion::key_all_at(layer, frame) {
-            insert_keyframe_at(layer, frame, true)?;
+        for f in frame..=last {
+            // Inside a motion tween F6 keys every property there; the span stays whole.
+            if !crate::cmds_motion::key_all_at(layer, f) {
+                insert_keyframe_at(layer, f, true)?;
+            }
         }
     }
     advanced(s, p, frame)
 }
 
+/// F7. Over a range (`count`) every frame in it becomes a blank keyframe, ready for
+/// frame-by-frame drawing (#272). Keyframes already in the range stay as they are: a range edit
+/// makes the keys that are missing and never erases a drawing (one frame alone, without
+/// `advance`, still clears the keyframe it is on).
 fn insert_blank_keyframe(s: &mut Session, p: &Value) -> Result<Value> {
     let frame = key_frame(s, p)?;
+    let last = last_key_frame(frame, count_param(p)?);
     for id in target_layers(s, p)? {
-        insert_keyframe_at(s.layer_mut(Some(id))?, frame, false)?;
+        let layer = s.layer_mut(Some(id))?;
+        for f in frame..=last {
+            if last > frame && layer.keyframe_starting_at(f).is_some() {
+                continue;
+            }
+            insert_keyframe_at(layer, f, false)?;
+        }
     }
     advanced(s, p, frame)
+}
+
+/// The last frame of a `count`-frame range starting at `frame`, kept inside the timeline.
+fn last_key_frame(frame: u32, count: u32) -> u32 {
+    frame.saturating_add(count.saturating_sub(1)).min(MAX_FRAME)
 }
 
 /// Where F6 / F7 put the key. With `advance`, a frame that is already a keyframe on every target

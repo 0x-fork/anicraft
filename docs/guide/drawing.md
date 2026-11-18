@@ -95,7 +95,7 @@ With the **Selection** tool (**V**) on merged drawing:
   edges, plus any objects wholly inside it. **Shift** adds more. If you click away without
   changing anything, the drawing is whole again.
 * **Drag an unselected line** or the edge of a fill to **bend** it into a curve through the
-  pointer. Its ends stay put.
+  pointer. Its ends stay put, and a straight edge bends into one even arc wherever you grab it.
 * **Ctrl-drag** (**⌘-drag** on a Mac) a line or the edge of a fill to add a **corner point**
   where you pressed and pull it into a peak: on a straight edge, both sides stay straight.
 * **Drag an unselected corner or end** to move it. Every shape that shares the point moves
@@ -271,6 +271,12 @@ the drawing. To fade a whole symbol instance, or to tween a fade, use the colour
 
 ### Line styles
 
+With shapes selected, **Properties** has a **Fill** and a **Stroke** row, each with a swatch and
+an on/off checkbox. Turning a fill or a stroke off and on again brings back the colour,
+gradient or line it had. With only an outline selected (double-click it), turning **Fill** on
+fills what the outline surrounds. The stroke **width** stops at a hairline (0.1) when you drag
+it all the way down; the checkbox is what removes a stroke.
+
 Properties has Animate's line settings, for selected lines and for the tools' new lines:
 **Style** (Solid, Dashed with dash and gap lengths, or Dotted with dot spacing), **Cap**
 (None, Round or Square), **Join** (Miter, Round or Bevel) and **Miter**, how sharp a mitred
@@ -391,7 +397,8 @@ Both dialogs remember what you entered. Each command is one undo step.
 With the **Free Transform** tool (**Q**), drag a handle (a corner or the middle of an edge) to
 **scale** (**Shift** keeps the proportions, **Alt** scales from the centre), the line between
 two handles to **skew** (the opposite edge stays where it is; **Alt** skews about the centre),
-just outside a corner to **rotate** (**Shift** snaps to 15°), or inside the box to **move**.
+just outside a corner to **rotate** (the pointer turns into a curved arrow there; **Shift**
+snaps to 15°), or inside the box to **move**.
 You can also type exact **Position**, **Size**, **Scale** and **Rotation** values in
 Properties. **Size** is the width (**W**) and height (**H**) of the selection's box in stage
 pixels: a new value stretches the artwork from the box's top-left corner, which stays where it
@@ -446,6 +453,15 @@ Warp mesh can't either: remove its warp first.
 **Paste in Place** (**Ctrl+Shift+V**), **Duplicate** (**Ctrl+D**) and **Clear** (**Delete**
 or **Backspace**). Copied artwork keeps its layers, and symbols travel with it to another
 document.
+
+Pasted merge-drawing shapes stay whole and selected on top of the drawing, as in Animate: drag
+them where you want them. They join the drawing under them when you deselect them or let go
+after a move, and **Undo** takes the paste back in one step.
+
+**Paste** also takes a picture copied in another app, such as a paint program or a screenshot:
+it lands in the middle of the view as a bitmap, and in the Library. AniCraft pastes whichever
+was copied last, its own artwork or the picture. (Desktop app only; drawings copied as vectors
+in other apps are not read yet: export them as SVG and import or drop the file.)
 
 ### Stacking order
 

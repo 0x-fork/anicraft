@@ -241,6 +241,7 @@ dependencies = [
  "anicraft-gpu",
  "anicraft-guide",
  "anicraft-render",
+ "arboard",
  "cpal",
  "craft-update",
  "eframe",

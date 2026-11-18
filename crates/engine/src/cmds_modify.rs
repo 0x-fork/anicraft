@@ -13,8 +13,8 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         c("edit.cut", "Cut", "Edit", Some("Ctrl+X"), "{}", true, cut as crate::RunFn),
         c("edit.copy", "Copy", "Edit", Some("Ctrl+C"), "{} (the selection on every layer, each layer's artwork kept apart)", false, copy),
-        c("edit.paste", "Paste in Center", "Edit", Some("Ctrl+V"), "{x?, y?} (centre of the pasted artwork; default: offset 10 px). Artwork copied from one layer lands on the active layer; from several, back on those layers when they are all here, else on the active layer and the ones below it, creating missing ones", true, paste),
-        c("edit.paste_in_place", "Paste in Place", "Edit", Some("Ctrl+Shift+V"), "{} (layers as edit.paste)", true, paste_in_place),
+        c("edit.paste", "Paste in Center", "Edit", Some("Ctrl+V"), "{x?, y?, float?: true} (centre of the pasted artwork; default: offset 10 px). With float (as the editor pastes) raw shapes stay whole and selected on top, and go into the drawing when they are deselected or dropped after a move; without it they cut and join what they land on at once. Artwork copied from one layer lands on the active layer; from several, back on those layers when they are all here, else on the active layer and the ones below it, creating missing ones", true, paste),
+        c("edit.paste_in_place", "Paste in Place", "Edit", Some("Ctrl+Shift+V"), "{float?: true} (layers and float as edit.paste)", true, paste_in_place),
         c("modify.transform", "Transform", "", None, "{a, b, c, d, e, f, origin?: selection|registration|center (default selection)} affine applied in stage space (free transform), to the selection on every layer. With origin registration or center, the matrix's scale, rotation and skew are applied to each selected object about its own point instead (see modify.transform_origin) and its move (e, f) is left out", true, transform),
         c("modify.rotate_cw", "Rotate 90° CW", "Modify/Transform", Some("Ctrl+Shift+9"), ABOUT_PARAMS, true, |s, p| about_center(s, p, Affine::rotate(std::f32::consts::FRAC_PI_2))),
         c("modify.rotate_ccw", "Rotate 90° CCW", "Modify/Transform", Some("Ctrl+Shift+7"), ABOUT_PARAMS, true, |s, p| about_center(s, p, Affine::rotate(-std::f32::consts::FRAC_PI_2))),
@@ -208,7 +208,7 @@ pub(crate) fn clipboard_nests(s: &Session) -> bool {
     s.clipboard.layers.iter().flat_map(|c| &c.elements).any(|e| matches!(e.kind, anicraft_doc::ElementKind::Symbol { symbol, .. } if crate::editing::would_nest(s, symbol)))
 }
 
-fn paste_with(s: &mut Session, offset: Vec2) -> Result<Value> {
+fn paste_with(s: &mut Session, offset: Vec2, float: bool) -> Result<Value> {
     if s.clipboard.is_empty() {
         return Err(EngineError::State("the clipboard is empty".into()));
     }
@@ -221,13 +221,20 @@ fn paste_with(s: &mut Session, offset: Vec2) -> Result<Value> {
     let mut sel = crate::Selection::default();
     let mut all = Vec::new();
     let mut merged = false;
+    let mut floating = Vec::new();
     for (c, &layer) in copied.iter().zip(&targets) {
-        let (fresh, m) = s.with_layer(layer, |s| paste_layer(s, &c.elements, offset))?;
+        let (fresh, m) = s.with_layer(layer, |s| paste_layer(s, &c.elements, offset, float))?;
         merged |= m;
+        if float {
+            // The raw shapes among them: every pasted element that can merge.
+            floating.extend(c.elements.iter().zip(&fresh).filter(|(e, _)| crate::merge::mergeable(e).is_some()).map(|(_, &id)| (layer, id)));
+        }
         all.extend(fresh.iter().map(|e| e.0));
         sel.extend_on(layer, fresh);
     }
     s.selection = sel;
+    // Floating shapes wait for the selection to let go of them (`Session::settle_floating`).
+    s.floating = (!floating.is_empty()).then_some(crate::Floating { items: floating, frame: s.frame });
     let mut layers: Vec<LayerId> = Vec::new();
     for l in &targets {
         if !layers.contains(l) {
@@ -240,6 +247,9 @@ fn paste_with(s: &mut Session, offset: Vec2) -> Result<Value> {
         s.layer = first;
     }
     let mut v = json!({"pasted": all, "merged": merged});
+    if s.floating.is_some() {
+        v["floating"] = json!(true);
+    }
     if layers.len() > 1 {
         v["layers"] = json!(layers.iter().map(|l| l.0).collect::<Vec<_>>());
     }
@@ -247,8 +257,9 @@ fn paste_with(s: &mut Session, offset: Vec2) -> Result<Value> {
 }
 
 /// Pastes `elements` moved by `offset` into the active layer's keyframe at the playhead; their
-/// new ids, and whether raw shapes merged.
-pub(crate) fn paste_layer(s: &mut Session, elements: &[Element], offset: Vec2) -> Result<(Vec<ElementId>, bool)> {
+/// new ids, and whether raw shapes merged. With `float` raw shapes go on top whole, like
+/// objects, so the new ids are in the order of `elements`.
+pub(crate) fn paste_layer(s: &mut Session, elements: &[Element], offset: Vec2, float: bool) -> Result<(Vec<ElementId>, bool)> {
     let mut fresh = Vec::new();
     let mut out = Vec::new();
     let mut raw = Vec::new();
@@ -258,7 +269,7 @@ pub(crate) fn paste_layer(s: &mut Session, elements: &[Element], offset: Vec2) -
         e.transform = Affine::translate(offset.x, offset.y).mul(&e.transform);
         // Raw shapes go into the drawing where they land, cutting and joining what they touch
         // (ADR 0042); objects go on top.
-        if crate::merge::mergeable(&e).is_some() {
+        if !float && crate::merge::mergeable(&e).is_some() {
             raw.push(e);
         } else {
             fresh.push(e.id);
@@ -306,11 +317,11 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         }
         _ => Vec2::new(10.0, 10.0),
     };
-    paste_with(s, offset)
+    paste_with(s, offset, opt_bool(p, "float")?.unwrap_or(false))
 }
 
-fn paste_in_place(s: &mut Session, _: &Value) -> Result<Value> {
-    paste_with(s, Vec2::ZERO)
+fn paste_in_place(s: &mut Session, p: &Value) -> Result<Value> {
+    paste_with(s, Vec2::ZERO, opt_bool(p, "float")?.unwrap_or(false))
 }
 
 // ----- transforms -------------------------------------------------------------------------------

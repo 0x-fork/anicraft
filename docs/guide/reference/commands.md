@@ -78,9 +78,9 @@ This page is generated from the command registry, so it always matches the versi
 - **Copy** `edit.copy` · **Ctrl+C** (macOS **⌘C**)
   Parameters: `{} (the selection on every layer, each layer's artwork kept apart)`
 - **Paste in Center** `edit.paste` · **Ctrl+V** (macOS **⌘V**) · changes the document
-  Parameters: `{x?, y?} (centre of the pasted artwork; default: offset 10 px). Artwork copied from one layer lands on the active layer; from several, back on those layers when they are all here, else on the active layer and the ones below it, creating missing ones`
+  Parameters: `{x?, y?, float?: true} (centre of the pasted artwork; default: offset 10 px). With float (as the editor pastes) raw shapes stay whole and selected on top, and go into the drawing when they are deselected or dropped after a move; without it they cut and join what they land on at once. Artwork copied from one layer lands on the active layer; from several, back on those layers when they are all here, else on the active layer and the ones below it, creating missing ones`
 - **Paste in Place** `edit.paste_in_place` · **Ctrl+Shift+V** (macOS **⇧⌘V**) · changes the document
-  Parameters: `{} (layers as edit.paste)`
+  Parameters: `{float?: true} (layers and float as edit.paste)`
 - **Edit Symbols** `symbol.edit` · **Ctrl+E** (macOS **⌘E**)
   Parameters: ``{id?: instance element id, symbol?: library symbol id} opens a symbol's timeline for editing: the instance `id` (default: the selected instance) in place, or a Library symbol at the stage's centre. A group (ADR 0073) or a drawing object (ADR 0080) opens in place the same way: inside, its raw shapes merge only with each other, and a drawing object closes as one object again (a group of its pieces when an edit left several). Every command then works inside it. With nothing to open while a symbol is open, goes back to the document (Animate's Ctrl+E)``
 - **Edit Document** `symbol.exit`
@@ -122,9 +122,9 @@ This page is generated from the command registry, so it always matches the versi
 - **Remove Frame** `timeline.remove_frame` · Insert › Timeline · **Shift+F5** (macOS **⇧F5**) · changes the document
   Parameters: `{layer? | layers?: [..], frame?, count?}`
 - **Keyframe** `timeline.insert_keyframe` · Insert › Timeline · **F6** · changes the document
-  Parameters: `{layer? | layers?: [..], frame?, advance?: true (on a keyframe the new key goes on the next frame, and the playhead moves onto it, as the key does in the editor)}`
+  Parameters: `{layer? | layers?: [..], frame?, count? (every frame of the range becomes a keyframe), advance?: true (on a keyframe the new key goes on the next frame, and the playhead moves onto it, as the key does in the editor)}`
 - **Blank Keyframe** `timeline.insert_blank_keyframe` · Insert › Timeline · **F7** · changes the document
-  Parameters: `{layer? | layers?: [..], frame?, advance?: true (on a keyframe the blank key goes on the next frame instead of clearing it, and the playhead moves onto it)}`
+  Parameters: `{layer? | layers?: [..], frame?, count? (every frame of the range becomes a blank keyframe; keyframes already there are kept), advance?: true (on a keyframe the blank key goes on the next frame instead of clearing it, and the playhead moves onto it)}`
 - **Clear Keyframe** `timeline.clear_keyframe` · Insert › Timeline · **Shift+F6** (macOS **⇧F6**) · changes the document
   Parameters: `{layer? | layers?: [..], frame?, count?}`
 - **Create Motion Tween** `timeline.create_motion_tween` · changes the document
@@ -510,9 +510,9 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Transform** `element.set_transform` · changes the document
   Parameters: `{x?, y?, sx?, sy?, rotation? (degrees)}`
 - **Fill Colour** `element.set_fill` · changes the document
-  Parameters: `{color: "#rrggbb" | "#rrggbbaa" | null} (the alpha is the fill's own; 00 is a clear fill, not the same as null)`
+  Parameters: `{color: "#rrggbb" | "#rrggbbaa" | null, or on: true | false} (the alpha is the fill's own; 00 is a clear fill, not the same as null. on: false turns the fill off like null; on: true puts back the fill each shape had before, else the tool's fill colour. With only raw lines selected the fill goes to what they surround)`
 - **Stroke** `element.set_stroke` · changes the document
-  Parameters: `{color?: "#rrggbb" | "#rrggbbaa" | null, width?, profile?: uniform|taper_both|taper_start|taper_end|bulge|pinch | [[t, left, right], ..], cap?, join?, miter?, style?, dash?, dash_offset?, dot_spacing? (as stroke.set_style)}`
+  Parameters: `{on?: true | false (false removes the stroke like color: null; true puts back the stroke each shape had before, else the tool's), color?: "#rrggbb" | "#rrggbbaa" | null, width?, profile?: uniform|taper_both|taper_start|taper_end|bulge|pinch | [[t, left, right], ..], cap?, join?, miter?, style?, dash?, dash_offset?, dot_spacing? (as stroke.set_style)}`
 - **Alpha** `element.set_alpha` · changes the document
   Parameters: `{alpha: 0..1} sets the alpha multiplier and keeps the rest of the colour effect (None becomes Alpha; Brightness and Tint become Advanced below 1)`
 - **Colour Effect** `element.set_color_effect` · changes the document

@@ -1156,12 +1156,36 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
         // The right edge of a span is a handle: drag it to make the span longer or shorter
         // (later frames move with it, as with F5 / Shift+F5).
-        let span_end_at = |px: f32| layer.keyframes.iter().find(|k| k.end() > first && k.start <= first + visible_cols && (x_of(k.end()) - px).abs() <= 4.0).map(|k| (k.start, k.end()));
+        // The handle lies inside the span's last frame, and past the end only where no keyframe
+        // follows: the next keyframe's own cell is for selecting and dragging that keyframe
+        // (#344: a press on the left of a keyframe used to resize the span before it).
+        let span_end_at = |px: f32| {
+            let grip = (cell_w * 0.34).min(4.0);
+            layer.keyframes.iter().enumerate().find(|(n, k)| {
+                let d = px - x_of(k.end());
+                let after = if layer.keyframes.get(n + 1).is_some_and(|next| next.start == k.end()) { 0.0 } else { grip };
+                k.end() > first && k.start <= first + visible_cols && d >= -grip && d < after
+            })
+            .map(|(_, k)| (k.start, k.end()))
+        };
         if cr.hovered() && app.tl_drag == TlDrag::None && cr.hover_pos().and_then(|p| span_end_at(p.x)).is_some() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
         if matches!(app.tl_drag, TlDrag::Span { .. }) {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        // Selected frames that hold keyframes can be dragged away (as in Animate: select, then
+        // drag). The hand says so before the press, and closes while they move (#344).
+        if cr.hovered()
+            && app.tl_drag == TlDrag::None
+            && let Some(p) = cr.hover_pos()
+            && span_end_at(p.x).is_none()
+            && app.frame_sel.is_some_and(|s| s.contains(&layers, i, frame_at(p.x)) && s.has_keys(&layers))
+        {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+        if matches!(app.tl_drag, TlDrag::Move { .. }) {
+            ui.ctx().set_cursor_icon(if ui.input(|inp| inp.modifiers.alt) { egui::CursorIcon::Copy } else { egui::CursorIcon::Grabbing });
         }
         if cr.drag_started()
             && let Some(p) = ui.input(|inp| inp.pointer.press_origin())
@@ -1197,6 +1221,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 app.frame_sel = Some(FrameSel::cell(layer.id, f));
                 app.tl_drag = TlDrag::Select;
                 select_here(app, f);
+                // A drag that starts on a keyframe nobody selected selects frames, as in
+                // Animate. Someone who meant to move the keyframe reads how (#344).
+                if layer.keyframe_starting_at(f).is_some() {
+                    app.status_ok(tr!("Dragging selects frames. To move a keyframe, click it first, then drag it."));
+                }
             }
         }
         if cr.dragged()
@@ -2115,38 +2144,87 @@ mod tests {
         assert!(FrameSel { anchor: (LayerId(9), 0), head: (LayerId(1), 0) }.layers(&ls).is_empty());
     }
 
+    use egui::{Event, Modifiers, PointerButton, Pos2};
+
+    /// One frame of the whole app with these events; the cursor it asked for.
+    fn frame(ctx: &egui::Context, app: &mut App, events: Vec<Event>, modifiers: Modifiers) -> egui::CursorIcon {
+        let mut all = vec![Event::ModifiersChanged(modifiers)];
+        all.extend(events);
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 940.0))), events: all, ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| app.frame(ui));
+        out.textures_delta.clear();
+        out.platform_output.cursor_icon
+    }
+    fn settle(ctx: &egui::Context, app: &mut App) {
+        for _ in 0..3 {
+            frame(ctx, app, Vec::new(), Modifiers::NONE);
+        }
+    }
+    fn button(pos: Pos2, pressed: bool, modifiers: Modifiers) -> Event {
+        Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers }
+    }
+    fn drag(ctx: &egui::Context, app: &mut App, from: Pos2, to: Pos2, modifiers: Modifiers) {
+        frame(ctx, app, vec![Event::PointerMoved(from)], modifiers);
+        frame(ctx, app, vec![button(from, true, modifiers)], modifiers);
+        for i in 1..=10 {
+            frame(ctx, app, vec![Event::PointerMoved(from + (to - from) * (i as f32 / 10.0))], modifiers);
+        }
+        frame(ctx, app, vec![button(to, false, modifiers)], modifiers);
+        settle(ctx, app);
+    }
+    fn click(ctx: &egui::Context, app: &mut App, at: Pos2, modifiers: Modifiers) {
+        frame(ctx, app, vec![Event::PointerMoved(at)], modifiers);
+        frame(ctx, app, vec![button(at, true, modifiers)], modifiers);
+        frame(ctx, app, vec![button(at, false, modifiers)], modifiers);
+        settle(ctx, app);
+    }
+
+    /// #344: a keyframe moves the way it does in Animate: click it, then drag it. The hand
+    /// cursor over selected keyframes says it can be dragged; a drag that starts on a keyframe
+    /// nobody selected still selects a range of frames, and says how to move one.
+    #[test]
+    fn a_selected_keyframe_shows_the_hand_and_drags_away() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, anicraft_engine::Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        app.show_panel(crate::dock::Panel::Timeline);
+        let layer = app.s.layer;
+        app.run("timeline.insert_frame", json!({"layer": layer.0, "frame": 0, "count": 11}));
+        app.run("timeline.insert_keyframe", json!({"layer": layer.0, "frame": 3}));
+        app.s.set_frame(0);
+        settle(&ctx, &mut app);
+        let Some((cells, x0, cell_w, scroll)) = ctx.data(|d| d.get_temp::<(egui::Rect, f32, f32, f32)>(egui::Id::new("tl_geometry"))) else { panic!("the timeline drew") };
+        let at = |f: u32| pos2(x0 + (f as f32 - scroll) * cell_w + cell_w * 0.5, cells.center().y);
+        let starts = |app: &App| app.s.active_layer().map(|l| l.keyframes.iter().map(|k| k.start).collect::<Vec<_>>()).unwrap_or_default();
+        assert_eq!(starts(&app), vec![0, 3]);
+
+        // Nothing selected: a press and drag on the keyframe selects frames 3..=6, moves nothing.
+        assert_ne!(frame(&ctx, &mut app, vec![Event::PointerMoved(at(3))], Modifiers::NONE), egui::CursorIcon::Grab);
+        drag(&ctx, &mut app, at(3), at(6), Modifiers::NONE);
+        assert_eq!(starts(&app), vec![0, 3], "a first drag selects, as in Animate");
+        assert_eq!(app.frame_sel.map(|s| s.frames()), Some((3, 6)));
+        assert!(app.status.as_ref().is_some_and(|s| !s.error && s.text.contains("click it first")), "the hint: {:?}", app.status.as_ref().map(|s| &s.text));
+
+        // Click the keyframe: it is selected, and the hand shows over it (not over other frames).
+        click(&ctx, &mut app, at(3), Modifiers::NONE);
+        assert_eq!(app.frame_sel.map(|s| s.frames()), Some((3, 3)));
+        assert_eq!(frame(&ctx, &mut app, vec![Event::PointerMoved(at(3))], Modifiers::NONE), egui::CursorIcon::Grab);
+        assert_ne!(frame(&ctx, &mut app, vec![Event::PointerMoved(at(5))], Modifiers::NONE), egui::CursorIcon::Grab);
+
+        // Drag it: the keyframe moves to frame 7 and stays selected, in one undo step.
+        frame(&ctx, &mut app, vec![Event::PointerMoved(at(3))], Modifiers::NONE);
+        frame(&ctx, &mut app, vec![button(at(3), true, Modifiers::NONE)], Modifiers::NONE);
+        frame(&ctx, &mut app, vec![Event::PointerMoved(at(5))], Modifiers::NONE);
+        assert_eq!(frame(&ctx, &mut app, vec![Event::PointerMoved(at(7))], Modifiers::NONE), egui::CursorIcon::Grabbing);
+        frame(&ctx, &mut app, vec![button(at(7), false, Modifiers::NONE)], Modifiers::NONE);
+        settle(&ctx, &mut app);
+        assert_eq!(starts(&app), vec![0, 7]);
+        assert_eq!(app.frame_sel.map(|s| s.frames()), Some((7, 7)));
+        app.run("edit.undo", json!({}));
+        assert_eq!(starts(&app), vec![0, 3]);
+    }
+
     #[test]
     fn the_ruler_playhead_stops_at_the_last_frame_with_material() {
-        use egui::{Event, Modifiers, PointerButton, Pos2};
-        fn frame(ctx: &egui::Context, app: &mut App, events: Vec<Event>, modifiers: Modifiers) {
-            let mut all = vec![Event::ModifiersChanged(modifiers)];
-            all.extend(events);
-            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 940.0))), events: all, ..Default::default() };
-            ctx.run_ui(input, |ui| app.frame(ui)).textures_delta.clear();
-        }
-        fn settle(ctx: &egui::Context, app: &mut App) {
-            for _ in 0..3 {
-                frame(ctx, app, Vec::new(), Modifiers::NONE);
-            }
-        }
-        fn button(pos: Pos2, pressed: bool, modifiers: Modifiers) -> Event {
-            Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers }
-        }
-        fn drag(ctx: &egui::Context, app: &mut App, from: Pos2, to: Pos2, modifiers: Modifiers) {
-            frame(ctx, app, vec![Event::PointerMoved(from)], modifiers);
-            frame(ctx, app, vec![button(from, true, modifiers)], modifiers);
-            for i in 1..=10 {
-                frame(ctx, app, vec![Event::PointerMoved(from + (to - from) * (i as f32 / 10.0))], modifiers);
-            }
-            frame(ctx, app, vec![button(to, false, modifiers)], modifiers);
-            settle(ctx, app);
-        }
-        fn click(ctx: &egui::Context, app: &mut App, at: Pos2, modifiers: Modifiers) {
-            frame(ctx, app, vec![Event::PointerMoved(at)], modifiers);
-            frame(ctx, app, vec![button(at, true, modifiers)], modifiers);
-            frame(ctx, app, vec![button(at, false, modifiers)], modifiers);
-            settle(ctx, app);
-        }
         assert_eq!(playhead_target(26, 8), 7);
         assert_eq!(playhead_target(3, 8), 3);
         assert_eq!(playhead_target(0, 0), 0);
