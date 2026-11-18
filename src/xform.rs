@@ -218,7 +218,8 @@ impl Frame {
             XfKind::Pivot if dragging => CursorIcon::Grabbing,
             XfKind::Pivot => CursorIcon::Grab,
             XfKind::Move => CursorIcon::Move,
-            XfKind::Rotate => CursorIcon::Alias,
+            // No desktop has a rotate cursor: the stage draws its own (#194).
+            XfKind::Rotate => CursorIcon::None,
             XfKind::Scale { hx, hy } => arrows(self.handle(0, 0), self.handle(hx, hy)),
             // An edge slides along itself.
             XfKind::Skew { hy: 0, .. } => arrows(self.handle(0, -1), self.handle(0, 1)),
