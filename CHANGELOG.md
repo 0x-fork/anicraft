@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+* **Fixed: start-up, graphics and opening Flash files, from user reports** (ADR 0105, M8).
+  * Fixed: most `.fla` files saved by Flash CS5 to Animate were refused with "the archive is
+    damaged: the central directory is outside the archive" (#356, #385). Flash writes the
+    archive's closing record with the file list's size 54 bytes too large whenever `mimetype`
+    isn't the first file; AniCraft now reads those as Animate does. Archives that really are
+    damaged are still refused.
+  * Fixed: the cause of AniCraft closing as it opened or when its window was resized (#264,
+    #309, and most "won't open" reports: #421, #412, #313, #286, #285, #268, #164). The stage
+    handed its drawing to the graphics card while the window was setting itself up, which the
+    graphics library refuses ("Failed to wait for GPU to come idle before reconfiguring the
+    Surface"). 0.2.1 closed on that error; later builds survived it with a skipped frame and a
+    line about the graphics driver. Now it doesn't happen: stage drawing is handed over only
+    while a frame is being drawn. Measured: the error in 3 of 20 starts before, 0 of 20 after.
+  * Fixed: on a computer whose graphics driver crashes AniCraft as it starts, AniCraft opened
+    only every second time (#335). The way of drawing the window that crashed now stays last for
+    the next five starts, then gets one more chance, and is held back longer each time it fails
+    again (25, then 100 starts). `--renderer` still tries what you ask for first.
+  * Fixed: on Linux, after **Add to Applications Menu**, the menu and dock could keep showing a
+    generic icon when another installer had left an icon cache in `~/.local/share/icons`
+    (#348). The cache is brought up to date.
+  * The web version keeps fewer drawn frames in memory: 256 MB at most instead of 768 MB (#314:
+    900 MB for a short animation). The desktop is unchanged; idle, it uses no CPU.
+
 * **Licences: the shared libraries' exceptions, and the licence check back in CI.** `symphonia` (MPL-2.0, sound decoding through `craft-audio`) and `jpeg-encoder` (IJG, JPEG export through `craft-image-codecs`) are accepted as crate-scoped exceptions, named in `NOTICE` and `ATTRIBUTION.md`, with the reasons in `docs/legal/compliance.md`. CI runs `cargo deny check licenses bans sources` in its own job again, since the shared gate doesn't.
 * **Filters: animated colours and switches, built-in presets, and filters on text** (ADR 0099,
   M5).
