@@ -570,6 +570,10 @@ pub struct App {
     /// A copy or cut ran: the system clipboard gets a note at the end of the frame, so the next
     /// Ctrl/⌘+V reaches the app (egui-winit sends a paste only when the clipboard holds text).
     copied: bool,
+    /// Paste looks at the system clipboard for a picture from another app (#263). Off in
+    /// screenshot runs and tests, which must not depend on what this computer last copied.
+    system_clipboard: bool,
+    swallowed_paste: platform::SwallowedPaste,
     /// Document revision at the end of the last frame (edits schedule a repaint).
     last_revision: u64,
     title: String,
@@ -825,6 +829,8 @@ impl App {
             fonts_rx: None,
             glyph_check: true,
             copied: false,
+            system_clipboard: !shot_mode && !platform::WEB,
+            swallowed_paste: platform::SwallowedPaste::default(),
             last_revision: 0,
             title: String::new(),
             keymap,
@@ -3242,6 +3248,11 @@ impl App {
             crate::convert_symbol::open(self);
             return;
         }
+        // A picture copied in another app (a paint program, a screenshot) is what Paste means
+        // when it is the newest thing copied (#263).
+        if matches!(id, "edit.paste" | "edit.paste_in_place") && self.paste_from_system() {
+            return;
+        }
         // Pasted raw artwork floats, selected, until it is deselected (as in Animate), so it
         // can be dragged off what it landed on before the two join (#391).
         if id == "edit.paste" {
@@ -3329,6 +3340,47 @@ impl App {
     }
 
     /// The stage point at the centre of the visible canvas.
+    /// Pastes the system clipboard's picture, when it is newer than what AniCraft copied.
+    /// AniCraft's own Copy leaves a note as text on the system clipboard, so while that note is
+    /// still there the artwork copied here is the newest thing.
+    fn paste_from_system(&mut self) -> bool {
+        if !self.system_clipboard {
+            return false;
+        }
+        let own = !self.s.clipboard.is_empty() && platform::clipboard_text().is_some_and(|t| t == tr!("Copied from AniCraft"));
+        if own {
+            return false;
+        }
+        let Some(image) = platform::clipboard_image() else { return false };
+        self.paste_image(&image);
+        true
+    }
+
+    /// Places `image` in the middle of the view as a bitmap, in the Library too (as an image
+    /// dropped on the stage is), selected. One undo step.
+    pub(crate) fn paste_image(&mut self, image: &platform::ClipboardImage) {
+        let png = match anicraft_engine::render::encode_png(image.width, image.height, &image.rgba) {
+            Ok(png) => png,
+            Err(e) => {
+                self.status_err(tr!("The copied picture could not be pasted: {error}", error = e.to_string()));
+                return;
+            }
+        };
+        // The engine imports files: the picture goes through one, removed again at once.
+        let dir = std::env::temp_dir().join(format!("anicraft-paste-{}", std::process::id()));
+        let path = dir.join("Pasted image.png");
+        if let Err(e) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, png)) {
+            self.status_err(tr!("The copied picture could not be pasted: {error}", error = e.to_string()));
+            return;
+        }
+        let c = self.view_center_stage();
+        if self.run("file.drop", json!({"paths": [path.display().to_string()], "to": "stage", "x": c.x, "y": c.y})).is_some() {
+            self.status_ok(tr!("Pasted the copied picture ({w} × {h} px) — {undo} to undo", w = image.width, h = image.height, undo = self.undo_key()));
+        }
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
     pub fn view_center_stage(&self) -> egui::Vec2 {
         let size = egui::vec2(self.s.doc.stage.width as f32, self.s.doc.stage.height as f32);
         size * 0.5 - self.view.pan / self.view.zoom.max(1e-3)
@@ -3552,6 +3604,11 @@ impl App {
         // (A browser sends these keys as presses already, with its clipboard events after.)
         if !platform::WEB {
             ctx.input_mut(clipboard_keys_as_presses);
+        }
+        // Ctrl/⌘+V with a picture on the clipboard never arrives as a key or a paste (#263).
+        let swallowed = ctx.input(|i| self.swallowed_paste.frame(i));
+        if swallowed && self.paste_from_system() {
+            return;
         }
         let control = keys == crate::a11y::Keyboard::Control;
         if !control {
@@ -4154,6 +4211,66 @@ fn clipboard_keys_as_presses(i: &mut egui::InputState) {
         })
         .collect();
     i.events.extend(keys.into_iter().map(|key| egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }));
+}
+
+/// #263: a picture copied in another app pastes as a bitmap.
+#[cfg(test)]
+mod system_paste_tests {
+    use super::App;
+    use crate::platform::{ClipboardImage, SwallowedPaste};
+    use egui::{Event, Key, Modifiers, RawInput};
+
+    /// The picture lands in the middle of the view, selected, with its bitmap in the Library;
+    /// one undo takes both away.
+    #[test]
+    fn a_copied_picture_pastes_as_a_bitmap_in_the_middle_of_the_view() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, anicraft_engine::Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        assert!(!app.system_clipboard, "tests never read this computer's clipboard");
+        assert!(!app.paste_from_system());
+        let before = app.s.doc.clone();
+        let image = ClipboardImage { width: 40, height: 20, rgba: [10, 200, 30, 255].repeat(800) };
+        app.paste_image(&image);
+        assert_eq!(app.s.doc.bitmaps.len(), 1);
+        assert_eq!(app.s.doc.bitmaps.first().map(|b| (b.width, b.height)), Some((40, 20)));
+        assert_eq!(app.s.selection.len(), 1, "the pasted picture is selected");
+        let (b, c) = (app.s.selection_bounds(), app.view_center_stage());
+        assert!((b.width() - 40.0).abs() < 0.01 && (b.height() - 20.0).abs() < 0.01, "{b:?}");
+        assert!((b.center().x - c.x).abs() < 0.51 && (b.center().y - c.y).abs() < 0.51, "centred on the view: {b:?} vs {c:?}");
+        assert!(app.status.as_ref().is_some_and(|s| !s.error), "{:?}", app.status.as_ref().map(|s| &s.text));
+        app.run("edit.undo", serde_json::json!({}));
+        assert!(app.s.doc == before, "one undo");
+    }
+
+    /// With a picture on the clipboard, Ctrl+V reaches the app only as the release of V. That
+    /// is a paste; a V that was pressed (the Selection tool's key) or pasted as text is not.
+    #[test]
+    fn a_release_of_v_with_nothing_before_it_is_a_swallowed_paste() {
+        let ctx = egui::Context::default();
+        let key = |pressed, modifiers| Event::Key { key: Key::V, physical_key: None, pressed, repeat: false, modifiers };
+        let feed = |state: &mut SwallowedPaste, time: f64, modifiers: Modifiers, events: Vec<Event>| {
+            let mut all = vec![Event::ModifiersChanged(modifiers)];
+            all.extend(events);
+            let mut heard = false;
+            ctx.run_ui(RawInput { time: Some(time), events: all, ..Default::default() }, |ui| heard = ui.input(|i| state.frame(i))).textures_delta.clear();
+            heard
+        };
+        let (ctrl, none) = (Modifiers::COMMAND | Modifiers::CTRL, Modifiers::NONE);
+        // Ctrl down, (the press of V is swallowed), V up.
+        let mut state = SwallowedPaste::default();
+        assert!(!feed(&mut state, 1.0, ctrl, vec![]));
+        assert!(feed(&mut state, 1.1, ctrl, vec![key(false, ctrl)]));
+        // Ctrl let go first, V a moment later: still that paste. Much later: not.
+        assert!(!feed(&mut state, 2.0, ctrl, vec![]));
+        assert!(feed(&mut state, 2.2, none, vec![key(false, none)]));
+        assert!(!feed(&mut state, 9.0, none, vec![key(false, none)]));
+        // Text on the clipboard: the paste event came, so the release is just a release.
+        assert!(!feed(&mut state, 10.0, ctrl, vec![Event::Paste("text".into())]));
+        assert!(!feed(&mut state, 10.1, ctrl, vec![key(false, ctrl)]));
+        // The V key by itself (the Selection tool).
+        assert!(!feed(&mut state, 11.0, none, vec![key(true, none)]));
+        assert!(!feed(&mut state, 11.1, none, vec![key(false, none)]));
+    }
 }
 
 /// Ctrl/⌘+X, C and V on the stage (issue #197). On the desktop egui-winit hands them over as
