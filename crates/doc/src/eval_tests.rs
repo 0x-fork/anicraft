@@ -738,3 +738,97 @@ fn raw_stroke_runs_with_different_colour_effects_keep_them_in_a_shape_tween() {
     assert_eq!(by(2).color, ColorEffect::Alpha(0.5).transform(), "the later run lost its alpha");
     assert_eq!(by(1).color, ColorEffect::None.transform(), "the first run took the later run's colour");
 }
+
+/// A classic tween from scale `a` to scale `b` (with a turn and a skew at the end), eased.
+fn squash_doc(a: (f32, f32), b: (f32, f32), easing: Easing, keep_area: bool) -> Document {
+    let at = |s: (f32, f32), rot: f32, skew: f32, x: f32| {
+        let mut e = shape_el(10, 0.0);
+        e.transform = anicraft_geom::Decomposed { tx: x, ty: 5.0, sx: s.0, sy: s.1, rotation: rot, skew }.compose();
+        e
+    };
+    let mut d = Document::default();
+    let mut k0 = Keyframe::new(0, 12);
+    k0.elements.push(Arc::new(at(a, 0.0, 0.0, 0.0)));
+    k0.tween = Some(Tween { easing, keep_area, ..Default::default() });
+    let mut k1 = Keyframe::new(12, 1);
+    k1.elements.push(Arc::new(at(b, 0.6, 0.3, 80.0)));
+    layer0(&mut d).keyframes = vec![Arc::new(k0), Arc::new(k1)];
+    d
+}
+
+/// The area factor of a transform: its determinant.
+fn area(m: &Affine) -> f32 {
+    m.m[0] * m.m[3] - m.m[1] * m.m[2]
+}
+
+#[test]
+fn keep_area_holds_the_area_on_every_frame_of_a_classic_tween() {
+    // Issue #408: 100 x 100 % to 200 x 50 %. Straight lines bulge to 112.5 % halfway.
+    let plain = squash_doc((1.0, 1.0), (2.0, 0.5), Easing::Linear, false);
+    assert!((area(&evaluate(&plain, 6).items[0].transform) - 1.125).abs() < 1e-4);
+    for easing in [Easing::Linear, Easing::QuadIn, Easing::BackOut, Easing::ElasticOut, Easing::Classic(-60.0)] {
+        let d = squash_doc((1.0, 1.0), (2.0, 0.5), easing.clone(), true);
+        for f in 0..=12 {
+            let a = area(&evaluate(&d, f).items[0].transform);
+            assert!((a - 1.0).abs() < 2e-5, "{easing:?} frame {f}: area {a}");
+        }
+    }
+    // Halfway is about 141 x 71 %; the turn, the skew and the move tween as before.
+    let d = squash_doc((1.0, 1.0), (2.0, 0.5), Easing::Linear, true);
+    let (mid, was) = (evaluate(&d, 6).items[0].transform.decompose(), evaluate(&plain, 6).items[0].transform.decompose());
+    assert!((mid.sx - std::f32::consts::SQRT_2).abs() < 1e-4 && (mid.sy - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-4, "{mid:?}");
+    assert!((mid.rotation - was.rotation).abs() < 1e-5 && (mid.skew - was.skew).abs() < 1e-5 && (mid.tx - was.tx).abs() < 1e-4);
+    // The keys themselves show exactly as they are.
+    assert_eq!(evaluate(&d, 0).items[0].transform, evaluate(&plain, 0).items[0].transform);
+    assert_eq!(evaluate(&d, 12).items[0].transform, evaluate(&plain, 12).items[0].transform);
+}
+
+#[test]
+fn keep_area_between_keys_of_different_areas_changes_it_smoothly_and_flips_fall_back() {
+    // 1 to 4 times the area: each frame multiplies it by the same factor.
+    let d = squash_doc((1.0, 1.0), (4.0, 1.0), Easing::Linear, true);
+    let a = |f| area(&evaluate(&d, f).items[0].transform);
+    for f in 0..12 {
+        assert!((a(f + 1) / a(f) - 4f32.powf(1.0 / 12.0)).abs() < 1e-4, "frame {f}");
+    }
+    // An axis that flips between the keys can't go geometrically: it tweens as before.
+    let (flip, plain) = (squash_doc((1.0, 1.0), (-1.0, 2.0), Easing::Linear, true), squash_doc((1.0, 1.0), (-1.0, 2.0), Easing::Linear, false));
+    for f in 0..=12 {
+        let (m, p) = (evaluate(&flip, f).items[0].transform, evaluate(&plain, f).items[0].transform);
+        assert!(m.is_finite());
+        let (dm, dp) = (m.decompose(), p.decompose());
+        // Whichever axis the decomposition gives the flip to, the other one went geometrically
+        // or the same; nothing blows up and the ends agree.
+        if f == 0 || f == 12 {
+            assert_eq!(m, p, "frame {f}");
+        }
+        assert!(dm.sx.is_finite() && dm.sy.is_finite() && dp.sx.is_finite());
+    }
+}
+
+#[test]
+fn keep_area_off_is_bit_exact_with_a_tween_that_never_had_it_and_files_stay_small() {
+    // Off (the default) takes the same code path as before: every frame identical, bit by bit.
+    for easing in [Easing::Linear, Easing::QuadInOut, Easing::BounceOut] {
+        let off = squash_doc((1.0, 1.5), (2.5, 0.25), easing.clone(), false);
+        let mut old = off.clone();
+        // A file from before Keep area has no such key: it reads as off.
+        let json = serde_json::to_string(&old).unwrap();
+        assert!(!json.contains("keep_area"), "off isn't written");
+        old = serde_json::from_str(&json).unwrap();
+        for f in 0..=12 {
+            let (x, y) = (evaluate(&off, f).items[0].transform, evaluate(&old, f).items[0].transform);
+            assert_eq!(x.m.map(f32::to_bits), y.m.map(f32::to_bits), "{easing:?} frame {f}");
+            if (1..12).contains(&f) {
+                let k = &off.scenes[0].timeline.layers[0].keyframes;
+                let d = (k[0].elements[0].transform.decompose(), k[1].elements[0].transform.decompose());
+                let t = easing.apply(f as f32 / 12.0);
+                assert_eq!(x.m.map(f32::to_bits), d.0.lerp(&d.1, t).compose().m.map(f32::to_bits), "the straight lerp of before, frame {f}");
+            }
+        }
+    }
+    // On round-trips.
+    let on = squash_doc((1.0, 1.0), (2.0, 0.5), Easing::Linear, true);
+    let back: Document = serde_json::from_str(&serde_json::to_string(&on).unwrap()).unwrap();
+    assert!(back.scenes[0].timeline.layers[0].keyframes[0].tween.as_ref().unwrap().keep_area);
+}

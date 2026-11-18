@@ -317,22 +317,24 @@ pub struct Progress {
     pub scale: f32,
     pub color: f32,
     pub filters: f32,
+    /// The scale axes move geometrically (the tween's Keep area, ADR 0115).
+    pub keep_area: bool,
 }
 
 impl Progress {
     /// Everything at `t`.
     pub fn uniform(t: f32) -> Progress {
-        Progress { main: t, position: t, rotation: t, scale: t, color: t, filters: t }
+        Progress { main: t, position: t, rotation: t, scale: t, color: t, filters: t, keep_area: false }
     }
 
     /// `tween` at linear progress `t`.
     pub fn of(tween: &crate::Tween, t: f32) -> Progress {
         let main = tween.easing.apply(t);
         if tween.groups.is_empty() {
-            return Progress::uniform(main);
+            return Progress { keep_area: tween.keep_area, ..Progress::uniform(main) };
         }
         let g = |g: crate::EaseGroup| if tween.has_own(g) { tween.ease(g).apply(t) } else { main };
-        Progress { main, position: g(crate::EaseGroup::Position), rotation: g(crate::EaseGroup::Rotation), scale: g(crate::EaseGroup::Scale), color: g(crate::EaseGroup::Color), filters: g(crate::EaseGroup::Filters) }
+        Progress { main, position: g(crate::EaseGroup::Position), rotation: g(crate::EaseGroup::Rotation), scale: g(crate::EaseGroup::Scale), color: g(crate::EaseGroup::Color), filters: g(crate::EaseGroup::Filters), keep_area: tween.keep_area }
     }
 }
 
@@ -535,6 +537,13 @@ fn interpolate(a: &Element, b: &Element, pr: Progress, morph: bool, hints: &[(an
     if pr.rotation != pr.position || pr.scale != pr.position {
         let (r, s) = (da.lerp(&db, pr.rotation), da.lerp(&db, pr.scale));
         (d.rotation, d.skew, d.sx, d.sy) = (r.rotation, r.skew, s.sx, s.sy);
+    }
+    // Keep area (ADR 0115): each scale axis goes geometrically from its key to the next, so
+    // the area (sx · sy; skew and rotation don't change it) of two keys that share it stays on
+    // every frame, and eases smoothly from one to the other when they don't.
+    if pr.keep_area {
+        d.sx = anicraft_geom::lerp_geometric(da.sx, db.sx, pr.scale);
+        d.sy = anicraft_geom::lerp_geometric(da.sy, db.sy, pr.scale);
     }
     let mut transform = d.compose();
     // An instance with a transformation point (ADR 0111) turns, scales and skews about it: the

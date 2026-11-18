@@ -1190,6 +1190,10 @@ pub struct Tween {
     /// properties.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub groups: Vec<(EaseGroup, Easing)>,
+    /// Keep area (ADR 0115): the two scale axes move geometrically instead of in straight
+    /// lines, so squash and stretch between keys of one area keeps that area on every frame.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub keep_area: bool,
 }
 
 impl Tween {
