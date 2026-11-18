@@ -12,7 +12,7 @@ fn rect(id: u64, x: f32, y: f32, w: f32, h: f32, c: u32) -> Arc<Element> {
 }
 
 fn inst(id: u64, symbol: u64, name: &str, m: Affine, events: Vec<EventHandler>) -> Arc<Element> {
-    Arc::new(Element { id: ElementId(id), name: name.into(), transform: m, color: ColorEffect::default(), kind: ElementKind::Symbol { symbol: SymbolId(symbol), loop_mode: LoopMode::Loop, first_frame: 0, blend: BlendMode::Normal, filters: Vec::new(), events } })
+    Arc::new(Element { id: ElementId(id), name: name.into(), transform: m, color: ColorEffect::default(), kind: ElementKind::Symbol { symbol: SymbolId(symbol), loop_mode: LoopMode::Loop, first_frame: 0, blend: BlendMode::Normal, filters: Vec::new(), events, pivot: None } })
 }
 
 fn kf(start: u32, duration: u32, elements: Vec<Arc<Element>>, actions: Vec<Action>, label: &str) -> Arc<Keyframe> {
@@ -622,7 +622,7 @@ fn sounds_carry_their_envelopes_and_volumes_and_start_in_graphics_and_clips_as_i
         l.volume = volume;
         Arc::new(l)
     };
-    let inst = |id, symbol| Arc::new(Element { id: ElementId(id), name: String::new(), transform: Affine::IDENTITY, color: Default::default(), kind: ElementKind::Symbol { symbol: SymbolId(symbol), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new() } });
+    let inst = |id, symbol| Arc::new(Element { id: ElementId(id), name: String::new(), transform: Affine::IDENTITY, color: Default::default(), kind: ElementKind::Symbol { symbol: SymbolId(symbol), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new(), pivot: None } });
     // A graphic with a fading sound on its frame 1 (of 2), a clip with a left-channel one on its
     // frame 0 (of 3), both on a layer at half volume; a sound of the main timeline's own.
     doc.library.push(Arc::new(Symbol { linkage: None, scale_grid_kept: None, scale_grid: None, id: SymbolId(20), name: "g".into(), kind: SymbolKind::Graphic, timeline: Timeline { layers: vec![layer(21, vec![key(0, 1, None, vec![]), key(1, 1, snd(SoundSync::Event, SoundEffect::FadeOut), vec![])], 1.0)] } }));

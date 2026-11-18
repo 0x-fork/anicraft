@@ -675,7 +675,7 @@ impl<'a> Bake<'a> {
                     }
                 }
             },
-            ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, events } => {
+            ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, events, .. } => {
                 let (Some(&y), Some(sym)) = (self.symbols.get(symbol), self.doc.symbol(*symbol)) else { return };
                 let len = sym.timeline.frame_count();
                 // The page's player places symbols itself and doesn't slice them yet (ADR 0055).
