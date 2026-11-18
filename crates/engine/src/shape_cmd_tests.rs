@@ -106,12 +106,10 @@ impl Mask {
     }
 }
 
-/// What the lines on the stage cover: the union of the polygons the renderer fills for each
-/// stroke (`anicraft_render::stroke`), worked out as it does at 2400 % zoom, where its arcs and
-/// flattening (0.1 px there) are exact for the purpose: a round cap of a 9 px line is 0.04 px
-/// short of a half disc. The renderer adds those polygons' coverage up pixel by
-/// pixel, which over-covers pixels where two of them overlap part of a pixel; their union is
-/// the stroke without that.
+/// What the lines on the stage cover: the outline the renderer fills for each stroke
+/// (`anicraft_render::stroke`, loops that don't overlap, ADR 0110), worked out as it does at
+/// 2400 % zoom, where its arcs and flattening (0.1 px there) are exact for the purpose: a round
+/// cap of a 9 px line is 0.04 px short of a half disc.
 fn stroke_coverage(s: &Session) -> Mask {
     let mut mask = Mask::new();
     for (_, sh, m) in shapes(s) {
@@ -120,9 +118,8 @@ fn stroke_coverage(s: &Session) -> Mask {
         let lines = sh.path.flatten(&zoom, 0.1);
         let (polys, alpha) = anicraft_render::stroke::stroke_geometry(&lines, st, &zoom, false).expect("the stroke draws");
         assert_eq!(alpha, 1.0);
-        for poly in polys {
-            mask.add(&[poly.into_iter().map(|p| p * (1.0 / 24.0)).collect()]);
-        }
+        let loops: Vec<Vec<Vec2>> = polys.into_iter().map(|poly| poly.into_iter().map(|p| p * (1.0 / 24.0)).collect()).collect();
+        mask.add(&loops);
     }
     mask
 }
@@ -160,9 +157,10 @@ fn converts_to_the_same_picture(what: &str, object: bool, draw: impl Fn(&mut Ses
     //    share of the area (a missing cap or a dash out of step would be many times this).
     let differ = stroke.0.iter().zip(&fill.0).filter(|(a, b)| a != b).count() as f32 / (SS * SS) as f32;
     assert!(differ <= 0.004 * was + 0.5, "{what}: {differ} px covered by only one of them, of {was} px");
-    // 3. The picture: no pixel changes by more than the renderer's own over-coverage where
-    //    its stroke polygons overlap (it draws the fill without that), and in all by no more
-    //    than its arcs' tolerance (a small dot is a ten-sided polygon at 100 %).
+    // 3. The picture: no pixel changes by more than a dash's end may move (the renderer
+    //    measures dashes along its flattened line, the fill along the curve), and in all by
+    //    no more than its arcs' tolerance (a small dot is a ten-sided polygon at 100 %).
+    //    `a_line_is_drawn_as_its_converted_fill_is` holds solid lines to far less.
     //    (A line thinner than a pixel is drawn a pixel wide and fainter, so it never drops out;
     //    its fill is drawn as thin as it is.)
     let (sum, max) = apart(&before, &ink(&s));
@@ -232,6 +230,47 @@ fn converted_curves_and_corners_cover_what_they_drew() {
     converts_to_the_same_picture("an oval, dotted", true, |s| {
         run(s, "draw.ellipse", json!({"x": 60, "y": 50, "w": 260, "h": 180, "fill": null, "stroke": "#000000", "stroke_width": 4, "dot_spacing": 40}));
     });
+}
+
+/// The renderer covers a line once, as it covers the fill made from it (ADR 0110): drawn at
+/// 100 %, no pixel changes when the line is converted, beyond what the two outlines' own
+/// shapes differ by. Corners, flat and square ends and dashes on straight runs are the same
+/// polygons either way: nothing changes at all (it was up to 0.5 of a pixel where the
+/// stroke's pieces overlapped). A curve, a round corner or a round end is flattened once as
+/// the line's middle and once as the fill's edge, each within the renderer's 0.1 px.
+#[test]
+fn a_line_is_drawn_as_its_converted_fill_is() {
+    let zigzag = "M40 250L120 60L170 240L230 80L260 230L350 50";
+    let waves = "M30 150C90 20 130 280 200 150C270 20 300 280 370 150";
+    let knot = "M50 50C300 50 50 280 300 280C50 280 300 50 50 250";
+    let cases: [(&str, &str, f64, Value, f32); 9] = [
+        ("miters", zigzag, 11.0, json!({"join": "miter", "cap": "none", "miter": 10}), 1.0 / 255.0),
+        ("bevels and square ends", zigzag, 11.0, json!({"join": "bevel", "cap": "square"}), 1.0 / 255.0),
+        ("dashes round corners", zigzag, 11.0, json!({"join": "miter", "cap": "none", "dash": [60, 14]}), 1.0 / 255.0),
+        ("a wide zigzag that overlaps itself", zigzag, 40.0, json!({"join": "miter", "cap": "none", "miter": 2}), 1.0 / 255.0),
+        ("round corners and ends", zigzag, 11.0, json!({}), 0.1),
+        ("a wide curve", waves, 22.0, json!({}), 0.1),
+        ("a curve with flat ends", waves, 11.0, json!({"cap": "none"}), 0.1),
+        ("a knot", knot, 14.0, json!({}), 0.1),
+        ("round dashes that overlap on a zigzag", zigzag, 12.0, json!({"dash": [20, 8]}), 0.1),
+    ];
+    for (what, d, width, style, may) in cases {
+        let mut s = blank(true);
+        run(&mut s, "draw.path", json!({"d": d, "stroke": "#000000", "stroke_width": width, "fill": null, "object": true}));
+        if style.as_object().is_some_and(|o| !o.is_empty()) {
+            let mut p = style.clone();
+            p["id"] = json!(s.selection.id_list()[0]);
+            run(&mut s, "stroke.set_style", p);
+        }
+        run(&mut s, "edit.select_all", json!({}));
+        let line = ink(&s);
+        run(&mut s, "modify.lines_to_fills", json!({}));
+        let (sum, max) = apart(&line, &ink(&s));
+        assert!(max <= may, "{what}: a pixel changed by {max} (of {sum} px in all)");
+        if std::env::var("SHAPE_NUMBERS").is_ok() {
+            eprintln!("{what}: worst pixel {max:.4}, {sum:.2} px in all");
+        }
+    }
 }
 
 #[test]

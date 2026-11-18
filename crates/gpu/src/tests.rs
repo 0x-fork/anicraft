@@ -85,6 +85,28 @@ fn scenes() -> Vec<(&'static str, DisplayList, View)> {
     let mut nz = item(ring, Paint::Solid(blue));
     nz.transform = Affine::translate(60.0, 10.0);
     out.push(("fill rules", list(vec![eo, nz]), view(140, 80, Some(Rgba::WHITE))));
+    // Lines whose pieces overlap (ADR 0110): a wide wave, a see-through knot that crosses
+    // itself, dashes whose round caps run into one another, and mitered corners. The oracle
+    // hands over one outline for each, so both renderers cover every pixel once.
+    let line = |d: &str, color: Rgba, width: f32, style: anicraft_doc::StrokeStyle| {
+        let mut i = item(Path::from_svg(d).unwrap_or_default(), Paint::Solid(Rgba::WHITE));
+        i.fill = None;
+        i.stroke = Some(anicraft_doc::Stroke::new(color, width).with_style(style));
+        i
+    };
+    let round = anicraft_doc::StrokeStyle::default();
+    let close = anicraft_doc::StrokeStyle { dash: anicraft_doc::Dash::dashed(12.0, 5.0), ..round.clone() };
+    let miter = anicraft_doc::StrokeStyle { cap: anicraft_doc::Cap::Square, join: anicraft_doc::Join::Miter, miter_limit: 8.0, dash: None };
+    out.push((
+        "lines",
+        list(vec![
+            line("M10 60C40 -20 60 140 90 60C120 -20 140 140 170 60", Rgba::BLACK, 11.0, round.clone()),
+            line("M20 130C150 130 20 220 150 220C20 220 150 130 20 200", Rgba::new(0.8, 0.1, 0.2, 0.5), 9.0, round),
+            line("M180 20C230 60 150 120 200 170", blue, 8.0, close),
+            line("M120 230L150 150L170 225L205 150", Rgba::new(0.1, 0.5, 0.2, 0.7), 7.0, miter),
+        ]),
+        view(220, 240, Some(Rgba::WHITE)),
+    ));
     // A self-intersecting star: winding 2 in the middle.
     let mut star = item(Path::star(40.0, 40.0, 36.0, 14.0, 5), Paint::Solid(Rgba::new(0.2, 0.6, 0.3, 1.0)));
     star.fill_rule = FillRule::EvenOdd;
