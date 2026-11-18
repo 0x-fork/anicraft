@@ -29,6 +29,8 @@ SHOTS=(
   "test-movie testmovieinside"
   "publish-settings publish"
   "preferences prefs"
+  "audio-to-keyframes audiokeys"
+  "lip-sync lipsynced"
 )
 mkdir -p "$OUT"
 for row in "${SHOTS[@]}"; do

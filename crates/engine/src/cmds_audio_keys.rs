@@ -376,9 +376,20 @@ pub fn curve_keys(values: &[f32], step: u32, eps: f32) -> Vec<(u32, f32)> {
 /// Differences smaller than this share of the range don't make a key.
 const KEY_EPS: f32 = 0.002;
 
+/// The keys a run writes for shaped levels `shaped` (one per frame): each as (frames from the
+/// first one, the property's value). What the dialog's preview marks.
+pub fn planned_keys(prop: KeyProperty, min: f32, max: f32, step: u32, output: Output, shaped: &[f32]) -> Vec<(u32, f32)> {
+    let values: Vec<f32> = shaped.iter().map(|l| min + (max - min) * l).map(|v| if prop == KeyProperty::FirstFrame { v.round() } else { v }).collect();
+    let eps = ((max - min).abs() * KEY_EPS).max(1e-6);
+    match output {
+        Output::Keyframes => held_keys(&values, step, eps),
+        Output::Motion => curve_keys(&values, step, eps),
+    }
+}
+
 /// The layer and object that get the keys: `layer` (default the active one) and on it
 /// `element`, else the selected object, else the only one on the keyframe at `frame`.
-fn target(s: &Session, p: &Value, frame: u32) -> Result<(LayerId, Arc<Element>)> {
+pub fn target(s: &Session, p: &Value, frame: u32) -> Result<(LayerId, Arc<Element>)> {
     let lid = opt_u64(p, "layer")?.map_or(s.layer, LayerId);
     let layer = s.timeline().layer(lid).ok_or_else(|| EngineError::State(format!("no layer with id {}", lid.0)))?;
     match layer.kind {
@@ -571,29 +582,27 @@ fn to_keyframes(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     let lv = levels(&src, &set)?;
-    let values: Vec<f32> = lv.shaped.iter().map(|l| plan.min + (plan.max - plan.min) * l).map(|v| if plan.prop == KeyProperty::FirstFrame { v.round() } else { v }).collect();
-    let eps = ((plan.max - plan.min).abs() * KEY_EPS).max(1e-6);
     let layer = s.timeline().layer(lid).ok_or_else(|| EngineError::State("the layer went away".into()))?;
     let in_motion = layer.keyframe_at(src.from).is_some_and(|k| k.motion.is_some());
     let output = plan.output.unwrap_or(if in_motion && plan.prop != KeyProperty::FirstFrame { Output::Motion } else { Output::Keyframes });
     let (keys, to) = match output {
         Output::Keyframes => {
-            let keys: Vec<(u32, f32)> = held_keys(&values, plan.step, eps).into_iter().map(|(i, v)| (src.from + i, v)).collect();
+            let keys: Vec<(u32, f32)> = planned_keys(plan.prop, plan.min, plan.max, plan.step, output, &lv.shaped).into_iter().map(|(i, v)| (src.from + i, v)).collect();
             let at = anchor(s, &el);
             let prop = plan.prop;
             let layer = s.layer_mut(Some(lid))?;
             write_held(layer, el.id, src.from, src.to, &keys, &|base, v| with_value(base, prop, *v, at))?;
             (keys.len(), src.to)
         }
-        Output::Motion => write_curve(s, lid, &el, &plan, &src, &values, eps)?,
+        Output::Motion => write_curve(s, lid, &el, &plan, &src, &lv.shaped)?,
     };
     Ok(json!({"keys": keys, "from": src.from, "to": to, "output": output.key(), "property": plan.prop.key(), "layer": lid.0, "element": el.id.0, "sound": src.sound.id.0}))
 }
 
-/// Writes `values` (one per frame from `src.from`) as the property's keys in the motion tween
+/// Writes shaped levels (one per frame from `src.from`) as the property's keys in the motion tween
 /// on the span at `src.from`, making the tween when the span has none. The range is cut to the
 /// span. The keys written (per track) and the last frame they reach.
-fn write_curve(s: &mut Session, lid: LayerId, el: &Element, plan: &Plan, src: &Source, values: &[f32], eps: f32) -> Result<(usize, u32)> {
+fn write_curve(s: &mut Session, lid: LayerId, el: &Element, plan: &Plan, src: &Source, shaped: &[f32]) -> Result<(usize, u32)> {
     let tracks = plan.prop.tracks();
     if tracks.is_empty() {
         return Err(EngineError::Param("a symbol's first frame has no motion tween curve: use output: keyframes".into()));
@@ -622,7 +631,7 @@ fn write_curve(s: &mut Session, lid: LayerId, el: &Element, plan: &Plan, src: &S
     let a = src.from - start;
     let b = (src.to - start).min(last);
     let len = (b - a + 1) as usize;
-    let keys = curve_keys(values.get(..len).unwrap_or(values), plan.step, eps);
+    let keys = planned_keys(plan.prop, plan.min, plan.max, plan.step, Output::Motion, shaped.get(..len).unwrap_or(shaped));
     if keys.len() > MAX_KEYS {
         return Err(EngineError::Param(format!("that is {} keys, more than {MAX_KEYS} on one curve: raise 'step' or the threshold, or shorten the range with 'from' and 'to'", keys.len())));
     }

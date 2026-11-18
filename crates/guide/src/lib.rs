@@ -77,6 +77,8 @@ pub const IMAGES: &[(&str, &[u8])] = &[
     image!("images/test-movie.png"),
     image!("images/publish-settings.png"),
     image!("images/preferences.png"),
+    image!("images/audio-to-keyframes.png"),
+    image!("images/lip-sync.png"),
 ];
 
 const STYLE: &str = include_str!("style.css");
