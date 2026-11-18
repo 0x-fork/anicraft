@@ -169,9 +169,10 @@ pub fn window(app: &mut App, ctx: &egui::Context) {
         // artwork; mask and guide artwork ignore it.
         if kind != LayerKind::Camera {
             form_row(ui, FORM_LABEL_DIALOG, tr!("Opacity"), |ui| {
-                ui.add(egui::Slider::new(&mut d.opacity, 0.0..=100.0).suffix(" %").max_decimals(0))
-                    .on_hover_text(tr!("How strongly the layer shows, in the movie and every export. Its artwork fades together, so overlapping parts don't show through each other; a folder fades the layers in it"))
-                    .set_name(tr!("Layer opacity"));
+                let tip = tr!("How strongly the layer shows, in the movie and every export. Its artwork fades together, so overlapping parts don't show through each other; a folder fades the layers in it");
+                // A slider to drag and a field to type in, each with its own name.
+                ui.add(egui::Slider::new(&mut d.opacity, 0.0..=100.0).show_value(false)).on_hover_text(tip).set_name(tr!("Layer opacity"));
+                ui.add(egui::DragValue::new(&mut d.opacity).range(0.0..=100.0).suffix(" %").speed(1.0).max_decimals(0)).on_hover_text(tip).set_name(tr!("Layer opacity (percent)"));
             });
         }
         form_row(ui, FORM_LABEL_DIALOG, tr!("Layer height"), |ui| {
