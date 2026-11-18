@@ -89,6 +89,13 @@ impl Args {
     pub fn num<T: std::str::FromStr>(&self, k: &str) -> Result<Option<T>, String> {
         self.flag(k).map(|v| v.parse::<T>().map_err(|_| format!("--{k} expects a number, got '{v}'"))).transpose()
     }
+    fn float(&self, k: &str) -> Result<Option<f32>, String> {
+        let value = self.num::<f32>(k)?;
+        if value.is_some_and(|v| !v.is_finite()) {
+            return Err(format!("--{k} expects a finite number"));
+        }
+        Ok(value)
+    }
 }
 
 /// Opens a session from a path or `--sample`.
@@ -210,7 +217,7 @@ pub fn run(argv: &[String]) -> Result<String, String> {
             let mut s = session(&a, Some(src.ok_or("render needs a file or --sample")?))?;
             let out = a.flag("out").ok_or("render needs --out <file.png>")?;
             let mut p = json!({"path": out, "frame": one_based(&a, "frame")?.unwrap_or(0)});
-            if let Some(sc) = a.num::<f32>("scale")? {
+            if let Some(sc) = a.float("scale")? {
                 p["scale"] = json!(sc);
             }
             exec(&mut s, "file.export_png", &p).map(|v| v.to_string())
@@ -225,7 +232,7 @@ pub fn run(argv: &[String]) -> Result<String, String> {
             if let Some(t) = one_based(&a, "to")? {
                 p["to"] = json!(t);
             }
-            if let Some(sc) = a.num::<f32>("scale")? {
+            if let Some(sc) = a.float("scale")? {
                 p["scale"] = json!(sc);
             }
             exec(&mut s, "file.export_png_sequence", &p).map(|v| v.to_string())
@@ -242,7 +249,7 @@ pub fn run(argv: &[String]) -> Result<String, String> {
             if let Some(t) = one_based(&a, "to")? {
                 p["to"] = json!(t);
             }
-            if let Some(sc) = a.num::<f32>("scale")? {
+            if let Some(sc) = a.float("scale")? {
                 p["scale"] = json!(sc);
             }
             if a.flag("overwrite").is_some_and(|v| v == "yes" || v == "true") {
@@ -274,7 +281,7 @@ pub fn run(argv: &[String]) -> Result<String, String> {
                     p[k] = json!(v);
                 }
             }
-            if let Some(v) = a.num::<f32>("fps")? {
+            if let Some(v) = a.float("fps")? {
                 p["fps"] = json!(v);
             }
             exec(&mut s, "file.new", &p)?;
@@ -626,6 +633,29 @@ pub fn serve<R: BufRead, W: Write>(s: &mut Session, input: R, out: &mut W) -> st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn float_flags_reject_nonfinite_values_without_changing_numeric_parsing() {
+        for key in ["fps", "scale"] {
+            let flag = format!("--{key}");
+            for value in ["NaN", "inf", "+inf", "-inf", "1e40", "-1e40"] {
+                let args = Args::parse(&[flag.clone(), value.into()]).unwrap();
+                assert_eq!(args.float(key).unwrap_err(), format!("--{key} expects a finite number"));
+            }
+            for (value, expected) in [("0", 0.0), ("-1", -1.0), ("1.25", 1.25), ("1e2", 100.0)] {
+                let args = Args::parse(&[flag.clone(), value.into()]).unwrap();
+                assert_eq!(args.float(key).unwrap(), Some(expected));
+            }
+            let bad = Args::parse(&[flag.clone(), "oops".into()]).unwrap();
+            assert_eq!(bad.float(key).unwrap_err(), format!("--{key} expects a number, got 'oops'"));
+            assert_eq!(Args::parse(&[]).unwrap().float(key).unwrap(), None);
+            assert!(Args::parse(&[flag]).is_err());
+        }
+        let integer = Args::parse(&["--frame".into(), "12".into()]).unwrap();
+        assert_eq!(integer.num::<u32>("frame").unwrap(), Some(12));
+        let bad_integer = Args::parse(&["--frame".into(), "NaN".into()]).unwrap();
+        assert_eq!(bad_integer.num::<u32>("frame").unwrap_err(), "--frame expects a number, got 'NaN'");
+    }
 
     /// #226: `info`, `render` and the other subcommands take an Animate document as File › Open
     /// does (an import, untitled), not only `.anicraft` files.
