@@ -871,25 +871,18 @@ pub(crate) fn element_title(doc: &anicraft_engine::doc::Document, e: &anicraft_e
 /// Properties panel shows it) adjusts the other so the selection keeps its width:height
 /// proportion (multiplicative, not forced equal). `x_changed` says which axis was edited.
 /// A degenerate old axis (near zero) cannot divide, so the other axis follows the new value
-/// instead. Both are clamped to the DragValues' range, so a typed extreme cannot produce a
-/// zero or negative scale.
+/// instead. Both sizes are clamped to 1–10000 %, so a typed extreme cannot produce a zero
+/// scale; a negative scale is a mirror (#116) and each axis keeps its own direction.
 fn linked_scale(old: (f32, f32), now: (f32, f32), x_changed: bool) -> (f32, f32) {
     const MIN: f32 = 1.0;
     const MAX: f32 = 10000.0;
+    // The size follows in proportion; each axis keeps its own direction (a mirrored axis stays
+    // mirrored, and flipping one axis does not flip the other).
+    let size = |v: f32| v.abs().clamp(MIN, MAX);
+    let follow = |from: f32, to: f32, other: f32| if from.abs() <= 1e-6 { size(to).copysign(other) } else { size(other * to / from).copysign(other) };
     let (ox, oy) = old;
-    let (mut nx, mut ny) = now;
-    if x_changed {
-        if ox.abs() <= 1e-6 {
-            ny = nx;
-        } else {
-            ny = oy * nx / ox;
-        }
-    } else if oy.abs() <= 1e-6 {
-        nx = ny;
-    } else {
-        nx = ox * ny / oy;
-    }
-    (nx.clamp(MIN, MAX), ny.clamp(MIN, MAX))
+    let (nx, ny) = now;
+    if x_changed { (size(nx).copysign(nx), follow(ox, nx, oy)) } else { (follow(oy, ny, ox), size(ny).copysign(ny)) }
 }
 
 /// "mixed" after a value that differs across the selection (the field shows the first one's).
@@ -1047,8 +1040,14 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
         }
         row(ui, tr!("Scale"), |ui| {
             let (sx0, sy0) = (sx, sy);
-            let a = ui.add(egui::DragValue::new(&mut sx).suffix(" %").speed(0.5).range(1.0..=10000.0).max_decimals(1)).named(tr!("Scale width"));
-            let b = ui.add(egui::DragValue::new(&mut sy).suffix(" %").speed(0.5).range(1.0..=10000.0).max_decimals(1)).named(tr!("Scale height"));
+            // Negative is a mirror (Flip). Only edits are clamped: a scale merely shown is never
+            // rewritten (#116). The engine refuses a scale too near zero.
+            let a = ui
+                .add(egui::DragValue::new(&mut sx).suffix(" %").speed(0.5).range(-10000.0..=10000.0).clamp_existing_to_range(false).max_decimals(1))
+                .named(tr!("Scale width"));
+            let b = ui
+                .add(egui::DragValue::new(&mut sy).suffix(" %").speed(0.5).range(-10000.0..=10000.0).clamp_existing_to_range(false).max_decimals(1))
+                .named(tr!("Scale height"));
             // The Scale lock (#304): view state, off by default. On, editing one axis scales
             // the other so the selection keeps its width:height proportion.
             let locked = app.scale_lock;
@@ -3487,7 +3486,10 @@ mod tests {
         // Clamped to the DragValues' range, so an extreme cannot make a zero/negative scale.
         assert_eq!(linked_scale((100.0, 100.0), (20000.0, 100.0), true), (10000.0, 10000.0));
         assert_eq!(linked_scale((100.0, 200.0), (100.0, 0.01), false), (1.0, 1.0));
-        assert_eq!(linked_scale((100.0, 100.0), (-5.0, 100.0), true), (1.0, 1.0));
+        // A mirror (#116): the edited axis flips, the other keeps its direction and follows in size.
+        assert_eq!(linked_scale((100.0, 100.0), (-5.0, 100.0), true), (-5.0, 5.0));
+        assert_eq!(linked_scale((-100.0, 50.0), (-200.0, 50.0), true), (-200.0, 100.0));
+        assert_eq!(linked_scale((100.0, -50.0), (200.0, -50.0), true), (200.0, -100.0));
     }
 
     /// #304, headless: the lock toggle flips view state (one click), and the row's edit path
@@ -3552,5 +3554,79 @@ mod tests {
         let (sx, sy) = check(&app);
         assert!((sx - 3.0).abs() < 1e-4 && (sy - 1.0).abs() < 1e-4, "only X changed, got ({sx}, {sy})");
         app.s.undo().expect("undo");
+    }
+
+    use crate::app::App;
+    use anicraft_engine::Session;
+    use anicraft_engine::geom::Affine;
+    use serde_json::json;
+
+    /// A few headless frames of the whole window, Properties panel included.
+    fn frames(ctx: &egui::Context, app: &mut App) {
+        let input =
+            || egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 940.0))), ..Default::default() };
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(input(), |ui| app.frame(ui));
+            out.textures_delta.clear();
+        }
+    }
+
+    fn transform(app: &App) -> Affine {
+        app.s.visible_elements().first().map(|e| e.transform).unwrap_or_default()
+    }
+
+    /// #116: the Scale fields show a flipped (negative) or very large scale as it is. Showing
+    /// it never writes a clamped value back (that squashed a flipped shape to 1 %).
+    #[test]
+    fn showing_a_flipped_or_huge_scale_leaves_it_alone() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        app.run("draw.rect", json!({"x": 100, "y": 100, "w": 200, "h": 80}));
+        frames(&ctx, &mut app);
+        let b0 = app.s.selection_bounds();
+        app.run("modify.flip_v", json!({}));
+        frames(&ctx, &mut app);
+        let t = transform(&app);
+        assert!((t.m[0] - 1.0).abs() < 1e-4 && (t.m[3] + 1.0).abs() < 1e-4, "flipped vertically, not squashed: {t:?}");
+        app.run("modify.flip_h", json!({}));
+        frames(&ctx, &mut app);
+        let t = transform(&app);
+        assert!((t.m[0] + 1.0).abs() < 1e-4 && (t.m[3] + 1.0).abs() < 1e-4, "flipped both ways: {t:?}");
+        let b1 = app.s.selection_bounds();
+        assert!((b1.width() - b0.width()).abs() < 0.5 && (b1.height() - b0.height()).abs() < 0.5, "same size: {b0:?} vs {b1:?}");
+        // Bigger than the fields' range (10000 %): kept too.
+        app.run("modify.transform", json!({"a": 150, "b": 0, "c": 0, "d": 150, "e": 0, "f": 0}));
+        frames(&ctx, &mut app);
+        let t = transform(&app);
+        assert!((t.m[0] + 150.0).abs() < 1e-2 && (t.m[3] + 150.0).abs() < 1e-2, "{t:?}");
+        // A scale of zero is still refused, and leaves the shape as it was.
+        assert!(app.s.execute("element.set_transform", &json!({"sy": 0})).is_err());
+        assert!(app.s.execute("modify.transform", &json!({"a": 1, "b": 0, "c": 0, "d": 0, "e": 0, "f": 0})).is_err());
+        assert_eq!(transform(&app), t);
+    }
+
+    /// #116: dragging the bottom edge of the transform box up past the top edge mirrors the
+    /// shape; the Properties panel doesn't squash it back to 1 %.
+    #[test]
+    fn dragging_an_edge_past_the_opposite_one_mirrors() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        app.run("draw.rect", json!({"x": 0, "y": 0, "w": 100, "h": 50}));
+        frames(&ctx, &mut app);
+        // The bottom edge goes from y 50 to y -50, past the top edge.
+        let m = crate::stage::xf_total(
+            crate::app::XfKind::Scale { hx: 0, hy: 1 },
+            [0.0, 0.0, 100.0, 50.0],
+            egui::pos2(50.0, 50.0),
+            egui::pos2(50.0, -50.0),
+            false,
+            false,
+        );
+        assert!(m.m[3] < -0.5, "the drag itself mirrors: {m:?}");
+        let [a, b, c, d, e, f] = m.m;
+        assert!(app.s.execute("modify.transform", &json!({"a": a, "b": b, "c": c, "d": d, "e": e, "f": f})).is_ok());
+        frames(&ctx, &mut app);
+        let t = transform(&app);
+        assert!((t.m[0] - 1.0).abs() < 1e-4 && (t.m[3] - m.m[3]).abs() < 1e-3, "still mirrored as dragged: {t:?}");
     }
 }

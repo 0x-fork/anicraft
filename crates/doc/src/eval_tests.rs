@@ -708,3 +708,33 @@ fn text_filters_tween_between_keyframes() {
     // And the renderers get the tweened filter.
     assert_eq!(&*evaluate(&d, 5).groups[0].filters, &[Filter::Glow { blur_x: 10.0, blur_y: 10.0, strength: 1.0, quality: 1, color: Rgba::new(0.5, 0.0, 0.5, 1.0), inner: false, knockout: false }]);
 }
+
+/// Raw stroke runs with the same stroke but different colour effects are not joined, so the
+/// run that the tween shrinks away keeps its own colour effect.
+#[test]
+fn raw_stroke_runs_with_different_colour_effects_keep_them_in_a_shape_tween() {
+    let v = anicraft_geom::Vec2::new;
+    let run = |id, y: f32, color| {
+        let mut p = Path::new();
+        p.move_to(v(0.0, y)).line_to(v(50.0, y));
+        let mut s = Shape::filled(p, Paint::Solid(Rgba::BLACK)).with_stroke(Rgba::BLACK, 2.0);
+        s.fill = None;
+        s.merge = true;
+        Arc::new(Element { id: ElementId(id), name: String::new(), transform: Affine::IDENTITY, color, kind: ElementKind::Shape(s) })
+    };
+    let mut d = Document::default();
+    let mut k0 = Keyframe::new(0, 10);
+    k0.elements = vec![run(1, 0.0, ColorEffect::None), run(2, 100.0, ColorEffect::Alpha(0.5))];
+    k0.tween = Some(Tween { easing: Easing::Linear, kind: TweenKind::Shape, ..Default::default() });
+    let mut k1 = Keyframe::new(10, 1);
+    k1.elements = vec![run(1, 0.0, ColorEffect::None)];
+    layer0(&mut d).keyframes = vec![Arc::new(k0), Arc::new(k1)];
+    let list = evaluate(&d, 1);
+    let strokes: Vec<_> = list.items.iter().filter(|i| i.stroke.is_some()).collect();
+    assert_eq!(list.items.len(), 2);
+    assert_eq!(strokes.len(), 2);
+    // The run that the tween shrinks away (element 2) keeps its alpha; the first keeps none.
+    let by = |e: u64| strokes.iter().find(|i| i.element == ElementId(e)).unwrap();
+    assert_eq!(by(2).color, ColorEffect::Alpha(0.5).transform(), "the later run lost its alpha");
+    assert_eq!(by(1).color, ColorEffect::None.transform(), "the first run took the later run's colour");
+}
