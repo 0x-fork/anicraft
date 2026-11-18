@@ -412,6 +412,34 @@ pub fn recovery_dir() -> Option<PathBuf> {
     }
 }
 
+/// Writes a file only this user may read (the control port's token, ADR 0104), making its folder
+/// first. On Windows the settings folder (%APPDATA%) is already private to the user; elsewhere
+/// the file is made owner-only (0600). The file is always a new one: an older file (or a link
+/// someone left under its name) is removed first, never written through, and the new file is
+/// made exclusively, so it has this mode from the start.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn write_private_file(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut f = options.open(path)?;
+    f.write_all(contents)?;
+    f.sync_all()
+}
+
 /// Whether the recovery folder was chosen explicitly (screenshot runs only touch it then).
 pub fn recovery_dir_overridden() -> bool {
     std::env::var_os("ANICRAFT_RECOVERY_DIR").is_some_and(|v| !v.is_empty())
@@ -576,8 +604,8 @@ pub fn plugins_dir() -> Option<PathBuf> {
 /// Linux desktop entry, AppStream and MIME package names, the Flatpak id and the macOS bundle id.
 pub const APP_ID: &str = "ai.storyteller.anicraft";
 
-/// Main-window chrome. macOS gets the unified look (content under a transparent title bar,
-/// traffic lights over our menu row); Windows and Linux keep their native frames.
+/// Main-window chrome. Keep the native title bar on macOS so it cannot cover the egui menu row.
+/// Windows and Linux use their native frames too.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn viewport(b: egui::ViewportBuilder) -> egui::ViewportBuilder {
     // The Wayland app_id / X11 class: docks match it to the installed desktop entry
@@ -585,20 +613,16 @@ pub fn viewport(b: egui::ViewportBuilder) -> egui::ViewportBuilder {
     chrome(OS, b.with_app_id(APP_ID).with_icon(app_icon()))
 }
 
-/// The window chrome for `os`. On macOS the content runs under the title bar, so the bar must be
-/// transparent too: an opaque one covers the menu row (File, Edit, …) and swallows its clicks,
-/// which left Mac users with no menus at all (#247).
+/// The window chrome for `os`. The egui menu row is ordinary window content, below the native
+/// title bar on macOS. Full-size content view put that row behind the title bar on real Macs
+/// (#187), so use the standard frame until we can position the native traffic lights explicitly.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-fn chrome(os: Os, b: egui::ViewportBuilder) -> egui::ViewportBuilder {
-    match os {
-        Os::Mac => b.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false).with_titlebar_buttons_shown(true),
-        _ => b,
-    }
+fn chrome(_os: Os, b: egui::ViewportBuilder) -> egui::ViewportBuilder {
+    b
 }
 
 /// Another window of the app (Test Movie, ADR 0062): the same app id, so docks and taskbars group
-/// it with the editor, and the same icon. Native frames everywhere (the editor's unified macOS
-/// title bar is for its menu row, which this window doesn't have).
+/// it with the editor, and the same icon. Native frames everywhere.
 pub fn secondary_window(b: egui::ViewportBuilder) -> egui::ViewportBuilder {
     #[cfg(not(target_arch = "wasm32"))]
     return b.with_app_id(APP_ID).with_icon(app_icon());
@@ -617,9 +641,9 @@ fn app_icon() -> egui::IconData {
     eframe::icon_data::from_png_bytes(png).unwrap_or_default()
 }
 
-/// Space left of the menu row for the macOS traffic-light buttons.
+/// No extra inset is needed: the menu row sits below the native title bar.
 pub fn menu_inset() -> f32 {
-    if OS == Os::Mac { 72.0 } else { 0.0 }
+    0.0
 }
 
 // ----- more than one window (ADR 0062) ---------------------------------------------------------
@@ -960,17 +984,14 @@ mod tests {
 
     #[test]
     fn the_mac_menu_row_is_never_under_an_opaque_title_bar() {
-        // #247: content under the title bar (full-size content view) with the bar still drawn
-        // hid File, Edit and the rest on macOS. Whenever content goes under it, it is see-through.
-        for os in [Os::Mac, Os::Windows, Os::Linux] {
-            let b = chrome(os, egui::ViewportBuilder::default());
-            if b.fullsize_content_view == Some(true) {
-                assert_eq!(b.titlebar_shown, Some(false), "{os:?}: the title bar would cover the menus");
-                assert_ne!(b.titlebar_buttons_shown, Some(false), "{os:?}: keep the traffic lights");
-            }
-        }
-        assert_eq!(chrome(Os::Mac, egui::ViewportBuilder::default()).fullsize_content_view, Some(true));
+        // #187: real Macs drew the native title bar over the egui menu row. Keep the standard
+        // frame so that content starts below it instead of depending on title-bar transparency.
+        let mac = chrome(Os::Mac, egui::ViewportBuilder::default());
+        assert_eq!(mac.fullsize_content_view, None);
+        assert_eq!(mac.titlebar_shown, None);
+        assert_eq!(mac.title_shown, None);
         assert_eq!(chrome(Os::Windows, egui::ViewportBuilder::default()).fullsize_content_view, None, "native frame");
+        assert_eq!(menu_inset(), 0.0);
     }
 
     #[test]

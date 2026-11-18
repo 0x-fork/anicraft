@@ -269,7 +269,7 @@ tween's object on several frames, and dragging the shared pivot.
 
 A movie can have several scenes, each with its own timeline, played one after another.
 
-* Add one with **Insert › Scene**.
+* Add one with **Insert › New Scene**.
 * Switch scenes from the scene menu at the top left of the stage, or with **Shift+Page Up** and
   **Shift+Page Down**.
 * Duplicate, rename, reorder and delete them under **Modify › Scene**. Deleting a scene with

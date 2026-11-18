@@ -299,6 +299,80 @@ fn align_and_distribute() {
     assert!((s.selection_bounds().max.x - s.doc.stage.width as f32).abs() < 1e-3);
 }
 
+/// #301, #297: a raw rectangle (one fill and one stroke per side, ADR 0042) aligns, distributes,
+/// turns and scales as one shape, so its outline stays on its fill.
+#[test]
+fn a_raw_drawing_aligns_distributes_and_turns_as_one() {
+    use anicraft_geom::Rect;
+    fn raw_rect(s: &mut Session) {
+        run(
+            s,
+            "draw.rect",
+            json!({"x": 100, "y": 100, "w": 200, "h": 100, "fill": "#3366ff", "stroke": "#000000", "stroke_width": 4, "object": false}),
+        );
+    }
+    fn pieces(s: &Session) -> Vec<Rect> {
+        s.visible_elements().iter().filter(|e| crate::merge::mergeable(e).is_some()).map(|e| s.element_bounds(e.id)).collect()
+    }
+    // Where each piece sits in the drawing's box: what aligning and distributing must keep.
+    fn layout(s: &Session) -> Vec<[f32; 4]> {
+        let p = pieces(s);
+        let all = p.iter().fold(Rect::EMPTY, |r, b| r.union(b));
+        p.iter().map(|b| [b.min.x - all.min.x, b.min.y - all.min.y, b.max.x - all.min.x, b.max.y - all.min.y]).collect()
+    }
+    fn same(a: &[[f32; 4]], b: &[[f32; 4]]) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.iter().zip(y).all(|(p, q)| (p - q).abs() < 0.01))
+    }
+    for cmd in
+        ["align.left", "align.hcenter", "align.right", "align.top", "align.vcenter", "align.bottom", "align.distribute_h", "align.distribute_v"]
+    {
+        let mut s = Session::default();
+        raw_rect(&mut s);
+        let shape = layout(&s);
+        assert_eq!(shape.len(), 5, "one fill and four sides");
+        for (x, y) in [(400, 300), (600, 40)] {
+            run(&mut s, "draw.rect", json!({"x": x, "y": y, "w": 50, "h": 50, "fill": "#ff0000", "stroke": null, "object": true}));
+        }
+        run(&mut s, "edit.select_all", json!({}));
+        let v = run(&mut s, cmd, json!({}));
+        assert!(same(&layout(&s), &shape), "{cmd} {v}: the rectangle came apart: {:?}", pieces(&s));
+    }
+    // Alone, the drawing is one element: it aligns to the stage.
+    let mut s = Session::default();
+    raw_rect(&mut s);
+    let shape = layout(&s);
+    run(&mut s, "edit.select_all", json!({}));
+    run(&mut s, "align.left", json!({}));
+    assert!(same(&layout(&s), &shape));
+    assert!(s.selection_bounds().min.x.abs() < 1e-3, "{:?}", s.selection_bounds());
+
+    // The Properties panel's Rotation and Scale fields: about the drawing's centre, as Rotate 90°
+    // does.
+    let mut s = Session::default();
+    raw_rect(&mut s);
+    run(&mut s, "edit.select_all", json!({}));
+    let mut turned = Session::default();
+    raw_rect(&mut turned);
+    run(&mut turned, "edit.select_all", json!({}));
+    run(&mut turned, "modify.rotate_cw", json!({}));
+    run(&mut s, "element.set_transform", json!({"rotation": 90}));
+    let (got, want) = (pieces(&s), pieces(&turned));
+    assert!(got.iter().zip(&want).all(|(a, b)| (a.min - b.min).length() < 0.01 && (a.max - b.max).length() < 0.01), "{got:?} vs {want:?}");
+    assert!(s.visible_elements().iter().all(|e| (e.transform.decompose().rotation.to_degrees() - 90.0).abs() < 1e-3), "each piece reads 90°");
+    run(&mut s, "element.set_transform", json!({"rotation": 0}));
+    run(&mut s, "element.set_transform", json!({"sx": 2}));
+    let fill =
+        s.visible_elements().iter().find(|e| matches!(&e.kind, ElementKind::Shape(sh) if sh.fill.is_some())).map(|e| s.element_bounds(e.id)).unwrap();
+    assert!(
+        (fill.min.x - 0.0).abs() < 0.01 && (fill.max.x - 400.0).abs() < 0.01 && (fill.min.y - 100.0).abs() < 0.01,
+        "twice as wide about its centre: {fill:?}"
+    );
+    run(&mut s, "element.set_transform", json!({"sx": 1}));
+    let mut fresh = Session::default();
+    raw_rect(&mut fresh);
+    assert!(same(&layout(&s), &layout(&fresh)) && (s.selection_bounds().min - fresh.selection_bounds().min).length() < 0.01, "back where it was");
+}
+
 #[test]
 fn svg_frame_export_writes_vectors_and_asks_before_replacing() {
     let dir = std::env::temp_dir().join(format!("anicraft-svg-{}", std::process::id()));

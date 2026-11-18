@@ -178,7 +178,7 @@ fn tool_swatches(app: &mut App, ui: &mut egui::Ui) {
     for (fill, resp) in [(true, fill_resp), (false, stroke_resp)] {
         let name = if fill { tr!("Fill colour") } else { tr!("Stroke colour") };
         a11y::control(ui, &resp, WidgetType::ColorButton, name, None);
-        let resp = resp.on_hover_text(if fill { tr!("Fill colour: click to pick the colour shapes are filled with") } else { tr!("Stroke colour: click to pick the colour of lines and outlines") });
+        let resp = resp.on_hover_text(if fill { tr!("Fill colour: click to pick the colour and how clear it is. Each stop of a gradient has its own.") } else { tr!("Stroke colour: click to pick the colour and how clear it is") });
         // As in Animate, the square clicked last is the one swatches set (ADR 0078).
         if resp.clicked() {
             app.colour_target = if fill { crate::swatches_panel::ColourTarget::Fill } else { crate::swatches_panel::ColourTarget::Stroke };
@@ -197,7 +197,7 @@ fn tool_swatches(app: &mut App, ui: &mut egui::Ui) {
             let shown = (selected || st.use_fill).then_some(paint);
             match crate::colour_panel::popup_for(ui, &resp, resp.id.with("colour_popup"), shown.as_ref(), &crate::colour_panel::bitmaps(app)) {
                 Some(crate::colour_panel::FillEdit::Solid(p)) => {
-                    c = [p[0], p[1], p[2], 255];
+                    c = p;
                     none = false;
                     true
                 }
@@ -213,12 +213,12 @@ fn tool_swatches(app: &mut App, ui: &mut egui::Ui) {
                 None => false,
             }
         } else {
-            crate::colour::popup_for(ui, &resp, resp.id.with("colour_popup"), &mut c, false, Some(&mut none))
+            crate::colour::popup_for(ui, &resp, resp.id.with("colour_popup"), &mut c, true, Some(&mut none))
         };
         if picked {
             // No Colour toggled says which; a colour picked turns the colour back on.
             let none = none != was && none;
-            let pick = Rgba::new(f32::from(c[0]) / 255.0, f32::from(c[1]) / 255.0, f32::from(c[2]) / 255.0, 1.0);
+            let pick = Rgba::new(f32::from(c[0]) / 255.0, f32::from(c[1]) / 255.0, f32::from(c[2]) / 255.0, f32::from(c[3]) / 255.0);
             let style = &mut app.s.style;
             if fill {
                 style.use_fill = !none;
@@ -234,7 +234,7 @@ fn tool_swatches(app: &mut App, ui: &mut egui::Ui) {
             // Selected shapes take it too (one undo step for a drag in the mixer).
             let shapes = app.s.selected_elements().iter().any(|(_, e)| matches!(e.kind, ElementKind::Shape(_)));
             if shapes {
-                let colour = if none { Value::Null } else { json!(hex([c[0], c[1], c[2]])) };
+                let colour = if none { Value::Null } else { json!(crate::colour::to_hex(c, true)) };
                 let (label, id, p) = if fill { (tr_noop!("Fill colour"), "element.set_fill", json!({"color": colour})) } else { (tr_noop!("Stroke colour"), "element.set_stroke", json!({"color": colour})) };
                 live(app, label, id, p);
             }
@@ -253,8 +253,9 @@ fn fill_kind_label(p: Option<&Paint>) -> Option<&'static str> {
 }
 
 fn rgba(c: Rgba) -> [u8; 4] {
-    let [r, g, b] = rgb(c);
-    [r, g, b, 255]
+    let c = c.sanitized();
+    let b = |v: f32| (v * 255.0).round() as u8;
+    [b(c.r), b(c.g), b(c.b), b(c.a)]
 }
 
 // ----- edit bar & status ------------------------------------------------------------------
@@ -263,35 +264,88 @@ pub fn edit_bar(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal_centered(|ui| {
         // The scene being edited; the menu switches scenes and manages them.
         let name = app.s.doc.scenes.get(app.s.scene).map_or_else(|| tr!("Scene").to_string(), |s| s.name.clone());
-        egui::ComboBox::from_id_salt("scene").selected_text(text(Type::Body, name).strong()).height(480.0).show_ui(ui, |ui| {
-            ui.set_min_width(240.0);
-            let scenes: Vec<(String, u32)> = app.s.doc.scenes.iter().map(|s| (s.name.clone(), s.timeline.frame_count())).collect();
-            for (i, (n, frames)) in scenes.iter().enumerate() {
-                let r = ui.horizontal(|ui| {
-                    let r = ui.selectable_label(i == app.s.scene, n.as_str());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(text(Type::DataSmall, format!("{frames} f")).color(T.text_faint));
-                    });
-                    r
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 1.0;
+            let inside_symbol = !app.s.editing.is_empty();
+
+            if inside_symbol {
+                let label_response = ui.add(
+                    egui::Button::new(text(Type::Body, name.clone()).strong())
+                        .corner_radius(egui::CornerRadius { nw: T.radius_control, ne: 0, sw: T.radius_control, se: 0 }),
+                );
+
+                #[cfg(test)]
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(
+                        egui::Id::new("test_scene_label_rect"),
+                        label_response.interact_rect,
+                    );
                 });
-                if r.inner.clicked() && i != app.s.scene {
-                    app.playing = false;
-                    app.frame_sel = None;
-                    app.run("scene.select", serde_json::json!({"scene": i}));
-                } else if r.inner.clicked() && !app.s.editing.is_empty() {
-                    // The scene itself, from inside a symbol: back to it (ADR 0045).
+
+                if label_response.clicked() {
                     app.playing = false;
                     app.frame_sel = None;
                     app.run("symbol.exit", serde_json::json!({"all": true}));
                 }
             }
-            ui.separator();
-            for id in ["scene.new", "scene.duplicate", "scene.rename", "scene.delete", "scene.move_up", "scene.move_down"] {
-                crate::menus::cmd_item(app, ui, id);
+
+            if inside_symbol {
+                let corners = egui::CornerRadius { nw: 0, ne: T.radius_control, sw: 0, se: T.radius_control };
+
+                let widgets = &mut ui.style_mut().visuals.widgets;
+                widgets.inactive.corner_radius = corners;
+                widgets.hovered.corner_radius = corners;
+                widgets.active.corner_radius = corners;
+                widgets.open.corner_radius = corners;
             }
-        })
-        .response
-        .set_name(tr!("Scene"));
+
+            let scene_caption = if inside_symbol { String::new() } else { name };
+
+            let scene_response = egui::ComboBox::from_id_salt("scene")
+                .width(if inside_symbol { 32.0 } else { ui.spacing().combo_width })
+                .selected_text(text(Type::Body, scene_caption).strong())
+                .height(480.0)
+                .show_ui(ui, |ui| {
+                ui.set_min_width(240.0);
+                let scenes: Vec<(String, u32)> = app.s.doc.scenes.iter().map(|s| (s.name.clone(), s.timeline.frame_count())).collect();
+                for (i, (n, frames)) in scenes.iter().enumerate() {
+                    let r = ui.add(
+                        egui::Button::selectable(i == app.s.scene, n.as_str())
+                            .right_text(text(Type::DataSmall, format!("{frames} f")).color(T.text_faint))
+                            .min_size(egui::vec2(ui.available_width(), ui.spacing().interact_size.y)),
+                    );
+                    if r.clicked() && i != app.s.scene {
+                        app.playing = false;
+                        app.frame_sel = None;
+                        app.run("scene.select", serde_json::json!({"scene": i}));
+                    } else if r.clicked() && !app.s.editing.is_empty() {
+                        // The scene itself, from inside a symbol: back to it (ADR 0045).
+                        app.playing = false;
+                        app.frame_sel = None;
+                        app.run("symbol.exit", serde_json::json!({"all": true}));
+                    }
+                }
+                ui.separator();
+                for id in ["scene.new", "scene.duplicate", "scene.rename", "scene.delete", "scene.move_up", "scene.move_down"] {
+                    crate::menus::cmd_item(app, ui, id);
+                }
+            })
+            .response;
+
+            #[cfg(test)]
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    egui::Id::new("test_scene_arrow_rect"),
+                    scene_response.interact_rect,
+                );
+                data.insert_temp(
+                    egui::Id::new("test_scene_arrow_id"),
+                    scene_response.id,
+                );
+            });
+
+            scene_response.set_name(tr!("Scene"));
+        });
         // The symbols open for editing (ADR 0045), as in Animate's edit bar: a click on one
         // goes back to it; the last is the one being edited.
         // A group (ADR 0073) shows as "Group" and a drawing object (ADR 0080) as "Drawing
@@ -325,18 +379,50 @@ pub fn edit_bar(app: &mut App, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let z = app.view.zoom;
             let canvas = app.stage_cache.canvas;
-            egui::ComboBox::from_id_salt("zoom").width(84.0).selected_text(text(Type::Data, format!("{:>4.0}%", z * 100.0))).show_ui(ui, |ui| {
+            // The presets arrow alone opens the menu, as in Animate: clicking the text never does.
+            // The arrow is an icon drawn over a blank button (the fonts may lack an arrow glyph).
+            let arrow = ui.menu_button("   ", |ui| {
                 if ui.selectable_label(false, tr!("Fit in window")).clicked() {
+                    ui.close();
                     app.view.fit = true;
                 }
                 for pct in [25.0f32, 50.0, 100.0, 200.0, 400.0, 800.0] {
                     if ui.selectable_label((z * 100.0 - pct).abs() < 0.5, text(Type::Data, format!("{pct:>4.0}%"))).clicked() {
+                        ui.close();
                         app.zoom_about(canvas, canvas.center(), pct / 100.0);
                     }
                 }
-            })
-            .response
-            .set_name(tr!("Zoom"));
+            });
+            crate::icons::paint(ui.painter(), Rect::from_center_size(arrow.response.rect.center(), vec2(12.0, 12.0)), Icon::ChevronDown, if arrow.response.hovered() { T.icon_hot } else { T.icon });
+            arrow.response.set_name(tr!("Zoom presets"));
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("zoom_arrow"), arrow.response.rect));
+            // The percentage itself is typed here: focus to type a value, Enter or focus loss applies it.
+            let was_editing = app.zoom_text.is_some();
+            let mut value = app.zoom_text.take().unwrap_or_else(|| format!("{:>4.0}%", z * 100.0));
+            let field = with_type(ui, Type::Data, |ui| ui.add(egui::TextEdit::singleline(&mut value).desired_width(56.0).char_limit(7)).named(tr!("Zoom")));
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("zoom_field"), field.rect));
+            if !was_editing && field.gained_focus() {
+                // Type digits over digits, not over the percent sign.
+                value = format!("{:.0}", z * 100.0);
+            }
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if field.lost_focus() || (enter && field.has_focus()) {
+                let typed = value.trim();
+                let typed = typed.strip_suffix('%').unwrap_or(typed).trim();
+                if let Ok(pct) = typed.parse::<f32>()
+                    && pct.is_finite()
+                {
+                    app.zoom_about(canvas, canvas.center(), pct.clamp(5.0, 6400.0) / 100.0);
+                }
+                app.zoom_text = None;
+                if enter {
+                    ui.memory_mut(|m| m.surrender_focus(field.id));
+                }
+            } else if field.has_focus() {
+                app.zoom_text = Some(value);
+            } else {
+                app.zoom_text = None;
+            }
             // Beside the zoom, as in Animate (#251): a toggle, on = the pasteboard is hidden.
             let clip = app.view.clip_to_stage;
             if crate::timeline::icon_button(ui, tr!("Clip content outside the stage"), Some(clip), Icon::ClipStage).clicked() {
@@ -362,6 +448,13 @@ pub fn status_bar(app: &mut App, ui: &mut egui::Ui) {
             let small = |t: String| text(Type::Data, t).color(T.text_faint);
             ui.label(small(tr!("undo {steps} · {size} MB", steps = app.s.history().undo_len(), size = format!("{:.1}", app.s.history().bytes() as f32 / (1024.0 * 1024.0)))));
             ui.add_space(12.0);
+            // An assistant can edit this window (ADR 0104): always in view while that is so.
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(port) = crate::remote::port(app) {
+                ui.label(text(Type::Label, tr!("Remote control on (port {port})", port = port)).color(T.text_faint))
+                    .on_hover_text(tr!("An assistant can edit this document through a control port on this computer. Its edits appear here at once and undo like your own. Started with --control; close AniCraft to turn it off."));
+                ui.add_space(12.0);
+            }
             if let Some(a) = crate::autosave::status(app, now) {
                 ui.label(small(a)).on_hover_text(tr!("A recovery copy of your unsaved work. If AniCraft closes unexpectedly, the next start offers it back."));
                 ui.add_space(12.0);
@@ -484,25 +577,25 @@ fn row_prose(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
 /// White as in Animate.
 pub(crate) fn colour_panel(app: &mut App, ui: &mut egui::Ui) {
     let mut st = app.s.style.clone();
-    let to_rgba = |c: [u8; 3]| Rgba::new(f32::from(c[0]) / 255.0, f32::from(c[1]) / 255.0, f32::from(c[2]) / 255.0, 1.0);
-    let (mut stroke, mut fill) = (rgb(st.stroke), rgb(st.fill));
+    let to_rgba = |c: [u8; 4]| Rgba::new(f32::from(c[0]) / 255.0, f32::from(c[1]) / 255.0, f32::from(c[2]) / 255.0, f32::from(c[3]) / 255.0);
+    let (mut stroke, mut fill) = (rgba(st.stroke), rgba(st.fill));
     let (mut stroke_changed, mut fill_changed) = (false, false);
     let mut target = app.colour_target;
     row(ui, tr!("Stroke"), |ui| {
-        let r = crate::colour::button(ui, &mut stroke).named(tr!("Stroke colour"));
+        let r = crate::colour::button_alpha(ui, &mut stroke).named(tr!("Stroke colour"));
         if r.clicked() {
             target = crate::swatches_panel::ColourTarget::Stroke;
         }
         stroke_changed = r.changed();
-        ui.label(text(Type::Data, hex(stroke)).color(T.text_dim));
+        ui.label(text(Type::Data, crate::colour::to_hex(stroke, true)).color(T.text_dim));
     });
     row(ui, tr!("Fill"), |ui| {
-        let r = crate::colour::button(ui, &mut fill).named(tr!("Fill colour"));
+        let r = crate::colour::button_alpha(ui, &mut fill).named(tr!("Fill colour"));
         if r.clicked() {
             target = crate::swatches_panel::ColourTarget::Fill;
         }
         fill_changed = r.changed();
-        ui.label(text(Type::Data, hex(fill)).color(T.text_dim));
+        ui.label(text(Type::Data, crate::colour::to_hex(fill, true)).color(T.text_dim));
     });
     let mut undo = tr_noop!("Colour");
     ui.horizontal_wrapped(|ui| {
@@ -511,7 +604,7 @@ pub(crate) fn colour_panel(app: &mut App, ui: &mut egui::Ui) {
             (stroke_changed, fill_changed, undo) = (true, true, tr_noop!("Swap Colours"));
         }
         if ui.button(tr!("Black and White")).on_hover_text(tr!("A black stroke and a white fill")).clicked() {
-            (stroke, fill) = ([0, 0, 0], [255, 255, 255]);
+            (stroke, fill) = ([0, 0, 0, 255], [255, 255, 255, 255]);
             (stroke_changed, fill_changed, undo) = (true, true, tr_noop!("Black and White"));
         }
     });
@@ -530,10 +623,10 @@ pub(crate) fn colour_panel(app: &mut App, ui: &mut egui::Ui) {
     app.s.style = st;
     if !app.s.selection.is_empty() {
         if stroke_changed {
-            live(app, undo, "element.set_stroke", json!({"color": hex(stroke)}));
+            live(app, undo, "element.set_stroke", json!({"color": crate::colour::to_hex(stroke, true)}));
         }
         if fill_changed {
-            live(app, undo, "element.set_fill", json!({"color": hex(fill)}));
+            live(app, undo, "element.set_fill", json!({"color": crate::colour::to_hex(fill, true)}));
         }
     }
 }
@@ -782,6 +875,24 @@ pub(crate) fn element_title(doc: &anicraft_engine::doc::Document, e: &anicraft_e
     if e.name.is_empty() { kind } else { tr!("{name} ({kind})", name = e.name, kind = kind) }
 }
 
+/// The Scale lock's link (#304): with the lock on, editing one Scale axis (percent, as the
+/// Properties panel shows it) adjusts the other so the selection keeps its width:height
+/// proportion (multiplicative, not forced equal). `x_changed` says which axis was edited.
+/// A degenerate old axis (near zero) cannot divide, so the other axis follows the new value
+/// instead. Both sizes are clamped to 1–10000 %, so a typed extreme cannot produce a zero
+/// scale; a negative scale is a mirror (#116) and each axis keeps its own direction.
+fn linked_scale(old: (f32, f32), now: (f32, f32), x_changed: bool) -> (f32, f32) {
+    const MIN: f32 = 1.0;
+    const MAX: f32 = 10000.0;
+    // The size follows in proportion; each axis keeps its own direction (a mirrored axis stays
+    // mirrored, and flipping one axis does not flip the other).
+    let size = |v: f32| v.abs().clamp(MIN, MAX);
+    let follow = |from: f32, to: f32, other: f32| if from.abs() <= 1e-6 { size(to).copysign(other) } else { size(other * to / from).copysign(other) };
+    let (ox, oy) = old;
+    let (nx, ny) = now;
+    if x_changed { (size(nx).copysign(nx), follow(ox, nx, oy)) } else { (follow(oy, ny, ox), size(ny).copysign(ny)) }
+}
+
 /// "mixed" after a value that differs across the selection (the field shows the first one's).
 fn mixed(ui: &mut egui::Ui, differs: bool) {
     if differs {
@@ -936,9 +1047,29 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             });
         }
         row(ui, tr!("Scale"), |ui| {
-            let a = ui.add(egui::DragValue::new(&mut sx).suffix(" %").speed(0.5).range(1.0..=10000.0).max_decimals(1)).named(tr!("Scale width"));
-            let b = ui.add(egui::DragValue::new(&mut sy).suffix(" %").speed(0.5).range(1.0..=10000.0).max_decimals(1)).named(tr!("Scale height"));
+            let (sx0, sy0) = (sx, sy);
+            // Negative is a mirror (Flip). Only edits are clamped: a scale merely shown is never
+            // rewritten (#116). The engine refuses a scale too near zero.
+            let a = ui
+                .add(egui::DragValue::new(&mut sx).suffix(" %").speed(0.5).range(-10000.0..=10000.0).clamp_existing_to_range(false).max_decimals(1))
+                .named(tr!("Scale width"));
+            let b = ui
+                .add(egui::DragValue::new(&mut sy).suffix(" %").speed(0.5).range(-10000.0..=10000.0).clamp_existing_to_range(false).max_decimals(1))
+                .named(tr!("Scale height"));
+            // The Scale lock (#304): view state, off by default. On, editing one axis scales
+            // the other so the selection keeps its width:height proportion.
+            let locked = app.scale_lock;
+            // Narrow and close to the fields, so the row still fits beside its label in the dock.
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let lock = crate::timeline::icon_button_wide(ui, tr!("Lock scale"), Some(locked), if locked { Icon::Lock } else { Icon::Unlock }, 20.0);
+            if lock.clicked() {
+                app.scale_lock = !locked;
+            }
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("scale_lock_geometry"), (a.rect, b.rect, lock.rect)));
             if a.changed() || b.changed() {
+                if locked {
+                    (sx, sy) = linked_scale((sx0, sy0), (sx, sy), a.changed());
+                }
                 live(app, tr_noop!("Scale"), "element.set_transform", json!({"sx": sx / 100.0, "sy": sy / 100.0}));
             }
             mixed(ui, m.scale);
@@ -1103,22 +1234,22 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             let fill = sh.fill.as_ref().map(Paint::primary_color);
             let bitmaps = crate::colour_panel::bitmaps(app);
             row(ui, tr!("Fill"), |ui| {
-                let c = rgb(fill.unwrap_or(Rgba::WHITE));
+                let c = fill.unwrap_or(Rgba::WHITE);
                 // The one colour picker, with the fill's type (ADR 0074): a gradient shows as its
                 // ramp here and is edited in the picker.
                 let (r, edit) = crate::colour_panel::swatch(ui, sh.fill.as_ref(), &bitmaps);
-                r.named(tr!("Fill colour")).on_hover_text(tr!("Fill: click for its colour, or a gradient or bitmap fill"));
+                r.named(tr!("Fill colour")).on_hover_text(tr!("Fill: click for its colour and how clear it is, or a gradient or bitmap fill"));
                 match edit {
-                    Some(crate::colour_panel::FillEdit::Solid(p)) => live(app, tr_noop!("Fill colour"), "element.set_fill", json!({"color": hex(p)})),
+                    Some(crate::colour_panel::FillEdit::Solid(p)) => live(app, tr_noop!("Fill colour"), "element.set_fill", json!({"color": crate::colour::to_hex(p, true)})),
                     Some(crate::colour_panel::FillEdit::None(n)) => {
-                        app.run("element.set_fill", if n { json!({"color": null}) } else { json!({"color": hex(c)}) });
+                        app.run("element.set_fill", if n { json!({"color": null}) } else { json!({"color": crate::colour::to_hex(rgba(c), true)}) });
                     }
                     Some(edit) => crate::colour_panel::apply_set(app, &edit, true),
                     None => {}
                 }
                 let mut on = fill.is_some();
                 if crate::theme::checkbox(ui, &mut on, "").named(tr!("Fill")).on_hover_text(tr!("Fill on/off")).changed() {
-                    app.run("element.set_fill", if on { json!({"color": hex(c)}) } else { json!({"color": null}) });
+                    app.run("element.set_fill", if on { json!({"color": crate::colour::to_hex(rgba(c), true)}) } else { json!({"color": null}) });
                 }
                 if let Some(what) = fill_kind_label(sh.fill.as_ref()) {
                     ui.label(text(Type::Caption, what));
@@ -1128,11 +1259,11 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             if let Some(Paint::Bitmap { bitmap, .. }) = &sh.fill {
                 bitmap_row(app, ui, *bitmap, m.bitmap);
             }
-            let mut sc = rgb(sh.stroke.as_ref().map_or(app.s.style.stroke, |s| s.color));
+            let mut sc = rgba(sh.stroke.as_ref().map_or(app.s.style.stroke, |s| s.color));
             let mut sw = sh.stroke.as_ref().map_or(0.0, |s| s.width);
             row(ui, tr!("Stroke"), |ui| {
-                if crate::colour::button(ui, &mut sc).named(tr!("Stroke colour")).changed() {
-                    live(app, tr_noop!("Stroke colour"), "element.set_stroke", json!({"color": hex(sc)}));
+                if crate::colour::button_alpha(ui, &mut sc).named(tr!("Stroke colour")).on_hover_text(tr!("Stroke colour: click to pick the colour and how clear it is")).changed() {
+                    live(app, tr_noop!("Stroke colour"), "element.set_stroke", json!({"color": crate::colour::to_hex(sc, true)}));
                 }
                 if ui.add(egui::DragValue::new(&mut sw).suffix(" px").speed(0.1).range(0.0..=200.0).max_decimals(1)).named(tr!("Stroke width")).changed() {
                     live(app, tr_noop!("Stroke width"), "element.set_stroke", json!({"width": sw}));
@@ -2777,10 +2908,10 @@ fn tool_props(app: &mut App, ui: &mut egui::Ui) {
             // colour picker with the fill's type (ADR 0074).
             let paint = st.fill_paint();
             let (r, edit) = crate::colour_panel::swatch(ui, (st.use_fill || fills).then_some(&paint), &bitmaps);
-            r.named(tr!("Fill colour")).on_hover_text(tr!("Fill: click for its colour, or a gradient or bitmap fill"));
+            r.named(tr!("Fill colour")).on_hover_text(tr!("Fill: click for its colour and how clear it is, or a gradient or bitmap fill"));
             match edit {
                 Some(crate::colour_panel::FillEdit::Solid(p)) => {
-                    st.set_fill_color(Rgba::new(f32::from(p[0]) / 255.0, f32::from(p[1]) / 255.0, f32::from(p[2]) / 255.0, 1.0));
+                    st.set_fill_color(Rgba::new(f32::from(p[0]) / 255.0, f32::from(p[1]) / 255.0, f32::from(p[2]) / 255.0, f32::from(p[3]) / 255.0));
                     st.use_fill = true;
                 }
                 Some(crate::colour_panel::FillEdit::None(n)) => st.use_fill = !n || fills,
@@ -2803,9 +2934,9 @@ fn tool_props(app: &mut App, ui: &mut egui::Ui) {
     }
     if !fills {
         row(ui, tr!("Stroke"), |ui| {
-            let mut c = rgb(st.stroke);
-            if crate::colour::button(ui, &mut c).named(tr!("Stroke colour")).changed() {
-                st.stroke = Rgba::new(c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 1.0);
+            let mut c = rgba(st.stroke);
+            if crate::colour::button_alpha(ui, &mut c).named(tr!("Stroke colour")).on_hover_text(tr!("Stroke colour: click to pick the colour and how clear it is")).changed() {
+                st.stroke = Rgba::new(f32::from(c[0]) / 255.0, f32::from(c[1]) / 255.0, f32::from(c[2]) / 255.0, f32::from(c[3]) / 255.0);
             }
             if !ink {
                 crate::theme::checkbox(ui, &mut st.use_stroke, "").named(tr!("Stroke")).on_hover_text(tr!("Stroke on/off"));
@@ -3199,5 +3330,311 @@ mod tests {
         for t in [Tool::Pen, Tool::Rect, Tool::Oval, Tool::Star, Tool::Brush, Tool::PaintBucket] {
             assert!(!stroke_only(t), "{t:?} fills");
         }
+    }
+
+    #[test]
+    fn scene_breadcrumb_padding_click_exits_symbol() {
+        let ctx = egui::Context::default();
+        let session = anicraft_engine::Session::new(
+            anicraft_engine::doc::sample::demo()
+        );
+        let mut app = App::with_context(
+            &ctx,
+            session,
+            Some(std::path::PathBuf::from("unused.png")),
+        );
+
+        // Open a REAL library symbol for editing.
+        let symbol = app.s.doc.library.first()
+            .expect("Demo should contain a symbol")
+            .id.0;
+
+        assert!(app.run("symbol.edit", json!({"symbol": symbol})).is_some());
+        assert_eq!(app.s.editing.len(), 1);
+
+        let input = |events| egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1200.0, 800.0),
+            )),
+            events,
+            ..Default::default()
+        };
+
+        // Draw the REAL edit bar so egui can measure its controls.
+        ctx.run_ui(input(vec![]), |ui| edit_bar(&mut app, ui))
+            .textures_delta.clear();
+
+        // Get the actual scene control's interaction rectangle.
+        let label_rect = ctx.data(|data| {
+            data.get_temp::<egui::Rect>(
+                egui::Id::new("test_scene_label_rect")
+            )
+        }).expect("Scene control rectangle should exist");
+
+        // Click near the scene button's left edge, away from the text.
+        let click = egui::pos2(
+            label_rect.left() + 2.0,
+            label_rect.center().y,
+        );
+        assert!(label_rect.contains(click));
+
+        // A real click involves a press and a release.
+        for pressed in [true, false] {
+            let events = vec![
+                egui::Event::PointerMoved(click),
+                egui::Event::PointerButton {
+                    pos: click,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ];
+
+            ctx.run_ui(input(events), |ui| edit_bar(&mut app, ui))
+                .textures_delta.clear();
+        }
+
+        // Clicking the scene name should leave symbol-editing mode.
+        assert!(
+            app.s.editing.is_empty(),
+            "Clicking scene-label padding should return to the scene"
+        );
+    }
+
+    #[test]
+    fn scene_breadcrumb_arrow_opens_menu_without_exiting_symbol() {
+        let ctx = egui::Context::default();
+        let session = anicraft_engine::Session::new(
+            anicraft_engine::doc::sample::demo()
+        );
+        let mut app = App::with_context(
+            &ctx,
+            session,
+            Some(std::path::PathBuf::from("unused.png")),
+        );
+
+        // Open a REAL library symbol for editing.
+        let symbol = app.s.doc.library.first()
+            .expect("Demo should contain a symbol")
+            .id.0;
+
+        assert!(app.run("symbol.edit", json!({"symbol": symbol})).is_some());
+        assert_eq!(app.s.editing.len(), 1);
+
+        let input = |events| egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1200.0, 800.0),
+            )),
+            events,
+            ..Default::default()
+        };
+
+        // Draw the edit bar once so egui can measure the dropdown arrow.
+        ctx.run_ui(input(vec![]), |ui| edit_bar(&mut app, ui))
+            .textures_delta.clear();
+
+        // Get the actual dropdown arrow's rectangle and widget ID.
+        let arrow_rect = ctx.data(|data| {
+            data.get_temp::<egui::Rect>(
+                egui::Id::new("test_scene_arrow_rect")
+            )
+        }).expect("Scene arrow rectangle should exist");
+
+        let arrow_id = ctx.data(|data| {
+            data.get_temp::<egui::Id>(
+                egui::Id::new("test_scene_arrow_id")
+            )
+        }).expect("Scene arrow ID should exist");
+
+        // Click the centre of the arrow control.
+        let click = arrow_rect.center();
+        assert!(arrow_rect.contains(click));
+
+        // A real click involves a press and a release.
+        for pressed in [true, false] {
+            let events = vec![
+                egui::Event::PointerMoved(click),
+                egui::Event::PointerButton {
+                    pos: click,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ];
+
+            ctx.run_ui(input(events), |ui| edit_bar(&mut app, ui))
+                .textures_delta.clear();
+        }
+
+        // Clicking the arrow should open the menu without leaving the symbol.
+        assert_eq!(
+            app.s.editing.len(),
+            1,
+            "Clicking the arrow must not exit symbol-editing mode"
+        );
+
+        assert!(
+            egui::ComboBox::is_open(&ctx, arrow_id),
+            "Clicking the arrow should open the scene dropdown"
+        );
+    }
+
+    /// #304: the Scale lock keeps the width:height proportion (multiplicative).
+    #[test]
+    fn linked_scale_keeps_the_proportion() {
+        // 100x50, X edited to 200: the height doubles too.
+        assert_eq!(linked_scale((100.0, 50.0), (200.0, 50.0), true), (200.0, 100.0));
+        // 100x50, Y edited to 25: the width halves too.
+        assert_eq!(linked_scale((100.0, 50.0), (100.0, 25.0), false), (50.0, 25.0));
+        // A degenerate old axis cannot divide: the other axis follows the new value.
+        assert_eq!(linked_scale((0.0, 50.0), (200.0, 50.0), true), (200.0, 200.0));
+        assert_eq!(linked_scale((100.0, 0.0), (100.0, 25.0), false), (25.0, 25.0));
+        // Clamped to the DragValues' range, so an extreme cannot make a zero/negative scale.
+        assert_eq!(linked_scale((100.0, 100.0), (20000.0, 100.0), true), (10000.0, 10000.0));
+        assert_eq!(linked_scale((100.0, 200.0), (100.0, 0.01), false), (1.0, 1.0));
+        // A mirror (#116): the edited axis flips, the other keeps its direction and follows in size.
+        assert_eq!(linked_scale((100.0, 100.0), (-5.0, 100.0), true), (-5.0, 5.0));
+        assert_eq!(linked_scale((-100.0, 50.0), (-200.0, 50.0), true), (-200.0, 100.0));
+        assert_eq!(linked_scale((100.0, -50.0), (200.0, -50.0), true), (200.0, -100.0));
+    }
+
+    /// #304, headless: the lock toggle flips view state (one click), and the row's edit path
+    /// scales both axes proportionally in a single undo step; with the lock off only the
+    /// edited axis changes. Typing a value into a DragValue is not driven here (that needs a
+    /// focused text field plus key events): the value link itself is covered by
+    /// `linked_scale_keeps_the_proportion`, and this test drives the same helper plus the
+    /// same `element.set_transform` the row sends.
+    #[test]
+    fn scale_lock_toggle_links_the_axes_in_one_undo_step() {
+        use egui::{Event, Modifiers, PointerButton, Pos2};
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, anicraft_engine::Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        app.run("draw.rect", json!({"x": 10, "y": 10, "w": 100, "h": 50, "fill": "#ff0000", "stroke": null}));
+        app.run("edit.select_all", json!({}));
+        assert!(!app.s.selection.is_empty());
+        assert!(!app.scale_lock, "the lock defaults off");
+        let screen = || egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 1400.0))), ..Default::default() };
+        let frames = |ctx: &egui::Context, app: &mut App| {
+            for _ in 0..2 {
+                let mut out = ctx.run_ui(screen(), |ui| app.frame(ui));
+                out.textures_delta.clear();
+            }
+        };
+        frames(&ctx, &mut app);
+        let (_, _, lock_rect) = ctx.data(|d| d.get_temp::<(Rect, Rect, Rect)>(egui::Id::new("scale_lock_geometry"))).expect("the Scale row drew");
+        // Click the lock: view state only (no document change, no undo step).
+        let at = lock_rect.center();
+        let press = |pressed: bool| Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+        let steps = app.s.history_len();
+        let mut out = ctx.run_ui(screen(), |ui| app.frame(ui));
+        out.textures_delta.clear();
+        let mut out = ctx.run_ui(egui::RawInput { events: vec![Event::PointerMoved(at), press(true)], ..screen() }, |ui| app.frame(ui));
+        out.textures_delta.clear();
+        let mut out = ctx.run_ui(egui::RawInput { events: vec![press(false)], ..screen() }, |ui| app.frame(ui));
+        out.textures_delta.clear();
+        frames(&ctx, &mut app);
+        assert!(app.scale_lock, "one click turns the lock on");
+        assert_eq!(app.s.history_len(), steps, "toggling the lock is view state, not undoable");
+        // The row's locked path: X 100 % -> 200 % keeps the 1:1 proportion.
+        let (sx, sy) = linked_scale((100.0, 100.0), (200.0, 100.0), true);
+        let steps = app.s.history_len();
+        live(&mut app, tr_noop!("Scale"), "element.set_transform", json!({"sx": sx / 100.0, "sy": sy / 100.0}));
+        app.s.end_gesture();
+        assert_eq!(app.s.history_len(), steps + 1, "one undo step for the live edit");
+        let check = |app: &App| {
+            let els = app.s.selected_elements();
+            let d = els.first().expect("selected").1.transform.decompose();
+            (d.sx, d.sy)
+        };
+        let (sx, sy) = check(&app);
+        assert!((sx - 2.0).abs() < 1e-4 && (sy - 2.0).abs() < 1e-4, "both axes doubled, got ({sx}, {sy})");
+        app.s.undo().expect("undo");
+        let (sx, sy) = check(&app);
+        assert!((sx - 1.0).abs() < 1e-4 && (sy - 1.0).abs() < 1e-4, "one undo restores both, got ({sx}, {sy})");
+        // Lock off: the same row sends only the edited axis's change through.
+        app.scale_lock = false;
+        let steps = app.s.history_len();
+        live(&mut app, tr_noop!("Scale"), "element.set_transform", json!({"sx": 3.0, "sy": 1.0}));
+        app.s.end_gesture();
+        assert_eq!(app.s.history_len(), steps + 1);
+        let (sx, sy) = check(&app);
+        assert!((sx - 3.0).abs() < 1e-4 && (sy - 1.0).abs() < 1e-4, "only X changed, got ({sx}, {sy})");
+        app.s.undo().expect("undo");
+    }
+
+    use crate::app::App;
+    use anicraft_engine::Session;
+    use anicraft_engine::geom::Affine;
+    use serde_json::json;
+
+    /// A few headless frames of the whole window, Properties panel included.
+    fn frames(ctx: &egui::Context, app: &mut App) {
+        let input =
+            || egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 940.0))), ..Default::default() };
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(input(), |ui| app.frame(ui));
+            out.textures_delta.clear();
+        }
+    }
+
+    fn transform(app: &App) -> Affine {
+        app.s.visible_elements().first().map(|e| e.transform).unwrap_or_default()
+    }
+
+    /// #116: the Scale fields show a flipped (negative) or very large scale as it is. Showing
+    /// it never writes a clamped value back (that squashed a flipped shape to 1 %).
+    #[test]
+    fn showing_a_flipped_or_huge_scale_leaves_it_alone() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        app.run("draw.rect", json!({"x": 100, "y": 100, "w": 200, "h": 80}));
+        frames(&ctx, &mut app);
+        let b0 = app.s.selection_bounds();
+        app.run("modify.flip_v", json!({}));
+        frames(&ctx, &mut app);
+        let t = transform(&app);
+        assert!((t.m[0] - 1.0).abs() < 1e-4 && (t.m[3] + 1.0).abs() < 1e-4, "flipped vertically, not squashed: {t:?}");
+        app.run("modify.flip_h", json!({}));
+        frames(&ctx, &mut app);
+        let t = transform(&app);
+        assert!((t.m[0] + 1.0).abs() < 1e-4 && (t.m[3] + 1.0).abs() < 1e-4, "flipped both ways: {t:?}");
+        let b1 = app.s.selection_bounds();
+        assert!((b1.width() - b0.width()).abs() < 0.5 && (b1.height() - b0.height()).abs() < 0.5, "same size: {b0:?} vs {b1:?}");
+        // Bigger than the fields' range (10000 %): kept too.
+        app.run("modify.transform", json!({"a": 150, "b": 0, "c": 0, "d": 150, "e": 0, "f": 0}));
+        frames(&ctx, &mut app);
+        let t = transform(&app);
+        assert!((t.m[0] + 150.0).abs() < 1e-2 && (t.m[3] + 150.0).abs() < 1e-2, "{t:?}");
+        // A scale of zero is still refused, and leaves the shape as it was.
+        assert!(app.s.execute("element.set_transform", &json!({"sy": 0})).is_err());
+        assert!(app.s.execute("modify.transform", &json!({"a": 1, "b": 0, "c": 0, "d": 0, "e": 0, "f": 0})).is_err());
+        assert_eq!(transform(&app), t);
+    }
+
+    /// #116: dragging the bottom edge of the transform box up past the top edge mirrors the
+    /// shape; the Properties panel doesn't squash it back to 1 %.
+    #[test]
+    fn dragging_an_edge_past_the_opposite_one_mirrors() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        app.run("draw.rect", json!({"x": 0, "y": 0, "w": 100, "h": 50}));
+        frames(&ctx, &mut app);
+        // The bottom edge goes from y 50 to y -50, past the top edge.
+        let m = crate::stage::xf_total(
+            crate::app::XfKind::Scale { hx: 0, hy: 1 },
+            [0.0, 0.0, 100.0, 50.0],
+            egui::pos2(50.0, 50.0),
+            egui::pos2(50.0, -50.0),
+            false,
+            false,
+        );
+        assert!(m.m[3] < -0.5, "the drag itself mirrors: {m:?}");
+        let [a, b, c, d, e, f] = m.m;
+        assert!(app.s.execute("modify.transform", &json!({"a": a, "b": b, "c": c, "d": d, "e": e, "f": f})).is_ok());
+        frames(&ctx, &mut app);
+        let t = transform(&app);
+        assert!((t.m[0] - 1.0).abs() < 1e-4 && (t.m[3] - m.m[3]).abs() < 1e-3, "still mirrored as dragged: {t:?}");
     }
 }

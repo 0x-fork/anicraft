@@ -18,7 +18,7 @@ pub fn bar(app: &mut App, ui: &mut egui::Ui) {
     let underline = app.menu_keys.show_keys;
     let mut tops = Vec::with_capacity(TOP_MENUS.len());
     egui::MenuBar::new().ui(ui, |ui| {
-        // macOS: leave room for the traffic lights over the unified title bar.
+        // Keep platform-specific spacing here if the menu row ever shares the title bar again.
         ui.add_space(platform::menu_inset());
         if platform::OS == Os::Mac {
             // The application menu, as every Mac app has (About, Settings, Quit).
