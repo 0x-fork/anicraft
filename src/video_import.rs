@@ -182,6 +182,7 @@ fn poll(app: &mut App, ctx: &egui::Context) {
                     app.video_import = Some(d);
                     return;
                 }
+                // i18n-exempt: an engine-style message, translated where it is shown
                 Err(TryRecvError::Disconnected) => Err(EngineError::State("the video could not be read".into())),
             };
             // Done, one way or another: the window closes.
@@ -209,11 +210,6 @@ pub fn cancel(app: &mut App) {
         Some(Work::Importing { control, .. }) => control.cancel(),
         _ => app.video_import = None,
     }
-}
-
-/// Whether the window is open (it takes the keyboard, as a dialog does).
-pub fn is_open(app: &App) -> bool {
-    app.video_import.is_some()
 }
 
 pub fn window(app: &mut App, ctx: &egui::Context) {
@@ -306,10 +302,10 @@ fn form(app: &App, ui: &mut egui::Ui, d: &mut VideoImport, probe: &Probe) {
     // What the file is: numbers in the data face.
     let mut facts = format!("{} × {}", probe.width, probe.height);
     if let Some(s) = probe.duration {
-        facts.push_str(&format!(" · {s:.2} s"));
+        facts.push_str(&format!(" · {s:.2} s")); // i18n-exempt: a number with its unit
     }
     if let Some(f) = probe.fps {
-        facts.push_str(&format!(" · {f:.2} fps"));
+        facts.push_str(&format!(" · {f:.2} fps")); // i18n-exempt: a number with its unit
     }
     ui.horizontal(|ui| {
         ui.label(text(Type::Data, facts).color(T.text_dim));

@@ -1386,7 +1386,7 @@ impl App {
         }
         self.perform_here("file.import_video", json!({"path": clip.display().to_string(), "mode": "reference"}));
         // Traced over it, on the layer above: an outline in ink, as a rotoscoper draws.
-        self.run("timeline.new_layer", json!({"name": "Tracing"}));
+        self.run("layer.new", json!({"name": "Tracing"}));
         let stage = self.s.doc.stage;
         let (cx, cy) = (stage.width as f32 * 0.5, stage.height as f32 * 0.5);
         let ring: Vec<[f32; 2]> = (0..=72).map(|i| (i as f32 * 5.0).to_radians()).map(|a| [cx + a.cos() * 118.0, cy + a.sin() * 118.0]).collect();

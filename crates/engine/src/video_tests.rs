@@ -147,8 +147,9 @@ fn pictures_are_read_from_a_pipe_with_every_size_checked() {
     // Larger than asked for, other kinds of image, and headers that lie.
     assert!(read_ppm(&mut &ppm(9, 2, 0)[..], 8, 8).unwrap_err().contains("larger"));
     assert!(read_ppm(&mut &ppm(2, 9, 0)[..], 8, 8).is_err());
-    for bad in [&b"P5\n1 1\n255\n\0"[..], b"P6\n0 1\n255\n", b"P6\n1 1\n65535\n\0\0\0\0\0\0", b"P6\n1 -1\n255\n\0\0\0", b"P6 # note\n1 1\n255\n\0\0\0", b"P6\n9999999999 1\n255\n", b"P6\n1 1\n255", b"\x89PNG\r\n\x1a\n", b"P6\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n1 1\n255\n\0\0\0"] {
-        assert!(read_ppm(&mut &bad[..], 4096, 4096).is_err(), "{:?}", String::from_utf8_lossy(bad));
+    let hostile: [&[u8]; 9] = [&b"P5\n1 1\n255\n\0"[..], b"P6\n0 1\n255\n", b"P6\n1 1\n65535\n\0\0\0\0\0\0", b"P6\n1 -1\n255\n\0\0\0", b"P6 # note\n1 1\n255\n\0\0\0", b"P6\n9999999999 1\n255\n", b"P6\n1 1\n255", b"\x89PNG\r\n\x1a\n", b"P6\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n1 1\n255\n\0\0\0"];
+    for bad in hostile {
+        assert!(read_ppm(&mut &*bad, 4096, 4096).is_err(), "{:?}", String::from_utf8_lossy(bad));
     }
     // A header promising the largest picture with nothing behind it fails without a crash.
     assert!(read_ppm(&mut &b"P6\n4096 4096\n255\n"[..], 4096, 4096).is_err());
@@ -166,7 +167,7 @@ fn fuzz_hostile_pictures_never_panic() {
                 let at = rng.below(bytes.len().max(1));
                 match rng.below(3) {
                     0 => bytes.truncate(at),
-                    1 if at < bytes.len() => bytes[at] = b"0123456789 \nP6\xff"[rng.below(16)],
+                    1 if at < bytes.len() => bytes[at] = b"0123456789 \nP6\xff"[rng.below(15)],
                     _ => bytes.insert(at.min(bytes.len()), b"0123456789 \n"[rng.below(12)]),
                 }
             }
