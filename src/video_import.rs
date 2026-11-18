@@ -55,7 +55,7 @@ pub struct VideoImport {
     pub length: f64,
     work: Option<Work>,
     /// The tab the import is for: a result arriving on another document is dropped.
-    tab: usize,
+    tab: u64,
 }
 
 /// Memory an embedded video may take before the window suggests a reference layer instead.
@@ -78,7 +78,7 @@ pub fn open(app: &mut App, path: PathBuf) {
     let started = std::thread::Builder::new().name("anicraft-video-probe".into()).spawn(move || {
         let _ = tx.send(video::probe(&video::program(None), &file));
     });
-    let mut d = VideoImport { path, info: None, mode: Mode::Frames, step: 1, max_edge: video::DEFAULT_EDGE, audio: true, start: 0.0, length: 0.0, work: Some(Work::Probing(rx)), tab: app.tabs.active() };
+    let mut d = VideoImport { path, info: None, mode: Mode::Frames, step: 1, max_edge: video::DEFAULT_EDGE, audio: true, start: 0.0, length: 0.0, work: Some(Work::Probing(rx)), tab: app.tabs.active_id() };
     if started.is_err() {
         d.work = None;
         d.info = Some(Err(tr!("The video could not be read: this computer would not start another thread.").to_string()));
@@ -88,7 +88,7 @@ pub fn open(app: &mut App, path: PathBuf) {
 
 /// The window with a description already in hand (screenshots and tests: no ffmpeg needed).
 pub fn open_with(app: &mut App, path: PathBuf, probe: Probe) {
-    let mut d = VideoImport { path, info: None, mode: Mode::Frames, step: 1, max_edge: video::DEFAULT_EDGE, audio: probe.audio, start: 0.0, length: 0.0, work: None, tab: app.tabs.active() };
+    let mut d = VideoImport { path, info: None, mode: Mode::Frames, step: 1, max_edge: video::DEFAULT_EDGE, audio: probe.audio, start: 0.0, length: 0.0, work: None, tab: app.tabs.active_id() };
     described(app, &mut d, probe);
     app.video_import = Some(d);
 }
@@ -188,7 +188,7 @@ fn poll(app: &mut App, ctx: &egui::Context) {
             // Done, one way or another: the window closes.
             match result {
                 // Another document is in front now: this one stays as it is.
-                Ok(_) if app.tabs.active() != d.tab => app.status_err(tr!("The video was not imported: another document was opened while it was being read. Import it again.")),
+                Ok(_) if app.tabs.active_id() != d.tab => app.status_err(tr!("The video was not imported: another document was opened while it was being read. Import it again.")),
                 Ok(prepared) => {
                     app.s.staged_video = Some(prepared);
                     app.perform_here("file.import_video", params);
