@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+* **Double-click the Hand tool to fit the stage in the window** (#457, M8). A single click
+  still selects the Hand tool without changing the view.
+
 * **Themes of your own** (#340, ADR 0117, M8): a theme is a small JSON file that names colours
   for the interface's roles, kept in `themes` in the settings folder (`data/themes` in a
   portable copy).
