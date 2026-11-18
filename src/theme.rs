@@ -886,6 +886,24 @@ pub fn heat(w: f32) -> Color32 {
     Color32::from_rgb(mix(a.r(), b.r()), mix(a.g(), b.g()), mix(a.b(), b.b()))
 }
 
+/// Gives a text field the keyboard with all of `text` selected, so typing replaces what a
+/// dialog offers (a name to change, a default name) and the arrow keys still edit it
+/// (#196, #322).
+pub fn focus_selected(ui: &egui::Ui, field: &egui::Response, text: &str) {
+    field.request_focus();
+    if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), field.id) {
+        let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()));
+        state.cursor.set_char_range(Some(all));
+        state.store(ui.ctx(), field.id);
+    }
+}
+
+/// Construct an RGB colour derived from artwork rather than a UI theme token.
+/// UI control colours must still come from T.
+pub(crate) fn artwork_rgb(r: u8, g: u8, b: u8) -> Color32 {
+    Color32::from_rgb(r, g, b)
+}
+
 pub fn to_color32(c: anicraft_engine::doc::Rgba) -> Color32 {
     let c = c.sanitized();
     Color32::from_rgba_unmultiplied((c.r * 255.0).round() as u8, (c.g * 255.0).round() as u8, (c.b * 255.0).round() as u8, (c.a * 255.0).round() as u8)

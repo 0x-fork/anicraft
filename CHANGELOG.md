@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+* **Fixes and polish from outside contributors** (M8). Thank you all.
+  * **Fixed: no menus on macOS** (fixes #187, #247, #398; Oskar Raszkiewicz). The window keeps
+    the standard macOS title bar and the menu row sits under it; before, the title bar covered
+    File, Edit and the rest unless the window was full screen (ADR 0006).
+  * **Fixed: Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+Shift+V did nothing on the stage** on desktop builds
+    (fixes #197; jayzed80). They copy, cut, paste and paste in place again; text fields keep
+    their own copy and paste.
+  * **Fixed: grouped artwork in Animate documents came in scaled and moved twice** (fixes #411;
+    Vincent Agerbech, with the nested-group test from NetterSilver). A 50% instance in a group
+    drew at 25%; group members now land where Animate puts them.
+  * **Selected raw artwork is easier to read** (fixes #295; Untoldent): finer, staggered dots in
+    a colour that contrasts with each fill, stroke or gradient instead of blue and white ones,
+    thin selected lines stay visible, and artwork on top hides the dots under it.
+  * **Raw drawings act as one shape** (scks1): Align and Distribute keep a fill and its outline
+    together (fixes #301), Rotation and Scale in Properties turn and scale a selected raw
+    drawing about its centre (fixes #297), and changing the stroke of a whole raw drawing no
+    longer gives its fills a second outline (the doubled stroke of #389).
+  * **A group's registration point is the centre of what was grouped** (Koolskull, ADR 0073),
+    not the corner of the stage, so Rotation and Scale in Properties turn it about itself. The
+    artwork stays where it was; edit the group to move the point.
+  * **Edit bar** (Untoldent, gmrmad1): inside a symbol, group or drawing object, one click on the
+    scene name goes back to the scene and the arrow beside it opens the scene menu (fixes #353);
+    scene rows in that menu are clickable across their whole width; Insert › Scene is now
+    **New Scene**. The zoom percentage is a field you can type in, with its presets on the
+    arrow beside it (fixes #43).
+  * **Properties › Scale has a lock** (fixes #304; gmrmad1): with it on, changing one of width
+    or height changes the other in proportion.
+  * **Names are selected when a dialog opens** (fixes #196, #322; Untoldent): Convert to Symbol,
+    Rename Layer, Rename Scene, Layer Properties and the other name prompts, so typing replaces
+    the name.
+  * **Timeline** (gmrmad1): dragging the playhead on the ruler stops at the last frame that has
+    material (fixes #352), and a playhead past the end of a scene no longer shows the next
+    scene's artwork on the stage (fixes #305).
+  * **Camera** (Kushagra Kumar): with the camera layer hidden, Preview Through Camera no longer
+    blocks drawing on the stage (fixes #126).
 * **From outside contributors** (M8; thank you).
   * **Free Transform skews** (by mypenc, #176, for #174). Drag the line between two handles
     of the selection box to shear the artwork along that edge, as in Animate: the opposite edge

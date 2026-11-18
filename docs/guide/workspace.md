@@ -164,7 +164,8 @@ lets you change them (see [Preferences, shortcuts and accessibility](preferences
 | Zoom out | **View › Zoom Out** (**Ctrl+-**), or **Alt**-click with the Zoom tool |
 | Fit the whole stage in the window | **View › Fit in Window** (**Ctrl+0**, or **Ctrl+2**) |
 | See the stage at actual size | **View › 100%** (**Ctrl+1**) |
-| Jump to a set zoom | the zoom menu at the right of the edit bar: Fit in window, 25 % to 800 % |
+| Jump to a set zoom | the arrow beside the zoom field at the right of the edit bar: Fit in window, 25 % to 800 % |
+| Type a zoom | click the zoom field, type a percentage (5 to 6400) and press **Enter** |
 
 ### The pasteboard
 
@@ -242,7 +243,7 @@ exactly as the movie will frame it. While the preview is on you can't edit artwo
 A movie can be split into scenes that play one after another. Each scene has its own
 timeline. Use the scene menu at the left of the edit bar to switch scenes and to manage them:
 
-* **Insert › Scene** adds a new scene.
+* **Insert › New Scene** adds a new scene.
 * **Modify › Scene** has **Duplicate Scene**, **Rename Scene**, **Delete Scene**, **Move
   Scene Earlier** and **Move Scene Later**.
 * **Control › Previous Scene** (**Shift+Page Up**) and **Control › Next Scene**

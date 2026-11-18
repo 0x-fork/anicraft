@@ -74,7 +74,7 @@ pub fn window(app: &mut App, ctx: &egui::Context) {
         form_row(ui, FORM_LABEL_DOCK, tr!("Name"), |ui| {
             let r = ui.add(egui::TextEdit::singleline(&mut d.name).desired_width(f32::INFINITY)).named(tr!("Symbol name"));
             if d.focus {
-                r.request_focus();
+                crate::theme::focus_selected(ui, &r, &d.name);
                 d.focus = false;
             }
             if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
