@@ -331,8 +331,10 @@ fn held(mut v: Vec<Viseme>, hold: usize) -> Vec<Viseme> {
         let Some(&cur) = v.get(i) else { break };
         let end = v.iter().skip(i).position(|x| *x != cur).map_or(v.len(), |n| i + n);
         let short = end - i < hold && cur != Viseme::Closed;
-        // What a short run becomes: the run before it, or (at the start) the one after.
-        let join = if short { before.or_else(|| v.get(end).copied()) } else { None };
+        // What a short run becomes: the run before it, or the one after at the start and after
+        // a closure (lips together don't stay together for the sound that follows them).
+        let open = |x: &Viseme| *x != Viseme::Closed;
+        let join = if short { before.filter(open).or_else(|| v.get(end).copied().filter(open)) } else { None };
         match join {
             Some(to) if to != cur => {
                 for slot in v.iter_mut().take(end).skip(i) {
@@ -616,6 +618,8 @@ mod tests {
         assert_eq!(held(vec![Open, Open, Wide, Open, Open], 2), vec![Open; 5]);
         assert_eq!(held(vec![Wide, Open, Open, Open], 2), vec![Open; 4], "the first joins what follows");
         assert_eq!(held(vec![Open, Open, Closed, Wide, Wide], 2), vec![Open, Open, Closed, Wide, Wide]);
+        assert_eq!(held(vec![Open, Open, Closed, Wide, Round, Round], 2), vec![Open, Open, Closed, Round, Round, Round], "after a closure, the sound that follows");
+        assert_eq!(held(vec![Closed, Wide, Closed], 2), vec![Closed, Wide, Closed], "between closures it stays");
         assert_eq!(held(vec![Open, Wide, Round, Open], 1), vec![Open, Wide, Round, Open]);
         assert_eq!(held(vec![Open, Open, Open, Wide, Wide, Round], 3), vec![Open; 6]);
         assert_eq!(held(vec![], 3), vec![]);

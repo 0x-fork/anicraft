@@ -47,6 +47,7 @@ mod cmds_script;
 pub mod cmds_plugin;
 mod cmds_scene;
 pub mod cmds_sound;
+pub mod cmds_audio_keys;
 pub mod cmds_text;
 mod cmds_timeline;
 mod cmds_view;
@@ -191,6 +192,7 @@ pub fn commands() -> Vec<CommandSpec> {
     v.extend(cmds_shape::specs());
     v.extend(cmds_plugin::specs());
     v.extend(cmds_sound::specs());
+    v.extend(cmds_audio_keys::specs());
     v.extend(cmds_actions::specs());
     v.extend(cmds_script::specs());
     v.extend(cmds_macro::specs());
@@ -233,7 +235,7 @@ pub use cmds_layer::LAYER_COLORS;
 /// The command namespaces that change a timeline's layers and frames, refused while a group is
 /// open for editing (ADR 0073): a group is one layer and one frame. A name ending in `.` is a
 /// namespace, any other one command.
-const GROUP_REFUSES: &[&str] = &["timeline.", "layer.", "camera.", "bone.", "motion.", "tween.", "frames.", "sound.place", "script.set", "script.clear"];
+const GROUP_REFUSES: &[&str] = &["timeline.", "layer.", "camera.", "bone.", "motion.", "tween.", "frames.", "sound.place", "sound.to_keyframes", "sound.lip_sync", "script.set", "script.clear"];
 
 /// Last addressable frame (0-based); about 70 minutes at 24 fps.
 pub const MAX_FRAME: u32 = 100_000;
@@ -1396,6 +1398,8 @@ mod macro_tests;
 mod plugin_kinds_tests;
 #[cfg(test)]
 mod tests_sound;
+#[cfg(test)]
+mod tests_audio_keys;
 #[cfg(test)]
 mod hint_tests;
 #[cfg(test)]
