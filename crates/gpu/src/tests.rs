@@ -579,7 +579,7 @@ fn nine_slice_sample() -> anicraft_doc::Document {
     let mut l = Layer::new(LayerId(3), "art");
     l.keyframes = vec![std::sync::Arc::new(k)];
     d.library.push(std::sync::Arc::new(Symbol { id: SymbolId(4), name: "Panel".into(), kind: SymbolKind::MovieClip, linkage: None, scale_grid_kept: None, scale_grid: Some(ScaleGrid { left: 8.0, right: 52.0, top: 8.0, bottom: 22.0 }), timeline: Timeline { layers: vec![std::sync::Arc::new(l)] } }));
-    let inst = |id, xf| el(id, xf, ElementKind::Symbol { symbol: SymbolId(4), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new() });
+    let inst = |id, xf| el(id, xf, ElementKind::Symbol { symbol: SymbolId(4), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new(), pivot: None });
     let mut k = Keyframe::new(0, 1);
     k.elements.push(inst(5, Affine::translate(10.0, 10.0).mul(&Affine::scale(4.5, 1.2))));
     k.elements.push(inst(6, Affine::translate(30.0, 70.0).mul(&Affine::scale(2.0, 3.5))));
@@ -1336,5 +1336,46 @@ fn gpu_binned_frames_match_the_oracle() {
         assert_eq!(f.gpu_binned, !uses(&dl), "{name}: binned on the GPU {}", f.gpu_binned);
         let (oracle, _) = render(&dl, &v).unwrap();
         assert!(compare_premul8(&f.premul8, &oracle.to_premul_rgba8()).unwrap().max <= 2, "{name}");
+    }
+}
+
+/// The sample with faded layers (ADR 0111): every scene layer at its own opacity, one of them
+/// in a faded folder, and the layers inside every symbol at 70 %.
+fn faded_layers_sample() -> anicraft_doc::Document {
+    let mut doc = sample::demo();
+    for sym in doc.library.iter_mut() {
+        for l in Arc::make_mut(sym).timeline.layers.iter_mut() {
+            Arc::make_mut(l).opacity = 0.7;
+        }
+    }
+    let tl = doc.timeline_mut(0);
+    for (i, layer) in tl.layers.iter_mut().enumerate() {
+        Arc::make_mut(layer).opacity = [0.35, 0.8, 0.5, 0.65][i % 4];
+    }
+    let mut folder = anicraft_doc::Layer::new(LayerId(9_100), "Folder");
+    folder.kind = LayerKind::Folder;
+    folder.opacity = 0.5;
+    if let Some(first) = tl.layers.first_mut() {
+        Arc::make_mut(first).parent = Some(LayerId(9_100));
+    }
+    tl.layers.insert(0, Arc::new(folder));
+    doc
+}
+
+#[test]
+fn faded_layers_are_groups_the_binner_takes() {
+    let doc = faded_layers_sample();
+    let dl = anicraft_doc::evaluate(&doc, 7);
+    assert!(dl.groups.len() >= 4 && dl.groups.iter().any(|g| g.parent.is_some()), "{} groups", dl.groups.len());
+    assert!(dl.groups.iter().any(|g| (g.alpha - 0.175).abs() < 1e-6), "the folder's opacity multiplies in");
+}
+
+#[test]
+fn gpu_matches_the_oracle_on_faded_layers() {
+    let Some(g) = gpu() else { return };
+    let doc = faded_layers_sample();
+    for (f, s) in [(0u32, 1.0f32), (7, 0.5), (24, 1.5), (40, 0.37)] {
+        let d = assert_parity(g, "faded layers", &anicraft_doc::evaluate(&doc, f), &View::stage(&doc, s));
+        eprintln!("faded layers {f} at {s}: mean {:.5} / max {} / {} of {} px differ", d.mean, d.max, d.differing, d.pixels);
     }
 }
