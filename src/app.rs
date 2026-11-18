@@ -290,6 +290,8 @@ pub enum Drag {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum XfKind {
     Move,
+    /// Dragging the transformation point itself (ADR 0111): nothing is transformed.
+    Pivot,
     /// Handle position: -1/0/1 on each axis (corner, edge or centre).
     Scale { hx: i8, hy: i8 },
     Rotate,
@@ -482,6 +484,9 @@ pub struct App {
     /// The Properties panel's Scale lock (#304; view state, not undoable): while on, editing
     /// one Scale axis adjusts the other so the selection keeps its width:height proportion.
     pub scale_lock: bool,
+    /// Free Transform's own state (ADR 0111; view state): the transformation point held for a
+    /// selection that can't keep one, and the box a drag began with.
+    pub xf: crate::xform::State,
     /// The zoom edit-bar field's draft while it has the keyboard (view state, not undoable):
     /// `None` shows the current zoom, `Some` is what is being typed.
     pub zoom_text: Option<String>,
@@ -791,6 +796,7 @@ impl App {
             width_sel: None,
             open_fill_swatch: false,
             scale_lock: false,
+            xf: crate::xform::State::default(),
             zoom_text: None,
             bone_sel: None,
             bind: crate::bind_tool::BindOptions::default(),
@@ -1910,6 +1916,31 @@ impl App {
                 self.run("modify.transform_origin", json!({"mode": "registration"}));
                 let (sin, cos) = (-60f32).to_radians().sin_cos();
                 self.run("modify.transform", json!({"a": cos, "b": sin, "c": -sin, "d": cos, "e": 0, "f": 0, "origin": "registration"}));
+            }
+            Some("pivot") => {
+                // The transformation point and the turned box (ADR 0111; #302, #175): an arm,
+                // an instance whose transformation point was moved to its shoulder, turned 35°
+                // about it with Free Transform. Its box is turned with it, the white circle is
+                // on the shoulder, and Properties shows the point.
+                self.run("layer.new", json!({"name": "Arm"}));
+                self.run("draw.object_drawing", json!({"on": true}));
+                self.run("draw.rect", json!({"x": 420, "y": 520, "w": 300, "h": 44, "radius": 22, "fill": "#1b2a4a", "stroke": null}));
+                self.run("modify.convert_to_symbol", json!({"name": "Arm"})); // i18n-exempt: a sample symbol name
+                self.tool = Tool::Transform;
+                self.run("modify.transformation_point", json!({"x": 442, "y": 542}));
+                let (sin, cos) = (-35f32).to_radians().sin_cos();
+                let turn = anicraft_engine::geom::Affine::translate(442.0, 542.0).mul(&anicraft_engine::geom::Affine { m: [cos, sin, -sin, cos, 0.0, 0.0] }).mul(&anicraft_engine::geom::Affine::translate(-442.0, -542.0));
+                let [a, b, c, d, e, f] = turn.m;
+                self.run("modify.transform", json!({"a": a, "b": b, "c": c, "d": d, "e": e, "f": f}));
+            }
+            Some("layeropacity") => {
+                // Layer opacity (ADR 0111, #279): the top two layers faded, each as one, with
+                // the percentage beside their names; Layer Properties open on the active one.
+                let ids: Vec<u64> = self.s.timeline().layers.iter().filter(|l| !matches!(l.kind, anicraft_engine::doc::LayerKind::Folder | anicraft_engine::doc::LayerKind::Camera)).map(|l| l.id.0).collect();
+                for (id, opacity) in ids.iter().zip([40, 65]) {
+                    self.run("layer.set_opacity", json!({"layer": id, "opacity": opacity}));
+                }
+                crate::layer_props::open(self, ids.first().map(|id| anicraft_engine::doc::LayerId(*id)));
             }
             Some("points") => {
                 // A pencil stroke and a pen path being edited, with one smooth point selected.

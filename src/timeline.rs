@@ -813,6 +813,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             LayerKind::Normal => tr!("{name} · layer", name = name),
         };
         let row_name = if has_selection { tr!("{row} · has selected artwork", row = row_name) } else { row_name };
+        // A faded layer says so (ADR 0111): its opacity beside its name, and to screen readers.
+        let faded = ((layer.shown_opacity() * 100.0).round() as u32).min(100);
+        let row_name = if faded < 100 { tr!("{row} · {percent} % opacity", row = row_name, percent = faded) } else { row_name };
+        if faded < 100 && !is_camera {
+            painter.text(pos2(name_rect.right() - 2.0, name_rect.center().y), egui::Align2::RIGHT_CENTER, format!("{faded}%"), crate::theme::font(Type::DataSmall), T.text_faint);
+        }
         a11y::control(ui, &nr, WidgetType::SelectableLabel, &row_name, Some(is_active));
         // Ctrl+F6 lands on the active layer, or on the top row shown when it is scrolled away
         // (rows are drawn top down, so the active row, when drawn, has the last word).
@@ -942,6 +948,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             if !is_folder && menus::check_item(ui, tr!("Onion Skin"), layer.onion, true) {
                 app.run("layer.set_onion", json!({"layer": layer.id.0}));
             }
+            // Opacity (ADR 0111, #279): one click for the usual values; any other in Properties.
+            ui.menu_button(tr!("Opacity"), |ui| {
+                let now = (layer.shown_opacity() * 100.0).round() as u32;
+                for o in [100u32, 75, 50, 25, 0] {
+                    if menus::check_item(ui, &format!("{o} %"), now == o, true) {
+                        app.run("layer.set_opacity", json!({"layer": layer.id.0, "opacity": o}));
+                    }
+                }
+            });
             ui.menu_button(tr!("Layer Height"), |ui| {
                 for h in 1..=anicraft_engine::doc::MAX_LAYER_HEIGHT {
                     if menus::check_item(ui, &format!("{} %", u32::from(h) * 100), layer.height() == h, true) {

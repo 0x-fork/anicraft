@@ -342,6 +342,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // Edit Multiple Frames takes the Selection and Free Transform tools' input (ADR 0047); Free
     // Transform's box then holds the selection on every keyframe (ADR 0051).
     let multi = crate::onion::editing(app) && !preview;
+    // Free Transform's box round the selection: one element's own box, turned as it is, and
+    // the transformation point (ADR 0111).
+    crate::xform::sync(app);
+    let xf_frame = if app.tool == Tool::Transform && !multi && !preview { crate::xform::frame(app) } else { None };
     let sel_bounds = if multi { crate::onion::selection_bounds(app) } else { bounds_arr(app.s.selection_bounds()) };
     let sel_rect = sel_bounds.map(|b| Rect::from_min_max(to_screen(Vec2::new(b[0], b[1])), to_screen(Vec2::new(b[2], b[3]))));
     // Shape hint markers take the pointer first with the selection tools (ADR 0023).
@@ -396,9 +400,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             Tool::Transform => {
                 let zone = match app.drag {
                     Drag::Transform { kind, .. } | Drag::MultiTransform { kind, .. } => Some(kind),
-                    _ => sel_rect.zip(pointer).and_then(|(r, p)| xf_zone(r, p)),
+                    _ if multi => sel_rect.zip(pointer).and_then(|(r, p)| xf_zone(r, p)),
+                    _ => xf_frame.zip(pointer).and_then(|(f, p)| f.zone(to_screen, p)),
                 };
+                // The arrows follow a turned box (ADR 0111).
+                let turned = if multi { None } else { app.xf.drag.filter(|_| matches!(app.drag, Drag::Transform { .. })).or(xf_frame) };
                 match zone {
+                    Some(kind) if turned.is_some_and(|f| f.m != Affine::IDENTITY || kind == XfKind::Pivot) => turned.map_or(CursorIcon::Default, |f| f.cursor(kind, to_screen, matches!(app.drag, Drag::Transform { .. }))),
+                    Some(XfKind::Pivot) => CursorIcon::Grab,
                     Some(XfKind::Scale { hx, hy }) if hx * hy > 0 => CursorIcon::ResizeNwSe,
                     Some(XfKind::Scale { hx, hy }) if hx * hy < 0 => CursorIcon::ResizeNeSw,
                     Some(XfKind::Scale { hx: 0, .. }) => CursorIcon::ResizeVertical,
@@ -483,11 +492,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 Tool::Select if let Some(d) = crate::bone_tool::select_drag_start(app, xf, press) => d,
                 Tool::Select => select_press(app, sp, shift, command, alt, zoom),
                 Tool::Transform => {
-                    let zone = sel_rect.and_then(|r| xf_zone(r, press));
-                    match (zone, sel_bounds) {
-                        (Some(kind), Some(bounds)) => {
-                            app.s.begin_gesture(tr_noop!("Free Transform"));
-                            Drag::Transform { kind, start: sp, bounds, applied: Affine::IDENTITY }
+                    let zone = xf_frame.and_then(|f| f.zone(to_screen, press));
+                    match (zone, xf_frame) {
+                        (Some(kind), Some(frame)) => {
+                            // Moving an instance's transformation point changes the document;
+                            // a point held for the selection doesn't.
+                            if kind != XfKind::Pivot {
+                                app.s.begin_gesture(tr_noop!("Free Transform"));
+                            } else if frame.keeps {
+                                app.s.begin_gesture(tr_noop!("Move Transformation Point"));
+                            }
+                            app.xf.drag = Some(frame);
+                            Drag::Transform { kind, start: sp, bounds: frame.b, applied: Affine::IDENTITY }
                         }
                         // Not on the box: grab whatever is under the pointer and move it.
                         _ => match app.s.hit_test(to_v(sp), 3.0 / zoom) {
@@ -496,6 +512,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                 match bounds_arr(app.s.selection_bounds()) {
                                     Some(bounds) => {
                                         app.s.begin_gesture(tr_noop!("Free Transform"));
+                                        app.xf.drag = Some(crate::xform::Frame::upright(bounds));
                                         Drag::Transform { kind: XfKind::Move, start: sp, bounds, applied: Affine::IDENTITY }
                                     }
                                     None => Drag::None,
@@ -613,10 +630,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
             }
+            (Drag::Transform { kind: XfKind::Pivot, .. }, Some(c)) => {
+                // The transformation point follows the pointer, snapping to the box's handles
+                // and centre (Alt: freely); it may leave the box (ADR 0111).
+                app.snap_ring = None;
+                crate::xform::drag_point(app, to_v(c), zoom, alt);
+            }
             (Drag::Transform { kind, start, bounds, applied }, Some(c)) => {
+                let (kind, start, bounds, applied) = (*kind, *start, *bounds, *applied);
+                // The box as it was when the drag began: its handles act along its own axes,
+                // and it turns about its transformation point (ADR 0111).
+                let frame = app.xf.drag.unwrap_or_else(|| crate::xform::Frame::upright(bounds));
                 // The handle being dragged (or the box, moving) snaps; Shift constrains instead.
-                let c = if shift { c } else { xf_snap(&mut app.s, &mut app.snap_ring, *kind, *bounds, *start, c, zoom) };
-                let total = xf_total(*kind, *bounds, *start, c, shift, alt);
+                let c = if shift { c } else { xf_snap(&mut app.s, &mut app.snap_ring, kind, &frame, start, c, zoom) };
+                let total = frame.total(kind, start, c, shift, alt);
                 // Send only the change since the last frame; the gesture makes it one undo step.
                 if let Some(inv) = applied.inverse() {
                     let delta = total.mul(&inv);
@@ -625,12 +652,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         let mut p = json!({"a": a, "b": b, "c": cc, "d": d, "e": e, "f": f});
                         // Turning, scaling and skewing follow the transformation origin (ADR
                         // 0109): each object about its own point. A move is the same for all.
-                        if *kind != XfKind::Move {
+                        if kind != XfKind::Move {
                             p["origin"] = json!(app.s.style.transform_origin.key());
                         }
-                        let ok = app.s.execute("modify.transform", &p).is_ok();
-                        if ok {
-                            *applied = total;
+                        if app.s.execute("modify.transform", &p).is_ok() {
+                            // A point held for the selection goes with the artwork.
+                            crate::xform::carried(app, &delta);
+                            if let Drag::Transform { applied, .. } = &mut app.drag {
+                                *applied = total;
+                            }
                         }
                     }
                 }
@@ -858,6 +888,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 None => {}
             }
         }
+    }
+    // Double-clicking the transformation point puts it back at the centre (ADR 0111).
+    if app.tool == Tool::Transform
+        && !preview
+        && !multi
+        && resp.double_clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        crate::xform::double_click(app, to_screen, p);
     }
     if app.tool == Tool::Subselect
         && !preview
@@ -1266,7 +1305,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
         if transforming {
             // Free transform shows one box for the whole selection (below); members get a hint.
-            painter.rect_stroke(r, 0.0, Stroke::new(1.0, T.selection.gamma_multiply(0.45)), StrokeKind::Middle);
+            // (One element alone shows its own box, turned with it: no upright one beside it.)
+            if multi || app.s.selection.len() > 1 {
+                painter.rect_stroke(r, 0.0, Stroke::new(1.0, T.selection.gamma_multiply(0.45)), StrokeKind::Middle);
+            }
             continue;
         }
         // A plain box, as Animate's Selection tool shows: handles are Free Transform's (Q),
@@ -1288,21 +1330,24 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         painter.circle(o, 3.5, Color32::WHITE, Stroke::new(1.0, Color32::BLACK));
     }
     // Free transform box: recomputed every frame so it follows the artwork while you drag.
-    let xf_box = if multi { crate::onion::selection_bounds(app) } else { bounds_arr(app.s.selection_bounds()) };
-    if transforming && !enveloped && let Some(b) = xf_box {
-        let r = Rect::from_min_max(to_screen(Vec2::new(b[0], b[1])), to_screen(Vec2::new(b[2], b[3]))).expand(1.0);
-        painter.rect_stroke(r, 0.0, Stroke::new(1.5, T.selection), StrokeKind::Middle);
-        for (h, _, _) in handles(r) {
-            let hr = Rect::from_center_size(h, vec2(HANDLE, HANDLE));
+    // One element shows its own box, turned, scaled and skewed as it is (ADR 0111, #175);
+    // several, or Edit Multiple Frames' selection, the upright box round them all.
+    let xf_box = if multi { crate::onion::selection_bounds(app).map(crate::xform::Frame::upright) } else if preview { None } else { crate::xform::frame(app) };
+    if transforming && !enveloped && let Some(frame) = xf_box {
+        let corners: Vec<Pos2> = frame.corners().into_iter().map(to_screen).collect();
+        painter.add(egui::Shape::closed_line(corners, Stroke::new(1.5, T.selection)));
+        for (hx, hy) in crate::xform::HANDLES {
+            let hr = Rect::from_center_size(to_screen(frame.handle(hx, hy)), vec2(HANDLE, HANDLE));
             painter.rect_filled(hr, 0.0, Color32::WHITE);
             painter.rect_stroke(hr, 0.0, Stroke::new(1.0, T.selection), StrokeKind::Middle);
         }
-        // The transformation point: the box's centre, or, when each object is transformed
-        // about its own point (ADR 0109), every object's (past a few hundred objects the box
-        // alone shows, so a huge selection stays quick).
+        // The transformation point (ADR 0111): the instance's own, the one held for the
+        // selection, or the box's centre; or, when each object is transformed about its own
+        // point (ADR 0109), every object's (past a few hundred objects the box alone shows,
+        // so a huge selection stays quick).
         let mode = app.s.style.transform_origin;
         let own = !multi && mode != anicraft_engine::TransformOrigin::Selection && app.s.selection.len() <= MAX_ORIGIN_MARKS;
-        let points: Vec<Pos2> = if own { anicraft_engine::transform_origins(&app.s, mode).into_iter().map(|(_, at)| to_screen(at)).collect() } else { vec![r.center()] };
+        let points: Vec<Pos2> = if own { anicraft_engine::transform_origins(&app.s, mode).into_iter().map(|(_, at)| to_screen(at)).collect() } else { vec![to_screen(frame.point)] };
         for c in points {
             painter.circle(c, 4.0, Color32::WHITE, Stroke::new(1.0, T.selection));
             painter.line_segment([c - vec2(6.0, 0.0), c + vec2(6.0, 0.0)], Stroke::new(1.0, T.selection));
@@ -1471,20 +1516,20 @@ fn snap_move(app: &mut App, c: Pos2, zoom: f32, shift: bool) {
 /// handle, or while moving the box's corner or centre nearest where it was pressed) lands where
 /// the snap engine puts it: an object's point or line, a guide, the grid or a pixel. The
 /// selection itself is no target. Rotation doesn't snap.
-fn xf_snap(s: &mut anicraft_engine::Session, ring: &mut Option<Vec2>, kind: XfKind, b: [f32; 4], start: Pos2, c: Pos2, zoom: f32) -> Pos2 {
-    let side = |h: i8, lo: f32, hi: f32| match h {
-        ..0 => lo,
-        0 => (lo + hi) * 0.5,
-        _ => hi,
+fn xf_snap(s: &mut anicraft_engine::Session, ring: &mut Option<Vec2>, kind: XfKind, frame: &crate::xform::Frame, start: Pos2, c: Pos2, zoom: f32) -> Pos2 {
+    // Where a handle of the box is on the stage (the box may be turned, ADR 0111).
+    let at = |hx: i8, hy: i8| {
+        let p = frame.handle(hx, hy);
+        pos2(p.x, p.y)
     };
     let handle = match kind {
-        XfKind::Scale { hx, hy } => pos2(side(hx, b[0], b[2]), side(hy, b[1], b[3])),
+        XfKind::Scale { hx, hy } => at(hx, hy),
         XfKind::Move => {
-            let pts = [pos2(b[0], b[1]), pos2(b[2], b[1]), pos2(b[2], b[3]), pos2(b[0], b[3]), pos2((b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5)];
+            let pts = [at(-1, -1), at(1, -1), at(1, 1), at(-1, 1), at(0, 0)];
             pts.into_iter().min_by(|p, q| p.distance(start).total_cmp(&q.distance(start))).unwrap_or(start)
         }
-        // Rotation and skew don't snap.
-        XfKind::Rotate | XfKind::Skew { .. } => {
+        // Rotation and skew don't snap (the transformation point snaps to its own box).
+        XfKind::Rotate | XfKind::Skew { .. } | XfKind::Pivot => {
             *ring = None;
             return c;
         }
@@ -4262,10 +4307,10 @@ fn rotate_cursor(painter: &egui::Painter, at: Pos2, outward: egui::Vec2) {
 }
 
 /// Screen-space handle size and the rotation zone just outside each corner.
-const HANDLE: f32 = 8.0;
-const ROTATE_ZONE: f32 = 22.0;
+pub(crate) const HANDLE: f32 = 8.0;
+pub(crate) const ROTATE_ZONE: f32 = 22.0;
 /// How far from a box edge line (screen space) a press still grabs it to skew.
-const SKEW_ZONE: f32 = 5.0;
+pub(crate) const SKEW_ZONE: f32 = 5.0;
 
 fn bounds_arr(b: anicraft_engine::geom::Rect) -> Option<[f32; 4]> {
     (!b.is_empty()).then_some([b.min.x, b.min.y, b.max.x, b.max.y])
@@ -4305,10 +4350,18 @@ fn xf_zone(r: Rect, p: Pos2) -> Option<XfKind> {
 
 /// The whole transform of a free-transform drag from `start` to `cur` (stage space).
 pub(crate) fn xf_total(kind: XfKind, b: [f32; 4], start: Pos2, cur: Pos2, shift: bool, alt: bool) -> Affine {
+    xf_total_about(kind, b, None, start, cur, shift, alt)
+}
+
+/// [`xf_total`] with the transformation point `about` (default: the box's centre): what a
+/// rotation turns about, and what Alt scales and skews about (ADR 0111).
+pub(crate) fn xf_total_about(kind: XfKind, b: [f32; 4], about: Option<Pos2>, start: Pos2, cur: Pos2, shift: bool, alt: bool) -> Affine {
     let [x0, y0, x1, y1] = b;
-    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    let (cx, cy) = about.map_or(((x0 + x1) / 2.0, (y0 + y1) / 2.0), |p| (p.x, p.y));
     let about = |px: f32, py: f32, m: Affine| Affine::translate(px, py).mul(&m).mul(&Affine::translate(-px, -py));
     match kind {
+        // Moving the transformation point transforms nothing.
+        XfKind::Pivot => Affine::IDENTITY,
         XfKind::Move => {
             let mut d = cur - start;
             if shift {

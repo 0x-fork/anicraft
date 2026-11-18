@@ -1177,6 +1177,27 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             }
             mixed(ui, m.rotation);
         });
+        // The transformation point (ADR 0111): one symbol instance keeps its own, and the
+        // fields above (and Free Transform, and tweens) then turn and scale it about it.
+        if !many
+            && matches!(e.kind, ElementKind::Symbol { .. })
+            && let Some((at, moved)) = app.s.transformation_point()
+        {
+            let (mut px, mut py) = (at.x, at.y);
+            row(ui, tr!("Pivot"), |ui| {
+                let tip = tr!("The transformation point (the white circle Free Transform shows): what this instance turns, scales and skews about, on the stage, here and in tweens. Drag the circle with Free Transform, or set it here");
+                let a = ui.add(egui::DragValue::new(&mut px).prefix("X ").speed(1.0).max_decimals(1)).named(tr!("Transformation point X")).on_hover_text(tip);
+                let b = ui.add(egui::DragValue::new(&mut py).prefix("Y ").speed(1.0).max_decimals(1)).named(tr!("Transformation point Y")).on_hover_text(tip);
+                if a.changed() || b.changed() {
+                    live(app, tr_noop!("Move Transformation Point"), "modify.transformation_point", json!({"x": px, "y": py}));
+                }
+                // Back to the centre (double-clicking the circle does the same).
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if ui.add_enabled(moved, egui::Button::new(text(Type::Label, tr!("Reset")))).on_hover_text(tr!("Put the transformation point back at the centre")).named(tr!("Reset transformation point")).clicked() {
+                    app.run("modify.reset_transformation_point", json!({}));
+                }
+            });
+        }
         if !matches!(e.kind, ElementKind::Camera) {
             colour_effect_rows(app, ui, &e.color, m.color, EffectOf::Selection);
         }
