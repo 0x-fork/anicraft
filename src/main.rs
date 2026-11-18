@@ -434,4 +434,6 @@ mod rulers_tests;
 #[cfg(test)]
 mod retime_ui_tests;
 #[cfg(test)]
+mod layer_ui_tests;
+#[cfg(test)]
 mod tilt_ui_tests;

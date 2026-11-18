@@ -40,6 +40,27 @@ fn tool_icon(tool: Tool) -> Icon {
     }
 }
 
+/// The sizes the Properties panel's W and H take, in stage pixels.
+const SIZE_RANGE: std::ops::RangeInclusive<f32> = 0.1..=100_000.0;
+
+/// The stage-space affine `[a, b, c, d, e, f]` that makes the box `[x0, y0, x1, y1]` `w` wide and
+/// `h` high with its top-left corner where it is (#294). A side with no extent (a level line's
+/// height) can't be stretched and stays as it is; `None` when nothing would change or a size
+/// isn't a positive number.
+pub fn resize_affine(b: [f32; 4], w: f32, h: f32) -> Option<[f32; 6]> {
+    let [x0, y0, x1, y1] = b;
+    let (w0, h0) = (x1 - x0, y1 - y0);
+    if !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 && w0.is_finite() && h0.is_finite()) {
+        return None;
+    }
+    let kx = if w0 > 1e-3 { w / w0 } else { 1.0 };
+    let ky = if h0 > 1e-3 { h / h0 } else { 1.0 };
+    if (kx - 1.0).abs() < 1e-6 && (ky - 1.0).abs() < 1e-6 {
+        return None;
+    }
+    Some([kx, 0.0, 0.0, ky, x0 * (1.0 - kx), y0 * (1.0 - ky)])
+}
+
 /// How the tools are laid out where they are (ADR 0087).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolFlow {
@@ -935,6 +956,22 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
                 }
             });
         }
+        // Size (#294): the selection's box in stage pixels, as Animate's W and H. A change
+        // stretches the artwork from the box's top-left corner, which stays where it is.
+        let sb = app.s.selection_bounds();
+        if !sb.is_empty() && !matches!(e.kind, ElementKind::Camera) {
+            let (w0, h0) = (sb.max.x - sb.min.x, sb.max.y - sb.min.y);
+            let (mut w, mut h) = (w0, h0);
+            row(ui, tr!("Size"), |ui| {
+                let a = ui.add(egui::DragValue::new(&mut w).prefix("W ").speed(1.0).range(SIZE_RANGE).clamp_existing_to_range(false).max_decimals(1)).named(tr!("Width"));
+                let c = ui.add(egui::DragValue::new(&mut h).prefix("H ").speed(1.0).range(SIZE_RANGE).clamp_existing_to_range(false).max_decimals(1)).named(tr!("Height"));
+                if (a.changed() || c.changed())
+                    && let Some(m) = resize_affine([sb.min.x, sb.min.y, sb.max.x, sb.max.y], w, h)
+                {
+                    live(app, tr_noop!("Resize"), "modify.transform", json!({"a": m[0], "b": m[1], "c": m[2], "d": m[3], "e": m[4], "f": m[5]}));
+                }
+            });
+        }
         row(ui, tr!("Scale"), |ui| {
             // Negative is a mirror (Flip). Only edits are clamped: a scale merely shown is never
             // rewritten (#116). The engine refuses a scale too near zero.
@@ -982,9 +1019,9 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             row_prose(ui, tr!("Type"), |ui| {
                 egui::ComboBox::from_id_salt("prop_symkind").width(crate::theme::fit(ui, 150.0)).selected_text(symbol_kind_label(kind)).show_ui(ui, |ui| {
                     for (k, id, tip) in [
-                        (SymbolKind::Graphic, "graphic", tr!("Keeps step with the timeline it is on (looping options below)")),
                         (SymbolKind::MovieClip, "movie_clip", tr!("Plays its own timeline on a loop, from when it appears")),
                         (SymbolKind::Button, "button", tr!("Shows its Up frame")),
+                        (SymbolKind::Graphic, "graphic", tr!("Keeps step with the timeline it is on (looping options below)")),
                     ] {
                         if ui.selectable_label(kind == k, symbol_kind_label(k)).on_hover_text(tip).clicked() && (kind != k || m.kind) {
                             // Every selected instance's symbol (ADR 0053), or just this one's.

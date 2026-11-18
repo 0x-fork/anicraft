@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+* **Requests from the issue tracker: layers by drag, all-layer buttons, sizes and more** (M8).
+  * **Drag a layer to reorder it** (#407, and part of #241 and #331): drag a layer by its name;
+    a line shows where it lands, a folder lights up when the layer goes inside it, **Esc**
+    cancels. Folders, masks and guides move with everything in them, a drop is one undo step,
+    and the list scrolls when the drag nears its top or bottom. Headless: `layer.move {layer?,
+    before | after | into}`. The up and down buttons and menu items stay for the keyboard.
+  * **The eye, padlock and outline square above the layer names** show, lock or outline every
+    layer at once, as in Animate (#422); `all: true` (and `on`) on `layer.toggle_visible`,
+    `layer.toggle_lock` and `layer.toggle_outline`. The camera layer is left alone.
+  * **The line between the layer names and the frames drags** (#384), from 150 to 600 points;
+    double-click it to put it back. The width is kept in the preferences.
+  * **Symbol types are listed as Movie clip, Button, Graphic**, and Convert to Symbol offers a
+    movie clip the first time, as Animate does (#419). The `modify.convert_to_symbol` command's
+    own default is still a graphic, so scripts make what they made.
+  * **Size in Properties** (#294): the selection's width and height in stage pixels; a new
+    value stretches it from its top-left corner.
+  * **The Brush and the Paint Brush keep their settings between sessions** (#331): size, tip,
+    smoothing, pressure, taper and texture, each tool its own.
 * **Fixes and polish from outside contributors.** Thank you all.
   * **Shape tweens carry a raw shape's line with its fill** (#119, NetterSilver): when the two keyframes' lines have different numbers of pieces (a triangle into a hexagon), the pieces join into outlines that morph as the fill does, with no side left bare and no line left standing; a line on one keyframe only grows in or shrinks away, and shape hints steer the line too.
   * **Flipping no longer squashes a shape to 1 %** (#116, jayzed80): the Scale fields in Properties show a mirrored scale as a negative percentage and never rewrite a value they only show.

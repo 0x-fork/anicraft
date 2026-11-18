@@ -482,6 +482,11 @@ pub struct App {
     /// Selected frames on the timeline, and the drag on the frame grid.
     pub frame_sel: Option<timeline::FrameSel>,
     pub tl_drag: timeline::TlDrag,
+    /// The layer being dragged by its name to another place in the stack (#407).
+    pub tl_layer_drag: Option<anicraft_engine::doc::LayerId>,
+    /// The layer column's width while its edge is dragged (#384); the preference takes it on
+    /// release.
+    pub tl_layer_w_drag: Option<f32>,
     /// Where the panels are (ADR 0075): the current workspace's arrangement.
     pub dock: crate::dock::Layout,
     /// The dock's view state: a tab being dragged, where groups were drawn.
@@ -764,6 +769,8 @@ impl App {
             motion_drag: None,
             frame_sel: None,
             tl_drag: timeline::TlDrag::None,
+            tl_layer_drag: None,
+            tl_layer_w_drag: None,
             dock: prefs.workspaces.layout(),
             dock_view: Default::default(),
             manage_workspaces: Default::default(),
@@ -833,6 +840,7 @@ impl App {
             macros: Default::default(),
         };
         app.apply_prefs(ctx);
+        crate::brushtool::restore(&mut app);
         app.decode_sounds();
         app.status_ok(tr!("Welcome to AniCraft. Press Enter to play the sample animation."));
         if let Some(e) = recovery_err {
@@ -4070,6 +4078,8 @@ impl App {
         crate::brush_panel::sync(self);
         crate::panels::sync_filter_presets(self);
         crate::rulers::sync(self);
+        let pointer_down = ctx.input(|i| i.pointer.any_down());
+        crate::brushtool::sync(self, pointer_down);
         // A browser asks before leaving a page with unsaved work (its close guard).
         platform::set_unsaved(self.s.is_dirty());
 
