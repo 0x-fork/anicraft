@@ -100,6 +100,13 @@ off (no command-line binary). It turns the user guide's Markdown into the bundle
 guide's screenshots are original work (ATTRIBUTION.md). The guide names Adobe and Animate only
 nominatively, with the non-affiliation line on every page. No new licence.
 
+### Stroke outlines (2026-11-17, ADR 0110)
+
+New crates, from crates.io: `i_overlay` 9.2 (MIT OR Apache-2.0) with its `i_float`, `i_shape`,
+`i_tree` and `i_key_sort` (MIT), built with no default features (no rayon, no serde). They
+unite a stroke's outline on an integer grid so the renderers cover each pixel of it once. Pure
+Rust, no build script. No new licence.
+
 ### Find and Replace (2026-11-11, ADR 0058)
 
 New crates, from crates.io: `regex` 1 with `regex-syntax` and `regex-automata` (MIT OR

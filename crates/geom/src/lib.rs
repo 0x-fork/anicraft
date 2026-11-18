@@ -12,6 +12,7 @@ pub mod envelope;
 pub mod morph;
 pub mod outline;
 pub mod planar;
+pub mod polygons;
 pub mod pressure;
 pub mod raw;
 pub mod slice;
