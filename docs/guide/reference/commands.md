@@ -1,6 +1,6 @@
 # Command reference
 
-Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 370 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
+Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 373 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
 
 This page is generated from the command registry, so it always matches the version of AniCraft it came with.
 
@@ -161,7 +161,7 @@ This page is generated from the command registry, so it always matches the versi
 - **Mask** `layer.toggle_mask` · Modify › Timeline · changes the document
   Parameters: `{layer?}`
 - **Layer Properties** `layer.set_properties` · Modify › Timeline · changes the document
-  Parameters: `{layer?, name?, type?: normal|mask|masked|guide|guided, mask?: coverage|alpha|luminance (a mask layer's mask type), color?, outline?: bool (view as outlines), height?: 100|200|300, visible?, locked?, onion?} sets several at once, as one undo step; answers with the layer's properties`
+  Parameters: `{layer?, name?, type?: normal|mask|masked|guide|guided, mask?: coverage|alpha|luminance (a mask layer's mask type), color?, outline?: bool (view as outlines), height?: 100|200|300, opacity?: 0..100 (percent), visible?, locked?, onion?} sets several at once, as one undo step; answers with the layer's properties`
 - **Remove Camera** `camera.remove` · Modify › Timeline · changes the document
   Parameters: `{} (removes the camera layer and its moves; asks first when the camera is animated)`
 - **Add Warp Mesh** `warp.add` · Modify › Asset Warp · changes the document
@@ -220,6 +220,8 @@ This page is generated from the command registry, so it always matches the versi
   Parameters: `{origin?: selection|registration|center (default: the mode set with modify.transform_origin; selection unless changed)} about the centre of the whole selection, or each selected object about its own point`
 - **Next Transformation Origin** `modify.transform_origin` · Modify › Transform
   Parameters: `{mode?: selection|registration|center (default: the next one)} what several selected objects turn, scale and skew about with Free Transform and Modify › Transform: selection (one point for them all, as one arrangement; the default), registration (each about its own point: a symbol instance's or group's registration point, the centre of anything else) or center (each about the centre of its own box). Tool state, not part of the document → {mode}`
+- **Reset Transformation Point** `modify.reset_transformation_point` · Modify › Transform · changes the document
+  Parameters: `{} puts the selected symbol instances' transformation point back at the centre (none kept: tools use the centre of the box, tweens the registration point) → {reset}`
 - **Remove Transform** `modify.remove_transform` · Modify › Transform · **Ctrl+Shift+Z** (macOS **⇧⌘Z**) · changes the document
   Parameters: `{}`
 - **Left** `align.left` · Modify › Align · **Ctrl+Alt+1** (macOS **⌥⌘1**) · changes the document
@@ -355,10 +357,12 @@ These commands have no menu item: the panels, the stage and the timeline use the
   Parameters: `{color: "#rrggbb", layer?} the layer's colour: its outlines in outline mode and its bar on the timeline`
 - **Layer Height** `layer.set_height` · changes the document
   Parameters: `{height: 100 | 200 | 300 (percent of a normal row), layer?} the layer's row height on the timeline`
+- **Layer Opacity** `layer.set_opacity` · changes the document
+  Parameters: `{opacity: 0..100 (percent), layer?} how strongly the layer shows, in the movie and every export: its artwork is drawn together and then faded, so its overlapping parts don't show through each other. A folder's opacity fades the layers in it; mask and guide artwork ignore it (ADR 0111) → {layer, opacity}`
 - **Mask Type** `layer.set_mask` · changes the document
   Parameters: `{mask: coverage|alpha|luminance, layer?} how a mask layer reveals the layers it masks: coverage (its fills' area), alpha (its artwork's opacity: gradients and faded shapes make soft edges) or luminance (its brightness: white shows, black hides; SVG's mask) (ADR 0070)`
 - **Get Layer Properties** `layer.properties`
-  Parameters: `{layer?} the layer's name, type, mask type (mask layers), colour, outline, height (percent), visible, locked and onion`
+  Parameters: `{layer?} the layer's name, type, mask type (mask layers), colour, outline, height (percent), opacity (percent), visible, locked and onion`
 - **Camera** `camera.set` · changes the document
   Parameters: `{x?, y? (camera centre, stage px), dx?, dy? (pan by), zoom? (%, 5–2000), zoom_by? (factor), rotation? (°), rotate_by? (°), reset?: bool, frame?, and the colour effect as element.set_color_effect takes it: style?: none|brightness|tint|advanced, brightness? (%), tint? (#rrggbb), tint_amount? (%), red_multiplier? … blue_offset? (the camera has no opacity: no alpha values)}`
 - **Camera Info** `camera.info`
@@ -508,7 +512,7 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Move** `element.translate` · changes the document
   Parameters: ``{dx, dy, snap?, from?: [x, y]} moves the selection, on every layer; with `snap` (a distance) one of its corners or ends, or its box's corners or centre (the nearest to `from`), then snaps within that distance by the snap engine's priority (ADR 0076): a point, guide, line or fill edge of the rest, the grid, a whole pixel``
 - **Transform** `element.set_transform` · changes the document
-  Parameters: `{x?, y?, sx?, sy?, rotation? (degrees)}`
+  Parameters: `{x?, y?, sx?, sy?, rotation? (degrees)} x and y place the registration point. A new scale or rotation alone is applied about a symbol instance's transformation point when it has one (modify.transformation_point), else about the registration point`
 - **Fill Colour** `element.set_fill` · changes the document
   Parameters: `{color: "#rrggbb" | "#rrggbbaa" | null, or on: true | false} (the alpha is the fill's own; 00 is a clear fill, not the same as null. on: false turns the fill off like null; on: true puts back the fill each shape had before, else the tool's fill colour. With only raw lines selected the fill goes to what they surround)`
 - **Stroke** `element.set_stroke` · changes the document
@@ -567,6 +571,8 @@ These commands have no menu item: the panels, the stage and the timeline use the
   Parameters: `{x, y, add?, slop?} a raw stroke and the strokes joined to it, or a raw fill and the strokes on and in it`
 - **Transform** `modify.transform` · changes the document
   Parameters: `{a, b, c, d, e, f, origin?: selection|registration|center (default selection)} affine applied in stage space (free transform), to the selection on every layer. With origin registration or center, the matrix's scale, rotation and skew are applied to each selected object about its own point instead (see modify.transform_origin) and its move (e, f) is left out`
+- **Set Transformation Point** `modify.transformation_point` · changes the document
+  Parameters: `{x, y} (stage space, as modify.transform) moves the selected symbol instances' transformation point there (the white circle Free Transform shows): what each then turns, scales and skews about with Free Transform, the Modify › Transform commands, the Properties fields and in tweens. It is kept with the instance, in the instance's own space, so it travels with it. Anything else has no point of its own to keep (ADR 0111) → {set, x, y}`
 - **Pen Path** `draw.path` · changes the document
   Parameters: `{d: SVG path data (stage space), fill?, stroke?, stroke_width?, object?}`
 - **Pencil Stroke** `draw.freehand` · changes the document

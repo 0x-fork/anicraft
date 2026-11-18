@@ -29,6 +29,24 @@ pub fn specs() -> Vec<CommandSpec> {
             false,
             transform_origin,
         ),
+        c(
+            "modify.transformation_point",
+            "Set Transformation Point",
+            "",
+            None,
+            "{x, y} (stage space, as modify.transform) moves the selected symbol instances' transformation point there (the white circle Free Transform shows): what each then turns, scales and skews about with Free Transform, the Modify › Transform commands, the Properties fields and in tweens. It is kept with the instance, in the instance's own space, so it travels with it. Anything else has no point of its own to keep (ADR 0111) → {set, x, y}",
+            true,
+            set_transformation_point,
+        ),
+        c(
+            "modify.reset_transformation_point",
+            "Reset Transformation Point",
+            "Modify/Transform",
+            None,
+            "{} puts the selected symbol instances' transformation point back at the centre (none kept: tools use the centre of the box, tweens the registration point) → {reset}",
+            true,
+            reset_transformation_point,
+        ),
         c("modify.remove_transform", "Remove Transform", "Modify/Transform", Some("Ctrl+Shift+Z"), "{}", true, |s, p| s.each_layer(true, |s| remove_transform(s, p))),
         c("align.left", "Left", "Modify/Align", Some("Ctrl+Alt+1"), "{to_stage?}", true, |s, p| align(s, p, Edge::Left)),
         c("align.hcenter", "Horizontal Center", "Modify/Align", Some("Ctrl+Alt+2"), "{to_stage?}", true, |s, p| align(s, p, Edge::HCenter)),
@@ -393,9 +411,103 @@ fn about_center(s: &mut Session, p: &Value, m: Affine) -> Result<Value> {
     if b.is_empty() {
         return Err(EngineError::State("nothing is selected".into()));
     }
-    let c = b.center();
+    // One instance with a transformation point of its own turns about it (ADR 0111).
+    let c = s.transformation_point().filter(|(_, own)| *own).map_or(b.center(), |(at, _)| at);
     let full = Affine::translate(c.x, c.y).mul(&m).mul(&Affine::translate(-c.x, -c.y));
     s.each_layer(true, |s| Ok(json!({"transformed": apply(s, &full)?})))
+}
+
+/// `modify.transformation_point`: the selected instances' point, given in stage space, kept in
+/// each instance's own.
+fn set_transformation_point(s: &mut Session, p: &Value) -> Result<Value> {
+    let at = Vec2::new(f32_req(p, "x")?, f32_req(p, "y")?);
+    if !at.is_finite() {
+        return Err(EngineError::Param("params 'x' and 'y' must be numbers".into()));
+    }
+    change_transformation_point(s, Some(at)).map(|n| json!({"set": n, "x": at.x, "y": at.y}))
+}
+
+fn reset_transformation_point(s: &mut Session, _: &Value) -> Result<Value> {
+    change_transformation_point(s, None).map(|n| json!({"reset": n}))
+}
+
+/// Sets (stage space) or clears the transformation point of every selected instance, on every
+/// layer the selection is on; answers how many.
+fn change_transformation_point(s: &mut Session, at: Option<Vec2>) -> Result<usize> {
+    let keeps = |e: &Element| matches!(e.kind, ElementKind::Symbol { .. });
+    if s.selection.is_empty() {
+        return Err(EngineError::State("nothing is selected".into()));
+    }
+    if !s.selected_elements().iter().any(|(_, e)| keeps(e)) {
+        return Err(EngineError::State("only a symbol instance keeps a transformation point: select one (Modify › Convert to Symbol makes one)".into()));
+    }
+    let mut n = 0;
+    s.each_layer(false, |s| {
+        if !s.selected_elements().iter().any(|(_, e)| keeps(e)) {
+            return Ok(Value::Null);
+        }
+        for e in s.selected_elements_mut()?.into_iter().filter(|e| keeps(e)) {
+            let own = match at {
+                None => None,
+                Some(at) => {
+                    let inv = e.transform.inverse().ok_or_else(|| EngineError::State("the instance is flattened to nothing: it has no point to place".into()))?;
+                    let own = inv.apply(at);
+                    if !own.is_finite() || own.x.abs() > anicraft_doc::MAX_PIVOT || own.y.abs() > anicraft_doc::MAX_PIVOT {
+                        return Err(EngineError::Param("the point is too far from the instance".into()));
+                    }
+                    Some(own)
+                }
+            };
+            e.set_pivot(own);
+            n += 1;
+        }
+        Ok(Value::Null)
+    })?;
+    Ok(n)
+}
+
+impl Session {
+    /// The point Free Transform shows and turns the selection about (stage space), and whether
+    /// it is one the selected instance keeps (ADR 0111): a single selected element's own
+    /// transformation point when it has one, else the centre of its box (which its transform
+    /// carries); for several elements, the centre of the selection's bounds. `None` with
+    /// nothing selected.
+    pub fn transformation_point(&self) -> Option<(Vec2, bool)> {
+        let (frame, bounds) = self.transform_frame()?;
+        if let [(_, e)] = self.selected_elements().as_slice()
+            && let Some(p) = e.pivot()
+        {
+            let at = e.transform.apply(p);
+            if at.is_finite() {
+                return Some((at, true));
+            }
+        }
+        Some((frame.apply(bounds.center()), false))
+    }
+
+    /// The selection's box as Free Transform draws it (ADR 0111): a box and the transform that
+    /// places it on the stage. One selected element shows its own box, turned, scaled and
+    /// skewed as it is (the box of what it draws at the playhead, in its own space, under its
+    /// transform); anything else (several elements, raw pieces, a flattened element) the
+    /// upright bounds of the selection under the identity. `None` with nothing to show.
+    pub fn transform_frame(&self) -> Option<(Affine, Rect)> {
+        let selected = self.selected_elements();
+        if let [(layer, e)] = selected.as_slice()
+            && !matches!(e.kind, ElementKind::Camera)
+            && let Some(inv) = e.transform.inverse()
+        {
+            let mut own = Rect::EMPTY;
+            for item in self.display_list().items.iter().filter(|i| i.layer == *layer && i.element == e.id) {
+                let pad = item.stroke.as_ref().map_or(0.0, anicraft_doc::Stroke::reach);
+                own = own.union(&item.path.bounds().inflate(pad).transformed(&inv.mul(&item.transform)));
+            }
+            if !own.is_empty() && own.min.is_finite() && own.max.is_finite() {
+                return Some((e.transform, own));
+            }
+        }
+        let b = self.selection_bounds();
+        (!b.is_empty()).then_some((Affine::IDENTITY, b))
+    }
 }
 
 /// `modify.transform_origin`: sets the mode, or moves to the next one.

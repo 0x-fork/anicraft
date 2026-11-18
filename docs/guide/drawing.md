@@ -395,14 +395,43 @@ Both dialogs remember what you entered. Each command is one undo step.
 ## Transforming artwork
 
 With the **Free Transform** tool (**Q**), drag a handle (a corner or the middle of an edge) to
-**scale** (**Shift** keeps the proportions, **Alt** scales from the centre), the line between
-two handles to **skew** (the opposite edge stays where it is; **Alt** skews about the centre),
-just outside a corner to **rotate** (the pointer turns into a curved arrow there; **Shift**
-snaps to 15°), or inside the box to **move**.
+**scale** (**Shift** keeps the proportions, **Alt** scales about the transformation point),
+the line between two handles to **skew** (the opposite edge stays where it is; **Alt** skews
+about the transformation point), just outside a corner to **rotate** (the pointer turns
+into a curved arrow there; **Shift** snaps to 15°), or inside the box to **move**.
+
+One selected object shows **its own box**: turn a symbol, a group, text or a drawing object
+and its box turns with it, so you can see how it stands, and its handles stretch it along its
+own sides instead of slanting it. Several objects together, and merged drawing, show one
+upright box round them all.
 You can also type exact **Position**, **Size**, **Scale** and **Rotation** values in
 Properties. **Size** is the width (**W**) and height (**H**) of the selection's box in stage
 pixels: a new value stretches the artwork from the box's top-left corner, which stays where it
 is. The lock beside **Scale** keeps width and height in proportion.
+
+### The transformation point
+
+The **white circle** in Free Transform's box is the transformation point: what the selection
+rotates about, and what **Alt** scales and skews about. It starts at the centre.
+
+* **Drag the circle** to move it. It snaps to the box's corners, the middles of its sides and
+  its centre (hold **Alt** to place it freely), and it can sit outside the box.
+* **Double-click the circle** to put it back at the centre.
+* A **symbol instance keeps its point**. It travels with the instance, is saved in the file,
+  and is used everywhere the instance turns or scales: Free Transform, **Rotate 90°** and
+  **Flip**, the **Scale** and **Rotation** fields in Properties, and **tweens**. Put an arm's
+  point on its shoulder and a tween between two angles swings the arm from the shoulder.
+  Properties shows the point as **Pivot** (X and Y on the stage, and **Reset**), and **Modify ›
+  Transform › Reset Transformation Point** puts it back.
+* Anything else (a shape, a drawing object, a group, text, a bitmap, or several objects) has
+  a point **for as long as it stays selected with Free Transform**: move it, then rotate and
+  scale about it as often as you like. Picking another tool or another selection lets it go.
+  Convert the artwork to a symbol when you want a point that lasts.
+
+A press on the circle moves the circle, not the object: to move a small object, drag it by
+any other part of its box. Moving the circle is one undo step.
+
+### Several objects
 
 With several objects selected, **Transform about** in the Free Transform tool's options
 chooses what they turn, scale and skew about:
@@ -418,7 +447,8 @@ chooses what they turn, scale and skew about:
 
 The stage marks the point, or each object's point, with a crosshair. The choice stays as you
 change the selection, and **Rotate 90°** and **Flip** in **Modify › Transform** follow it
-too. Moving the selection always moves everything by the same amount. To change the choice
+too. The circle can be dragged only with **The whole selection**; in the other two it shows
+where each object's point is. Moving the selection always moves everything by the same amount. To change the choice
 from the keyboard, give **Modify › Transform › Next Transformation Origin** a key in the
 shortcut editor. A merged drawing (a fill and the lines on its edges) counts as one object.
 
@@ -429,6 +459,7 @@ shortcut editor. A merged drawing (a fill and the lines on its edges) counts as 
 | Flip Horizontal, Flip Vertical | **Modify › Transform** | none |
 | Remove Transform | **Modify › Transform** | **Ctrl+Shift+Z** |
 | Next Transformation Origin | **Modify › Transform** | none |
+| Reset Transformation Point | **Modify › Transform** | none |
 | Break Apart | **Modify** | **Ctrl+B** |
 
 **Break Apart** turns text into shapes, a symbol instance into the artwork inside it, and a
@@ -616,8 +647,9 @@ without snapping. Rulers, the grid and guides never show in Test Movie or in exp
 
 ## Not there yet
 
-Not in AniCraft yet: gradient and bitmap strokes; a transformation point you can drag to
-anywhere on an object, and transformation origins with Edit Multiple Frames; picking a colour
+Not in AniCraft yet: gradient and bitmap strokes; a transformation point that a group, text
+or a drawing object keeps after it is deselected, the transformation point of instances in
+Animate files, and transformation points and origins with Edit Multiple Frames; picking a colour
 from outside the AniCraft window; previews in the Expand Fill and Soften Fill Edges dialogs; swatch folders, bitmap swatches and the
 swatches inside Animate files; moving the Envelope's handles from the keyboard; reading a
 pen's tilt on Windows, macOS and Linux (the brushes' tilt settings are ready for it); bitmap

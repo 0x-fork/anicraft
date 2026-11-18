@@ -23,6 +23,8 @@ mod cmds_group;
 mod cmds_modify;
 #[cfg(test)]
 mod origin_tests;
+#[cfg(test)]
+mod pivot_tests;
 mod cmds_motion;
 mod cmds_retime;
 mod cmds_hints;
