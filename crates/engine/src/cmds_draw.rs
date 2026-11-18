@@ -1102,6 +1102,11 @@ fn break_apart(s: &mut Session, _: &Value) -> Result<Value> {
         }
     }
     if fresh_ids.is_empty() && objects.is_empty() {
+        // Already broken apart all the way (#299: a second or third Break Apart on text).
+        let sel = s.selection.on(s.layer);
+        if s.elements_on(s.layer).iter().filter(|e| sel.contains(&e.id)).all(|e| crate::merge::mergeable(e).is_some()) {
+            return Err(EngineError::State("the selection is raw shapes already: there is nothing left to break apart".into()));
+        }
         return Err(EngineError::State("the selection has no symbol instances, groups, text or drawing objects to break apart".into()));
     }
     s.editable_keyframe()?.elements = out;
