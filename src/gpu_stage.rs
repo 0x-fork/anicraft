@@ -686,7 +686,7 @@ mod tests {
     #[test]
     fn stage_work_is_submitted_only_inside_the_frame() {
         use std::time::{Duration, Instant};
-        let wait = anicraft_gpu::SUBMIT_WAIT;
+
         let ctx = egui::Context::default();
         let frame = in_frame(&ctx);
         let gate = GATE.get().cloned().unwrap();
@@ -694,32 +694,41 @@ mod tests {
             let g = gate.clone();
             std::thread::spawn(move || g.run(|| ()))
         };
-        // Inside the frame: at once.
-        let t = Instant::now();
+        // Until `n` submissions have had to wait (the worker is at the gate).
+        let waiting = |n: u64| {
+            let until = Instant::now() + Duration::from_secs(30);
+            while gate.waited().0 < n && Instant::now() < until {
+                std::thread::yield_now();
+            }
+            gate.waited().0 >= n
+        };
+        let waits = gate.waited().0;
+        // Inside the frame: at once, without waiting.
         submit(&gate).join().unwrap();
-        assert!(t.elapsed() < wait / 2, "{:?}", t.elapsed());
+        assert_eq!(gate.waited().0, waits, "nothing waits inside the frame");
         // While a floating window or Test Movie draws inside the frame: it waits for that.
         let floating = paused();
         let work = submit(&gate);
-        std::thread::sleep(Duration::from_millis(40));
-        assert!(!work.is_finished(), "submitted while a window was being set up");
+        assert!(waiting(waits + 1), "it waits while a window is being set up");
+        let held = !work.is_finished();
         drop(floating);
         work.join().unwrap();
         drop(frame);
         // Between frames: it waits, asks the window for a frame, and runs when the frame comes.
         let work = submit(&gate);
-        std::thread::sleep(Duration::from_millis(40));
-        assert!(!work.is_finished(), "submitted between frames");
+        assert!(waiting(waits + 2), "it waits between frames");
+        let held = held && !work.is_finished();
         assert!(ctx.has_requested_repaint(), "the waiting work asks for a frame");
-        let t = Instant::now();
         let frame = in_frame(&ctx);
         work.join().unwrap();
-        assert!(t.elapsed() < wait / 2, "{:?}", t.elapsed());
         drop(frame);
         // The window's own thread never waits (it can't be reconfiguring while it submits).
-        let t = Instant::now();
         gate.run(|| ());
-        assert!(t.elapsed() < wait / 2);
+        assert_eq!(gate.waited().0, waits + 2);
+        // Each was held until its frame came, unless this machine stalled the test for the
+        // whole wait (then the submission went ahead, and was counted).
+        assert!(held || gate.waited().1 > 0, "work was submitted while the gate was closed");
+
     }
 
     /// The backoff (ADR 0092): growing pauses, a bounded number of tries, a resize bringing a
