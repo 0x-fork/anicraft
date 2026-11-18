@@ -630,7 +630,7 @@ pub fn tick(app: &mut App, ctx: &egui::Context) {
             save_shown(app);
             continue;
         }
-        if app.prompt.is_some() || app.confirm.is_some() {
+        if app.prompt.is_some() || app.confirm.is_some() || app.file_dialog_open() {
             // Save As is asking for a name, or whether to replace a file.
             break;
         }

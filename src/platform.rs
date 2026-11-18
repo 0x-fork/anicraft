@@ -973,7 +973,7 @@ pub fn reads_file(cmd: &str) -> bool {
 
 /// Shows the platform's own dialog (Windows common dialog, macOS panel, Linux XDG portal), with
 /// `title` already in the interface language. `None` when cancelled.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "macos")))]
 pub fn file_dialog(cmd: &str, title: &str, default_name: &str) -> Option<PathBuf> {
     let (label, exts) = filters(cmd);
     let (label, d) = (crate::i18n::t(label), rfd::FileDialog::new().set_title(title));
@@ -984,15 +984,99 @@ pub fn file_dialog(cmd: &str, title: &str, default_name: &str) -> Option<PathBuf
     }
 }
 
+/// The answer of a file dialog to come: the path picked, `None` when cancelled.
+#[cfg(not(target_arch = "wasm32"))]
+pub type FileAnswer = std::sync::mpsc::Receiver<Option<PathBuf>>;
+
+/// Shows the file dialog for `cmd` on `window`; the answer arrives on the receiver and wakes `ui`. `None`
+/// when the dialog could not be shown. Elsewhere the dialog blocks and has answered on return.
+/// macOS shows it as a sheet instead: run in line, the panel's modal loop sits inside winit's
+/// event handler, and the end of a resize of the panel re-enters it and aborts the app.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn start_file_dialog(cmd: &str, title: &str, default_name: &str, window: &eframe::Frame, ui: eframe::egui::Context) -> Option<FileAnswer> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        let _ = tx.send(file_dialog(cmd, title, default_name));
+        ui.request_repaint();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        type Answer = std::pin::Pin<Box<dyn std::future::Future<Output = Option<rfd::FileHandle>> + Send>>;
+        let (sheet_tx, sheet_rx) = std::sync::mpsc::channel::<Answer>();
+        // The thread first, so a sheet once shown always has somewhere to answer.
+        std::thread::Builder::new()
+            .name("file-dialog".into())
+            .spawn(move || {
+                if let Ok(answer) = sheet_rx.recv() {
+                    let _ = tx.send(pollster::block_on(answer).map(|f| f.path().to_path_buf()));
+                    ui.request_repaint();
+                }
+            })
+            .ok()?;
+        let (label, exts) = filters(cmd);
+        let (label, d) = (crate::i18n::t(label), rfd::AsyncFileDialog::new().set_title(title).set_parent(window));
+        // rfd begins the sheet here, on the main thread, as AppKit needs.
+        let answer: Answer = match cmd {
+            c if reads_file(c) => Box::pin(d.add_filter(label, exts).pick_file()),
+            "file.export_png_sequence" => Box::pin(d.pick_folder()),
+            _ => Box::pin(d.add_filter(label, exts).set_file_name(default_name).save_file()),
+        };
+        let _ = sheet_tx.send(answer);
+    }
+    Some(rx)
+}
+
 /// The platform's save dialog for a file type that isn't a command's (an exporter plug-in's,
 /// ADR 0088): `label` names it in the filter, `ext` without the dot. `None` when cancelled.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "macos")))]
 pub fn save_dialog(title: &str, label: &str, ext: &str, dir: Option<&std::path::Path>, default_name: &str) -> Option<PathBuf> {
     let mut d = rfd::FileDialog::new().set_title(title).add_filter(label, &[ext]).set_file_name(default_name);
     if let Some(dir) = dir.filter(|d| d.is_dir()) {
         d = d.set_directory(dir);
     }
     d.save_file()
+}
+
+/// `save_dialog` shown as [`start_file_dialog`] shows a command's: a sheet on `window` on macOS.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn start_save_dialog(
+    title: &str,
+    label: &str,
+    ext: &str,
+    dir: Option<&std::path::Path>,
+    default_name: &str,
+    window: &eframe::Frame,
+    ui: eframe::egui::Context,
+) -> Option<FileAnswer> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        let _ = tx.send(save_dialog(title, label, ext, dir, default_name));
+        ui.request_repaint();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        type Answer = std::pin::Pin<Box<dyn std::future::Future<Output = Option<rfd::FileHandle>> + Send>>;
+        let (sheet_tx, sheet_rx) = std::sync::mpsc::channel::<Answer>();
+        std::thread::Builder::new()
+            .name("file-dialog".into())
+            .spawn(move || {
+                if let Ok(answer) = sheet_rx.recv() {
+                    let _ = tx.send(pollster::block_on(answer).map(|f| f.path().to_path_buf()));
+                    ui.request_repaint();
+                }
+            })
+            .ok()?;
+        let mut d = rfd::AsyncFileDialog::new().set_title(title).add_filter(label, &[ext]).set_file_name(default_name).set_parent(window);
+        if let Some(dir) = dir.filter(|d| d.is_dir()) {
+            d = d.set_directory(dir);
+        }
+        let _ = sheet_tx.send(Box::pin(d.save_file()));
+    }
+    Some(rx)
 }
 
 /// In a browser: asks for a file with the browser's file picker. It arrives later through
