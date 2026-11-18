@@ -1541,3 +1541,36 @@ fn filters_on_text_reach_the_page_and_group_as_in_the_renderer() {
     same_display_list(&mut js, &m, &masked, &r.state, "masking");
     assert!(evaluate_player(&masked, &r.state).groups.is_empty());
 }
+
+#[test]
+fn layer_opacity_comes_across_as_one_fade_group_a_layer() {
+    // The fixture with every layer faded (in the symbols too) and the bottom layer in a faded
+    // folder: the page's display list has the same groups as the evaluator's on every frame
+    // (ADR 0111).
+    let mut doc = fixture();
+    for sym in doc.library.iter_mut() {
+        for l in Arc::make_mut(sym).timeline.layers.iter_mut() {
+            Arc::make_mut(l).opacity = 0.75;
+        }
+    }
+    let tl = doc.timeline_mut(0);
+    for l in tl.layers.iter_mut() {
+        Arc::make_mut(l).opacity = 0.4;
+    }
+    let n = tl.layers.len();
+    let mut folder = Layer::new(LayerId(7100), "Folder");
+    folder.kind = LayerKind::Folder;
+    folder.opacity = 0.5;
+    Arc::make_mut(&mut tl.layers[n - 1]).parent = Some(LayerId(7100));
+    tl.layers.insert(n - 1, Arc::new(folder));
+    doc.sanitize();
+    assert!((doc.timeline(0).layer_opacity(n) - 0.2).abs() < 1e-6, "the folder link survives");
+    let m = movie(&doc, &HtmlOptions::default());
+    let faded: Vec<f64> = m.json["contents"].as_array().unwrap().iter().flat_map(|c| c["l"].as_array().unwrap().iter()).filter_map(|l| l["o"].as_f64()).collect();
+    for want in [0.4, 0.2, 0.75] {
+        assert!(faded.iter().any(|o| (o - want).abs() < 1e-3), "{want} in {faded:?}");
+    }
+    let dl = evaluate_player(&doc, &PlayerState::seeded(1));
+    assert!(dl.groups.iter().any(|g| (g.alpha - 0.2).abs() < 1e-6) && dl.groups.iter().any(|g| g.parent.is_some()), "{:?}", dl.groups);
+    compare(&doc, &vec![(vec![], vec![]); 12]);
+}

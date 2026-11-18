@@ -719,8 +719,8 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
         // A layer below full opacity (its own, or a folder's it is in; ADR 0111) fades as one:
         // its artwork composites in a group, and the group blends at the layer's opacity, so
         // its overlapping parts don't show through each other. Mask artwork ignores opacity,
-        // and guide artwork is never in the movie.
-        let fade = if masks.is_none() && !guide { tl.layer_opacity(index) } else { 1.0 };
+        // and guide artwork is never in the movie; an empty frame needs no group.
+        let fade = if masks.is_none() && !guide && !elements.is_empty() { tl.layer_opacity(index) } else { 1.0 };
         let faded;
         let cx = if fade < 1.0 - 1e-4 {
             let gid = out.groups.len() as u32;
