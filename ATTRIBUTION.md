@@ -150,6 +150,7 @@ OR Apache-2.0) is noted in the table.
 | Ogg Vorbis decoding | `crates/audio/src/vorbis.rs` | `lewton` (MIT OR Apache-2.0) with `ogg` (BSD-3-Clause); Xiph.Org's open, royalty-free Vorbis I specification | Used as a library, not copied. |
 | MP3 (MPEG-1/2 audio layers I–III) decoding | `crates/audio/src/mp3.rs` | `nanomp3` (MIT OR Apache-2.0), a port of minimp3 (CC0) | Used as a library. The MP3 patents have expired; decoding only, no encoder. |
 | Animated PNG and animated WebP files: APNG chunks (`acTL`, `fcTL`, `fdAT`), frame regions, blend and dispose ops; the WebP RIFF container (`VP8X`, `ANIM`, `ANMF`) | `crates/engine/src/anim.rs` | The APNG specification (Mozilla; part of W3C *Portable Network Graphics (PNG) Specification*, Third Edition); Google's public *WebP Container Specification* and *WebP Lossless Bitstream Specification*; PNG frame data by the `png` crate (MIT OR Apache-2.0), lossless WebP frames by `image-webp` (MIT OR Apache-2.0) | Open, royalty-free specifications; the chunks are written by our own code (ADR 0063). |
+| WCAG 2.x relative luminance and contrast ratio, and the AA minimums a user theme is held to (text 4.5:1, non-text and focus 3:1) | `src/theme.rs` (`contrast`, `shortfalls`), `src/theme_file.rs` | W3C, Web Content Accessibility Guidelines 2.2 (success criteria 1.4.3, 1.4.11, 2.4.7), <https://www.w3.org/TR/WCAG22/> | Implemented from the published definitions. |
 
 ## Rust dependencies
 
