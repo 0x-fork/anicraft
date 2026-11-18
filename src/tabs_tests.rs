@@ -220,6 +220,26 @@ fn save_in_the_question_saves_then_closes_and_a_cancelled_save_as_keeps_the_tab(
 }
 
 #[test]
+fn a_close_waits_while_the_system_save_panel_is_up() {
+    let (ctx, mut app) = app();
+    three(&mut app);
+    app.run("draw.rect", json!({"x": 0, "y": 0, "w": 10, "h": 10}));
+    close_active(&mut app);
+    settle(&ctx, &mut app);
+    answer(&mut app, Answer::Save);
+    settle(&ctx, &mut app);
+    // The system panel instead of the built-in prompt: it answers frames later.
+    let p = app.prompt.take().unwrap();
+    app.file_request = Some((p.cmd, p.key, String::new(), String::new()));
+    settle(&ctx, &mut app);
+    assert!(app.tabs.closing.is_some(), "the close waits for the panel's answer");
+    app.file_request = None;
+    settle(&ctx, &mut app);
+    assert!(app.tabs.closing.is_none() && app.s.is_dirty(), "cancelled: the tab stays");
+    assert_eq!(app.tabs.len(), 3);
+}
+
+#[test]
 fn quitting_asks_once_for_every_unsaved_document() {
     let (ctx, mut app) = app();
     three(&mut app);

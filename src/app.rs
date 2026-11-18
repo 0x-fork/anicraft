@@ -574,6 +574,12 @@ pub struct App {
     pub tabs: crate::tabs::Tabs,
     /// The window may close: every document's unsaved changes were saved or given up.
     pub allow_close: bool,
+    /// The file dialog a command asked for (command, parameter, title, file name), shown at the
+    /// end of the frame, and the open dialog's answer to come.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) file_request: Option<(&'static str, &'static str, String, String)>,
+    #[cfg(not(target_arch = "wasm32"))]
+    file_dialog: Option<(&'static str, &'static str, platform::FileAnswer)>,
     pub prefs: prefs::Prefs,
     pub show_prefs: bool,
     /// This copy as an AppImage, and its applications menu entry (ADR 0094); `None` elsewhere.
@@ -853,6 +859,10 @@ impl App {
             show_shortcuts: false,
             tabs: crate::tabs::Tabs::new(placeholder),
             allow_close: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            file_request: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            file_dialog: None,
             prefs,
             show_prefs: false,
             desktop: None,
@@ -3486,11 +3496,12 @@ impl App {
                 return;
             }
             if is_file && self.prefs.native_dialogs && self.shot.is_none() && !platform::WEB {
-                // The platform's own dialog (it blocks, as native dialogs do). Cancel = no-op.
+                // The platform's own dialog, shown at the end of the frame (it needs the
+                // window); the answer runs the command in a later frame. One at a time.
                 self.playing = false;
                 #[cfg(not(target_arch = "wasm32"))]
-                if let Some(path) = platform::file_dialog(id, crate::i18n::t(title), &text) {
-                    self.request(id, json!({ key: path.display().to_string() }));
+                if self.file_dialog.is_none() {
+                    self.file_request = Some((id, key, crate::i18n::t(title).to_string(), text));
                 }
                 return;
             }
@@ -4215,16 +4226,56 @@ impl eframe::App for App {
         crate::remote::finish(self);
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // Stage work on the window's device is submitted only while this frame runs (ADR 0105).
         let _in_frame = crate::gpu_stage::in_frame(ui.ctx());
+        #[cfg(not(target_arch = "wasm32"))]
+        self.poll_file_dialog();
         self.frame(ui);
         // A few frames drawn: the window started (#207).
         crate::startup::frame();
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some((id, key, title, name)) = self.file_request.take() {
+            match platform::start_file_dialog(id, &title, &name, frame, ui.ctx().clone()) {
+                Some(answer) => self.file_dialog = Some((id, key, answer)),
+                // No blocking fallback: on macOS that is what crashed.
+                None => {
+                    self.status_err(crate::i18n::t(tr_noop!("The file dialog could not be shown")));
+                }
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::plugin_export_ui::start_browse(self, frame, ui.ctx());
+        #[cfg(target_arch = "wasm32")]
+        let _ = frame;
     }
 }
 
 impl App {
+    /// The file dialog's answer, once given, runs its command (through `request`: it may ask first).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn poll_file_dialog(&mut self) {
+        if let Some((id, key, answer)) = &self.file_dialog {
+            match answer.try_recv() {
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Ok(Some(path)) => {
+                    let (id, key) = (*id, *key);
+                    self.file_dialog = None;
+                    self.request(id, json!({ key: path.display().to_string() }));
+                }
+                Ok(None) | Err(std::sync::mpsc::TryRecvError::Disconnected) => self.file_dialog = None,
+            }
+        }
+    }
+
+    /// A file dialog was asked for or is up: a close waits for its Save As (`tabs::tick`).
+    pub(crate) fn file_dialog_open(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.file_request.is_some() || self.file_dialog.is_some();
+        #[cfg(target_arch = "wasm32")]
+        false
+    }
+
     /// One frame of the whole interface. Needs no window, so tests run it headless.
     pub fn frame(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
@@ -4246,6 +4297,18 @@ impl App {
         }
         // Documents the system handed over while running (macOS: Finder, the Dock; ADR 0062).
         for r in platform::take_requests() {
+            // Not while a file dialog is up (a sheet on macOS, the plug-in Browse… one too): its
+            // answer is for this document, and Quit would close the window under it.
+            #[cfg(not(target_arch = "wasm32"))]
+            if self.file_dialog.is_some() || crate::plugin_export_ui::sheet_pending(self) {
+                platform::push_request(r);
+                continue;
+            }
+            // Nor a document while a question is open (the overwrite one after Save As, say).
+            if self.modal_open() && matches!(r, platform::SystemRequest::Open(_)) {
+                platform::push_request(r);
+                continue;
+            }
             self.system_request(&ctx, r);
         }
         if self.glyph_check {
@@ -4695,5 +4758,49 @@ mod prompt_enter_tests {
         // The entire original scene name must be selected.
         assert_eq!(a.min(b), egui::text::CharIndex(0));
         assert_eq!(a.max(b), egui::text::CharIndex(original.chars().count()));
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod file_dialog_tests {
+    use super::*;
+
+    /// A document the system hands over while a file dialog is up waits for its answer and the
+    /// overwrite question after it, so a Save As saves the document that asked, not the one
+    /// opened meanwhile.
+    #[test]
+    fn system_open_waits_for_the_file_dialog() {
+        let dir = std::env::temp_dir().join(format!("anicraft-shell-dialog-open-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (other, existing) = (dir.join("other.anicraft"), dir.join("existing.anicraft"));
+        let mut s = anicraft_engine::Session::new(anicraft_engine::doc::sample::demo());
+        s.execute("file.save", &json!({"path": other.display().to_string()})).unwrap();
+        s.execute("file.save", &json!({"path": existing.display().to_string()})).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, anicraft_engine::Session::new(anicraft_engine::doc::sample::demo()), Some(PathBuf::from("unused.png")));
+        let frame = |app: &mut App| {
+            let input =
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 940.0))), ..Default::default() };
+            ctx.run_ui(input, |ui| app.frame(ui)).textures_delta.clear();
+        };
+        let (answer, rx) = std::sync::mpsc::channel();
+        app.file_dialog = Some(("file.save_as", "path", rx));
+        platform::push_request(platform::SystemRequest::Open(vec![other.clone()]));
+        frame(&mut app);
+        assert_eq!(app.s.path, None, "nothing opens while the dialog is up");
+        // The answer is a file that exists: Replace? is asked, and the open still waits.
+        answer.send(Some(existing.clone())).unwrap();
+        app.poll_file_dialog();
+        frame(&mut app);
+        assert_eq!(app.s.path, None, "nothing opens while the overwrite question is open");
+        // Replace, as the confirmation's button does.
+        let p = app.confirm.take().expect("the overwrite question");
+        let mut params = p.params;
+        params["confirm"] = json!(true);
+        app.perform(&p.id, params);
+        assert_eq!(app.s.path.as_deref(), Some(existing.as_path()), "Save As saved the document that asked");
+        frame(&mut app);
+        assert_eq!(app.s.path.as_deref(), Some(other.as_path()), "it opens once the question is answered");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
