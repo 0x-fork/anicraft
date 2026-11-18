@@ -414,3 +414,21 @@ fn autosave_and_recovery_cover_every_open_document() {
     crate::platform::set_recovery_dir_for_tests(None);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+#[ignore = "a measurement: cargo test --bin anicraft switching_cost -- --ignored --nocapture"]
+fn switching_cost() {
+    let (ctx, mut app) = app();
+    app.tabs.keep_first();
+    app.perform("file.new_sample", json!({}));
+    app.perform("file.new_sample", json!({}));
+    settle(&ctx, &mut app);
+    let mut times = Vec::new();
+    for i in 0..300 {
+        let t = std::time::Instant::now();
+        assert!(activate(&mut app, i % 3));
+        times.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    times.sort_by(f64::total_cmp);
+    eprintln!("switch: median {:.1} µs, p95 {:.1} µs, max {:.1} µs", times[150], times[285], times[299]);
+}
