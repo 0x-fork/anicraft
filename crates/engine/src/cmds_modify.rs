@@ -1,7 +1,7 @@
 //! Clipboard (cut/copy/paste), transforms (free transform, rotate 90°, flip) and alignment.
 
 use crate::params::*;
-use crate::{CommandSpec, EngineError, Result, Session};
+use crate::{CommandSpec, EngineError, Result, Session, TransformOrigin};
 use anicraft_doc::{Element, ElementId, ElementKind, Layer, LayerId, LayerKind, Symbol, SymbolId};
 use anicraft_geom::{Affine, Rect, Vec2};
 use serde_json::{Value, json};
@@ -15,11 +15,20 @@ pub fn specs() -> Vec<CommandSpec> {
         c("edit.copy", "Copy", "Edit", Some("Ctrl+C"), "{} (the selection on every layer, each layer's artwork kept apart)", false, copy),
         c("edit.paste", "Paste in Center", "Edit", Some("Ctrl+V"), "{x?, y?} (centre of the pasted artwork; default: offset 10 px). Artwork copied from one layer lands on the active layer; from several, back on those layers when they are all here, else on the active layer and the ones below it, creating missing ones", true, paste),
         c("edit.paste_in_place", "Paste in Place", "Edit", Some("Ctrl+Shift+V"), "{} (layers as edit.paste)", true, paste_in_place),
-        c("modify.transform", "Transform", "", None, "{a, b, c, d, e, f} affine applied in stage space (free transform), to the selection on every layer", true, |s, p| s.each_layer(true, |s| transform(s, p))),
-        c("modify.rotate_cw", "Rotate 90° CW", "Modify/Transform", Some("Ctrl+Shift+9"), "{}", true, |s, _| about_center(s, Affine::rotate(std::f32::consts::FRAC_PI_2))),
-        c("modify.rotate_ccw", "Rotate 90° CCW", "Modify/Transform", Some("Ctrl+Shift+7"), "{}", true, |s, _| about_center(s, Affine::rotate(-std::f32::consts::FRAC_PI_2))),
-        c("modify.flip_h", "Flip Horizontal", "Modify/Transform", None, "{}", true, |s, _| about_center(s, Affine::scale(-1.0, 1.0))),
-        c("modify.flip_v", "Flip Vertical", "Modify/Transform", None, "{}", true, |s, _| about_center(s, Affine::scale(1.0, -1.0))),
+        c("modify.transform", "Transform", "", None, "{a, b, c, d, e, f, origin?: selection|registration|center (default selection)} affine applied in stage space (free transform), to the selection on every layer. With origin registration or center, the matrix's scale, rotation and skew are applied to each selected object about its own point instead (see modify.transform_origin) and its move (e, f) is left out", true, transform),
+        c("modify.rotate_cw", "Rotate 90° CW", "Modify/Transform", Some("Ctrl+Shift+9"), ABOUT_PARAMS, true, |s, p| about_center(s, p, Affine::rotate(std::f32::consts::FRAC_PI_2))),
+        c("modify.rotate_ccw", "Rotate 90° CCW", "Modify/Transform", Some("Ctrl+Shift+7"), ABOUT_PARAMS, true, |s, p| about_center(s, p, Affine::rotate(-std::f32::consts::FRAC_PI_2))),
+        c("modify.flip_h", "Flip Horizontal", "Modify/Transform", None, ABOUT_PARAMS, true, |s, p| about_center(s, p, Affine::scale(-1.0, 1.0))),
+        c("modify.flip_v", "Flip Vertical", "Modify/Transform", None, ABOUT_PARAMS, true, |s, p| about_center(s, p, Affine::scale(1.0, -1.0))),
+        c(
+            "modify.transform_origin",
+            "Next Transformation Origin",
+            "Modify/Transform",
+            None,
+            "{mode?: selection|registration|center (default: the next one)} what several selected objects turn, scale and skew about with Free Transform and Modify › Transform: selection (one point for them all, as one arrangement; the default), registration (each about its own point: a symbol instance's or group's registration point, the centre of anything else) or center (each about the centre of its own box). Tool state, not part of the document → {mode}",
+            false,
+            transform_origin,
+        ),
         c("modify.remove_transform", "Remove Transform", "Modify/Transform", Some("Ctrl+Shift+Z"), "{}", true, |s, p| s.each_layer(true, |s| remove_transform(s, p))),
         c("align.left", "Left", "Modify/Align", Some("Ctrl+Alt+1"), "{to_stage?}", true, |s, p| align(s, p, Edge::Left)),
         c("align.hcenter", "Horizontal Center", "Modify/Align", Some("Ctrl+Alt+2"), "{to_stage?}", true, |s, p| align(s, p, Edge::HCenter)),
@@ -308,12 +317,18 @@ fn paste_in_place(s: &mut Session, _: &Value) -> Result<Value> {
 
 /// Applies `m` (stage space) to every selected element: `t' = m · t`.
 pub(crate) fn apply(s: &mut Session, m: &Affine) -> Result<usize> {
-    if !m.is_finite() || m.determinant().abs() < 1e-8 {
-        return Err(EngineError::Param("the transform is degenerate (it would collapse the artwork)".into()));
-    }
+    apply_each(s, |_| *m)
+}
+
+/// Applies a stage-space transform of its own to every selected element on the active layer.
+fn apply_each(s: &mut Session, of: impl Fn(ElementId) -> Affine) -> Result<usize> {
     let els = s.selected_elements_mut()?;
     let n = els.len();
     for e in els {
+        let m = of(e.id);
+        if !m.is_finite() || m.determinant().abs() < 1e-8 {
+            return Err(EngineError::Param("the transform is degenerate (it would collapse the artwork)".into()));
+        }
         let t = m.mul(&e.transform);
         let d = t.decompose();
         if !t.is_finite() || d.sx.abs() > 10_000.0 || d.sy.abs() > 10_000.0 || d.sx.abs() < 1e-4 || d.sy.abs() < 1e-4 {
@@ -326,11 +341,12 @@ pub(crate) fn apply(s: &mut Session, m: &Affine) -> Result<usize> {
 
 fn transform(s: &mut Session, p: &Value) -> Result<Value> {
     let m = Affine { m: [f32_req(p, "a")?, f32_req(p, "b")?, f32_req(p, "c")?, f32_req(p, "d")?, f32_req(p, "e")?, f32_req(p, "f")?] };
-    let n = apply(s, &m)?;
-    Ok(json!({"transformed": n}))
+    match origin_param(p)?.unwrap_or(TransformOrigin::Selection) {
+        TransformOrigin::Selection => s.each_layer(true, |s| Ok(json!({"transformed": apply(s, &m)?}))),
+        mode => about_own(s, &m, mode),
+    }
 }
 
-/// `m` applied about the centre of the selection's bounds.
 /// Remove Transform: scale, rotation and skew go back to none; each element keeps its
 /// position (registration point).
 fn remove_transform(s: &mut Session, _: &Value) -> Result<Value> {
@@ -343,8 +359,25 @@ fn remove_transform(s: &mut Session, _: &Value) -> Result<Value> {
     Ok(json!({"reset": n}))
 }
 
-/// `m` about the centre of the whole selection's bounds, on every layer it is on.
-fn about_center(s: &mut Session, m: Affine) -> Result<Value> {
+/// What the Modify › Transform commands take.
+const ABOUT_PARAMS: &str = "{origin?: selection|registration|center (default: the mode set with modify.transform_origin; selection unless changed)} about the centre of the whole selection, or each selected object about its own point";
+
+/// Param `origin`.
+fn origin_param(p: &Value) -> Result<Option<TransformOrigin>> {
+    match opt_str(p, "origin")? {
+        None => Ok(None),
+        Some(key) => TransformOrigin::from_key(key).map(Some).ok_or_else(|| EngineError::Param(format!("param 'origin' must be selection, registration or center, not '{key}'"))),
+    }
+}
+
+/// `m` about the centre of the whole selection's bounds, on every layer it is on, or (by the
+/// transformation origin, ADR 0109) its scale, rotation and skew on each object about its own
+/// point.
+fn about_center(s: &mut Session, p: &Value, m: Affine) -> Result<Value> {
+    let mode = origin_param(p)?.unwrap_or(s.style.transform_origin);
+    if mode != TransformOrigin::Selection {
+        return about_own(s, &m, mode);
+    }
     let b = s.selection_bounds();
     if b.is_empty() {
         return Err(EngineError::State("nothing is selected".into()));
@@ -352,6 +385,68 @@ fn about_center(s: &mut Session, m: Affine) -> Result<Value> {
     let c = b.center();
     let full = Affine::translate(c.x, c.y).mul(&m).mul(&Affine::translate(-c.x, -c.y));
     s.each_layer(true, |s| Ok(json!({"transformed": apply(s, &full)?})))
+}
+
+/// `modify.transform_origin`: sets the mode, or moves to the next one.
+fn transform_origin(s: &mut Session, p: &Value) -> Result<Value> {
+    let mode = match opt_str(p, "mode")? {
+        None => s.style.transform_origin.next(),
+        Some(key) => TransformOrigin::from_key(key).ok_or_else(|| EngineError::Param(format!("param 'mode' must be selection, registration or center, not '{key}'")))?,
+    };
+    s.style.transform_origin = mode;
+    Ok(json!({"mode": mode.key()}))
+}
+
+/// The point each selected object is transformed about in `mode`, with the elements that go
+/// with it (ADR 0109). An object is one element; the selected raw pieces of one drawing (a
+/// fill and the lines on its edge, ADR 0042) are one object, so a drawing keeps its outline.
+///
+/// * A symbol instance's or a group's own point is its registration point (its origin).
+/// * The centre is the centre of the object's own box: of its artwork in its own space,
+///   carried by its transform. Turning or scaling an object about that point leaves the point
+///   where it is, so a drag applied a little at a time ends where one transform would.
+/// * Anything without a registration point of its own (shapes, drawings, bitmaps, text) is
+///   transformed about its centre in both modes.
+pub fn transform_origins(s: &Session, mode: TransformOrigin) -> Vec<(Vec<Item>, Vec2)> {
+    let els: std::collections::HashMap<Item, Arc<Element>> = s.selected_elements().into_iter().map(|(l, e)| ((l, e.id), e)).collect();
+    selected_units(s)
+        .into_iter()
+        .map(|(items, bounds)| {
+            let members: Vec<&Arc<Element>> = items.iter().filter_map(|i| els.get(i)).collect();
+            let at = match members.as_slice() {
+                [e] if mode == TransformOrigin::Registration && matches!(e.kind, ElementKind::Symbol { .. } | ElementKind::Group { .. }) => e.transform.translation(),
+                // The box of the object's artwork in its first element's own space (one
+                // element: its own box), which the transform carries along.
+                [first, ..] => match first.transform.inverse() {
+                    Some(inv) => {
+                        let own = members.iter().fold(Rect::EMPTY, |r, e| r.union(&e.local_bounds(&s.doc).transformed(&inv.mul(&e.transform))));
+                        if own.is_empty() { bounds.center() } else { first.transform.apply(own.center()) }
+                    }
+                    None => bounds.center(),
+                },
+                [] => bounds.center(),
+            };
+            (items, at)
+        })
+        .collect()
+}
+
+/// The scale, rotation and skew of `m` applied to each selected object about its own point.
+fn about_own(s: &mut Session, m: &Affine, mode: TransformOrigin) -> Result<Value> {
+    let [a, b, c, d, _, _] = m.m;
+    let linear = Affine { m: [a, b, c, d, 0.0, 0.0] };
+    let mut by: std::collections::HashMap<Item, Affine> = std::collections::HashMap::new();
+    for (items, at) in transform_origins(s, mode) {
+        let full = Affine::translate(at.x, at.y).mul(&linear).mul(&Affine::translate(-at.x, -at.y));
+        by.extend(items.into_iter().map(|i| (i, full)));
+    }
+    if by.is_empty() {
+        return Err(EngineError::State("nothing is selected".into()));
+    }
+    s.each_layer(true, |s| {
+        let layer = s.layer;
+        Ok(json!({"transformed": apply_each(s, |id| by.get(&(layer, id)).copied().unwrap_or(Affine::IDENTITY))?}))
+    })
 }
 
 // ----- align ------------------------------------------------------------------------------------
@@ -367,7 +462,7 @@ enum Edge {
 }
 
 /// A selected element: its layer and id.
-type Item = (LayerId, ElementId);
+pub type Item = (LayerId, ElementId);
 
 /// What align and distribute place: the elements of one unit (see [`selected_units`]) and their
 /// combined bounds.

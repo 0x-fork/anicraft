@@ -21,6 +21,8 @@ mod cmds_file;
 mod cmds_frames;
 mod cmds_group;
 mod cmds_modify;
+#[cfg(test)]
+mod origin_tests;
 mod cmds_motion;
 mod cmds_retime;
 mod cmds_hints;
@@ -84,6 +86,7 @@ pub use anicraft_render as render;
 /// Whether a path is an Animate document (`.fla`, `.xfl`, or an XFL folder) that `file.open`
 /// imports.
 pub use cmds_file::is_animate;
+pub use cmds_modify::{Item as SelectedItem, transform_origins};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -277,11 +280,52 @@ pub struct ToolStyle {
     /// Snap to Objects (Animate's magnet, ADR 0042): dragged points and selections snap to
     /// points, lines and fill edges nearby. On by default; off, the `snap` params do nothing.
     pub snap_objects: bool,
+    /// What several selected objects turn, scale and skew about with Free Transform and
+    /// Modify › Transform (ADR 0109). The whole selection's point by default, as in Animate.
+    pub transform_origin: TransformOrigin,
+}
+
+/// What several selected objects are transformed about (ADR 0109, issue #296).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TransformOrigin {
+    /// One point for the whole selection: the objects turn and scale as one arrangement.
+    #[default]
+    Selection,
+    /// Each object about its own point: a symbol instance's or a group's registration point,
+    /// and the centre of anything else (a shape, a drawing, a bitmap, text).
+    Registration,
+    /// Each object about the centre of its own box, wherever its registration point is.
+    Center,
+}
+
+impl TransformOrigin {
+    pub const ALL: [TransformOrigin; 3] = [TransformOrigin::Selection, TransformOrigin::Registration, TransformOrigin::Center];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            TransformOrigin::Selection => "selection",
+            TransformOrigin::Registration => "registration",
+            TransformOrigin::Center => "center",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<TransformOrigin> {
+        TransformOrigin::ALL.into_iter().find(|m| m.key() == key)
+    }
+
+    /// The mode after this one (the cycling shortcut).
+    pub fn next(self) -> TransformOrigin {
+        match self {
+            TransformOrigin::Selection => TransformOrigin::Registration,
+            TransformOrigin::Registration => TransformOrigin::Center,
+            TransformOrigin::Center => TransformOrigin::Selection,
+        }
+    }
 }
 
 impl Default for ToolStyle {
     fn default() -> Self {
-        ToolStyle { fill: anicraft_doc::Rgba::hex(0x3d8bfd), fill_paint: None, lock_fill: false, stroke: anicraft_doc::Rgba::hex(0x1b2a4a), stroke_width: 2.0, use_fill: true, use_stroke: true, stroke_profile: anicraft_doc::ProfilePreset::Uniform, custom_profile: None, line: anicraft_doc::StrokeStyle::default(), object_drawing: true, snap_objects: true }
+        ToolStyle { fill: anicraft_doc::Rgba::hex(0x3d8bfd), fill_paint: None, lock_fill: false, stroke: anicraft_doc::Rgba::hex(0x1b2a4a), stroke_width: 2.0, use_fill: true, use_stroke: true, stroke_profile: anicraft_doc::ProfilePreset::Uniform, custom_profile: None, line: anicraft_doc::StrokeStyle::default(), object_drawing: true, snap_objects: true, transform_origin: TransformOrigin::Selection }
     }
 }
 
