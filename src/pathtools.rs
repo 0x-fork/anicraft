@@ -426,12 +426,9 @@ pub fn pen_release(app: &mut App) {
 pub fn pen_input(app: &mut App, ui: &egui::Ui, resp: &egui::Response, xf: Xf) {
     let (pressed, down, m) = ui.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_down(), i.modifiers));
     let mods = PenMods { alt: m.alt, shift: m.shift, command: m.command };
-    let Some(pos) = resp.interact_pointer_pos().or_else(|| resp.hover_pos()) else {
-        if !down {
-            pen_release(app);
-        }
-        return;
-    };
+    // Off the stage there is nothing to do: a button let go out there is seen when the
+    // pointer comes back.
+    let Some(pos) = resp.interact_pointer_pos().or_else(|| resp.hover_pos()) else { return };
     if pressed && resp.hovered() {
         pen_press(app, pos, xf, mods);
     } else if down {

@@ -2997,6 +2997,42 @@ impl App {
                 self.me_prop = anicraft_engine::doc::Property::Y;
                 self.me_key = None;
             }
+            Some("keeparea") => {
+                // Keep area (ADR 0115): the Star layer's span as a motion tween that stretches
+                // the star to twice its width half way; its height isn't keyed and follows.
+                // The Motion Editor shows the derived Scale Y curve.
+                self.run("layer.select", json!({"index": 1}));
+                if let Some(target) = self.run("timeline.create_motion_tween", json!({"frame": 0})).and_then(|_| self.run("motion.info", json!({"frame": 0}))).and_then(|v| v["target"].as_u64()) {
+                    self.run("timeline.set_keep_area", json!({"keep_area": true}));
+                    self.run("timeline.goto", json!({"frame": 24}));
+                    self.run("element.select", json!({"ids": [target]}));
+                    self.run("element.set_transform", json!({"sx": 2.0}));
+                    self.s.mark_saved();
+                }
+                self.run("timeline.goto", json!({"frame": 12}));
+                self.frame_sel = Some(timeline::FrameSel::cell(self.s.layer, 12));
+                self.show_panel(crate::dock::Panel::MotionEditor);
+                self.me_prop = anicraft_engine::doc::Property::ScaleY;
+                self.me_key = None;
+            }
+            Some("penpoints") => {
+                // The Pen on a selected open path (ADR 0115): its points show, and its end has
+                // been picked up to draw on from, with the last curve being drawn again (Alt),
+                // the segment as it was still in view.
+                self.tool = Tool::Pen;
+                self.s.style.object_drawing = true;
+                if let Some(id) = self.run("draw.path", json!({"d": "M120 260 C160 180 240 180 280 260 L360 260", "object": true, "fill": null})).and_then(|_| self.s.selection.ids().next()).map(|id| id.0) {
+                    self.s.mark_saved();
+                    let v = |x: f32, y: f32| anicraft_engine::geom::Vec2::new(x, y);
+                    let was = [v(440.0, 200.0), v(400.0, 190.0), v(480.0, 210.0)];
+                    self.pen = Some(pathtools::PenPath {
+                        knots: vec![[v(360.0, 260.0); 3], [v(440.0, 200.0), v(430.0, 250.0), v(450.0, 150.0)]],
+                        dragging: true,
+                        grip: pathtools::PenGrip::Adjust { was },
+                        extends: Some((anicraft_engine::doc::ElementId(id), false)),
+                    });
+                }
+            }
             Some("pen") => {
                 // A pen path still being drawn: a corner, a smooth point with handles, a corner.
                 self.tool = Tool::Pen;

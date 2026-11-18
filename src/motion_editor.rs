@@ -482,7 +482,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         };
         gp.text(pos2(graph.right() - 8.0, graph.top() + 24.0), Align2::RIGHT_TOP, note, font(Type::Caption), color(Type::Caption));
     }
-    if track.is_none() {
+    if derived {
+        // No keys of its own, but it moves: say what moves it and how to take it over.
+        gp.text(pos2(graph.center().x, graph.top() + 44.0), Align2::CENTER_CENTER, tr!("{property} has no keyframes: Keep area moves it against the other scale axis. Click ◇ or drag its value to key it yourself.", property = label), font(Type::Caption), color(Type::Caption));
+    } else if track.is_none() {
         gp.text(graph.center(), Align2::CENTER_CENTER, tr!("{property} has no keyframes: it stays {value}. Click ◇ or drag its value to key it here.", property = label, value = fmt(p, own(p))), font(Type::Caption), color(Type::Caption));
     }
     // A colour's channel: the whole colour over the span, along the bottom of the graph, so
