@@ -565,7 +565,7 @@ fn band_header(ui: &mut egui::Ui, side: Side, g: &Group, rect: Rect, first_group
     p.rect_filled(rect, theme::SQUARE, T.panel_alt);
     p.line_segment([rect.left_top(), rect.right_top()], Stroke::new(1.0, T.border));
     p.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, T.border));
-    p.rect_filled(Rect::from_min_size(rect.left_top() + vec2(0.0, 1.0), vec2(3.0, rect.height() - 1.0)), theme::SQUARE, T.accent);
+    crate::theme::accent_bar(&p, Rect::from_min_size(rect.left_top() + vec2(0.0, 1.0), vec2(3.0, rect.height() - 1.0)));
     // Fold: the group keeps only its header, giving the others its room.
     let chevron = Rect::from_center_size(pos2(rect.left() + 17.0, rect.center().y), vec2(22.0, 22.0));
     let resp = ui.interact(chevron, Id::new(("dock_fold", shown.id())), Sense::click());
@@ -759,7 +759,7 @@ fn tab_widget(ui: &mut egui::Ui, tab: Panel, r: Rect, shown: Rect, active: bool,
     // Drawn inside the strip only: never over the buttons.
     p.galley_with_override_text_color(pos2(r.left() + TAB_PAD * 0.5, r.center().y - galley.rect.height() * 0.5), galley.clone(), colour);
     if active && several {
-        p.rect_filled(Rect::from_min_max(pos2(r.left() + 6.0, r.bottom() - 2.0), pos2(r.right() - 6.0, r.bottom())), theme::SQUARE, T.accent);
+        crate::theme::accent_bar(&p, Rect::from_min_max(pos2(r.left() + 6.0, r.bottom() - 2.0), pos2(r.right() - 6.0, r.bottom())));
     }
     if resp.has_focus() {
         p.rect_stroke(r, T.rc(), Stroke::new(2.0, T.accent), StrokeKind::Inside);
@@ -1065,7 +1065,7 @@ fn flyout(app: &mut App, ctx: &egui::Context, auto: (f32, f32), layout: &Layout,
         ui.painter().rect_stroke(rect, theme::SQUARE, Stroke::new(1.0, T.border), StrokeKind::Inside);
         let header = Rect::from_min_size(rect.min, vec2(rect.width(), BAND_H));
         ui.painter().rect_filled(header, theme::SQUARE, T.panel_alt);
-        ui.painter().rect_filled(Rect::from_min_size(header.left_top(), vec2(3.0, header.height())), theme::SQUARE, T.accent);
+        crate::theme::accent_bar(ui.painter(), Rect::from_min_size(header.left_top(), vec2(3.0, header.height())));
         let title = crate::i18n::t(p.label());
         let galley = ui.painter().layout_no_wrap(title.to_string(), font(Type::Heading), theme::color(Type::Heading));
         let tr = Rect::from_min_max(header.min + vec2(12.0, 0.0), pos2(header.right() - 2.0 * MENU_W - 6.0, header.bottom()));

@@ -445,12 +445,15 @@ pub fn paint(p: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
     let w = ((1.75 * s * ppp).round().max(1.0)) / ppp;
     let stroke = Stroke::new(w, color);
     let solid = icon.solid();
+    let tint = accent_fill(color);
     for path in paths {
         for pl in path.flatten(&m, 0.08) {
             let pts: Vec<Pos2> = pl.points.iter().map(|q| pos2(q.x, q.y)).collect();
             if pl.closed {
                 if solid {
                     fill_polygon(p, &pts, color);
+                } else if let Some(tint) = tint {
+                    fill_polygon(p, &pts, tint);
                 }
                 p.add(egui::Shape::closed_line(pts, stroke));
             } else {
@@ -462,6 +465,15 @@ pub fn paint(p: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             }
         }
     }
+}
+
+/// The tint inside an icon's closed shapes (ADR 0117), when the palette has one (`icon_accent`)
+/// and the icon is drawn in one of the icon roles: at rest, under the pointer, or on the active
+/// tool's block. Icons drawn as text marks (chevrons, a disabled button) stay outlines. The
+/// built-in palettes have no tint, so they draw exactly as before.
+fn accent_fill(color: Color32) -> Option<Color32> {
+    let t = &*crate::theme::T;
+    (t.icon_accent.a() > 0 && [t.icon, t.icon_hot, t.on_active].contains(&color)).then_some(t.icon_accent)
 }
 
 /// Fills a simple (possibly concave) polygon by ear clipping. Icon outlines have a few dozen
@@ -568,6 +580,38 @@ mod tests {
         let outline = library().get(name).unwrap()[0].flatten(&Affine::IDENTITY, 0.08);
         let pts: Vec<Pos2> = outline[0].points.iter().map(|q| pos2(q.x, q.y)).collect();
         assert!(!triangulate(&pts).1.is_empty());
+    }
+
+    #[test]
+    fn icons_are_tinted_only_by_a_palette_that_has_a_tint() {
+        use crate::theme::{GRAPHITE, Palette, T};
+        let ctx = egui::Context::default();
+        let shapes = |ctx: &egui::Context, color: Color32| {
+            let mut n = 0;
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                let p = ui.painter().clone();
+                let before = p.add(egui::Shape::Noop).0;
+                paint(&p, Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(24.0, 24.0)), Icon::Lock, color);
+                n = p.add(egui::Shape::Noop).0 - before;
+            });
+            out.textures_delta.clear();
+            n
+        };
+        // The built-in palettes: outlines only, the same shapes whatever the colour.
+        crate::theme::apply_palette(&ctx, Palette::Graphite);
+        assert_eq!(accent_fill(T.icon), None);
+        let plain = shapes(&ctx, T.icon);
+        // A theme with a tint: closed shapes gain a fill under icons in the icon roles only.
+        let mut tinted = GRAPHITE;
+        tinted.set_colour("icon_accent", T.accent.gamma_multiply(0.4));
+        crate::theme::apply_user_theme(&ctx, Palette::Graphite, tinted);
+        assert_eq!(accent_fill(T.icon), Some(tinted.icon_accent));
+        assert_eq!(accent_fill(T.on_active), Some(tinted.icon_accent));
+        assert_eq!(accent_fill(T.text_faint), None, "a disabled icon stays an outline");
+        assert!(shapes(&ctx, T.icon) > plain, "the lock's body is filled");
+        assert_eq!(shapes(&ctx, T.text_faint), plain);
+        crate::theme::apply_palette(&ctx, Palette::Graphite);
+        assert_eq!(shapes(&ctx, T.icon), plain);
     }
 
     #[test]

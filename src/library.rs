@@ -510,7 +510,7 @@ fn list_ui(app: &mut App, ui: &mut egui::Ui, list: &[Row], unused: &HashSet<Libr
                 p.rect_filled(r, T.rc(), if selected { T.accent_dim } else { T.hover });
             }
             if selected {
-                p.rect_filled(Rect::from_min_size(r.left_top(), vec2(3.0, r.height())), 0.0, T.accent);
+                crate::theme::accent_bar(p, Rect::from_min_size(r.left_top(), vec2(3.0, r.height())));
             }
             let indent = 6.0 + row.depth as f32 * 14.0;
             let chevron = Rect::from_center_size(pos2(r.left() + indent + 6.0, r.center().y), vec2(12.0, 12.0));

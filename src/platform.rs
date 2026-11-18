@@ -652,6 +652,34 @@ pub fn commands_dir() -> Option<PathBuf> {
     }
 }
 
+/// Where the user's themes live (ADR 0117): `themes` in the settings folder (the portable
+/// `data` folder in a portable copy, ADR 0094), one small JSON file each. `ANICRAFT_THEMES_DIR`
+/// points it elsewhere (screenshots, theme development). None in a browser, which has no
+/// folders to keep them in.
+pub fn themes_dir() -> Option<PathBuf> {
+    if WEB {
+        return None;
+    }
+    match std::env::var_os("ANICRAFT_THEMES_DIR").filter(|v| !v.is_empty()) {
+        Some(d) => Some(PathBuf::from(d)),
+        None => config_dir().map(|d| d.join("themes")),
+    }
+}
+
+/// Opens the system's file manager showing what is in the folder `dir`.
+pub fn open_folder(dir: &Path) -> Result<(), String> {
+    // Tests click every control: they never start another program. A browser has no folders.
+    if cfg!(test) || WEB {
+        return Ok(());
+    }
+    let program = match OS {
+        Os::Windows => "explorer",
+        Os::Mac => "open",
+        _ => "xdg-open",
+    };
+    std::process::Command::new(program).arg(dir).spawn().map(|_| ()).map_err(|e| tr!("could not show {path}: {e}", path = dir.display(), e = e))
+}
+
 /// Where installed plug-ins live: a `plugins` folder in the settings folder (ADR 0017).
 pub fn plugins_dir() -> Option<PathBuf> {
     config_dir().map(|d| d.join("plugins"))

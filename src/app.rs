@@ -632,6 +632,13 @@ pub struct App {
     /// `None` until it has, or if it can't. Screenshot runs never ask, so they look the same
     /// everywhere.
     pub system_look: platform::SystemLook,
+    /// Your own themes (ADR 0117), as last read from `themes_dir`: at start, and on Reload.
+    pub themes: crate::theme_file::Library,
+    /// The themes folder. None in a browser, and in tests and screenshot runs unless one is
+    /// named (`ANICRAFT_THEMES_DIR`, `--theme <file>`), so they look the same everywhere.
+    pub themes_dir: Option<PathBuf>,
+    /// The theme of your own that couldn't be used was said once (not on every repaint).
+    theme_missing_said: Option<String>,
     /// Keys to press, a few frames apart (screenshots of keyboard states).
     pub key_script: std::collections::VecDeque<(Key, Modifiers)>,
     /// Screenshots only: the ease menu (by its id salt) to show open on the next frame.
@@ -894,6 +901,9 @@ impl App {
             tl_refocus: false,
             menu_keys: Default::default(),
             system_look: platform::SystemLook::default(),
+            themes: Default::default(),
+            themes_dir: None,
+            theme_missing_said: None,
             key_script: Default::default(),
             shot_ease_menu: std::cell::Cell::new(None),
             shot_click: std::cell::Cell::new(None),
@@ -907,6 +917,15 @@ impl App {
             templates: Default::default(),
             macros: Default::default(),
         };
+        // Your themes (ADR 0117), before the look is first applied. Tests and screenshot runs
+        // read no folder of the computer's unless one is named.
+        let named = std::env::var_os("ANICRAFT_THEMES_DIR").is_some_and(|v| !v.is_empty());
+        if named || (!cfg!(test) && app.shot.is_none()) {
+            app.themes_dir = platform::themes_dir();
+        }
+        if let Some(dir) = &app.themes_dir {
+            app.themes = crate::theme_file::Library::scan(dir);
+        }
         app.apply_prefs(ctx);
         crate::brushtool::restore(&mut app);
         app.decode_sounds();
@@ -1019,8 +1038,7 @@ impl App {
         crate::i18n::set_language(&self.prefs.language);
         ctx.request_repaint();
         ctx.set_zoom_factor(self.prefs.ui_scale);
-        theme::apply_palette(ctx, self.prefs.palette(self.system_look));
-        crate::onion::refresh_colors(self);
+        self.apply_theme(ctx);
         self.refresh_keymap();
         let wants_system = [&self.prefs.ui_font, &self.prefs.data_font].iter().any(|f| matches!(f, prefs::FontChoice::System(_)));
         if wants_system && self.system_fonts.is_none() {
@@ -1051,15 +1069,117 @@ impl App {
         self.glyph_check = true;
     }
 
-    /// `--theme` / `--scale`: a palette and interface scale for this run only (clamped like the
-    /// preference), not saved.
-    pub fn preview_look(&mut self, ctx: &egui::Context, theme: Option<theme::Palette>, scale: Option<f32>) {
-        if theme.is_none() && scale.is_none() {
+    /// The look the preferences ask for, drawn from now on: a theme of your own (ADR 0117) when
+    /// one is chosen and its file passes its checks, else the built-in palette (the one that
+    /// theme is based on, if it can't be used: said once, never applied in part).
+    pub fn apply_theme(&mut self, ctx: &egui::Context) {
+        let palette = self.prefs.palette(self.system_look);
+        let chosen = self.prefs.user_theme().map(str::to_string);
+        match chosen.as_deref().map(|id| (id, self.themes.get(id).map(|e| e.theme.clone()))) {
+            Some((_, Some(Ok(t)))) => {
+                self.theme_missing_said = None;
+                theme::apply_user_theme(ctx, t.base, t.tokens);
+            }
+            Some((id, other)) => {
+                theme::apply_palette(ctx, palette);
+                if self.theme_missing_said.as_deref() != Some(id) {
+                    self.theme_missing_said = Some(id.to_string());
+                    let shown = crate::i18n::t(theme::Palette::ALL.iter().find(|(p, _, _)| *p == palette).map_or("", |(_, name, _)| name));
+                    match other {
+                        Some(Err(why)) => self.status_err(tr!("The theme “{name}” is not used: {why} Showing {palette}.", name = id, why = why.message(), palette = shown)),
+                        _ => self.status_err(tr!("The theme “{name}” is not in the themes folder. Showing {palette}.", name = id, palette = shown)),
+                    }
+                }
+            }
+            None => {
+                self.theme_missing_said = None;
+                theme::apply_palette(ctx, palette);
+            }
+        }
+        crate::onion::refresh_colors(self);
+        ctx.request_repaint();
+    }
+
+    /// Preferences › Theme › Reload: reads the themes folder again and redraws with what it
+    /// holds now, in the same frame.
+    pub fn reload_themes(&mut self, ctx: &egui::Context) {
+        let Some(dir) = self.themes_dir.clone() else {
+            self.status_err(tr!("This copy of AniCraft has no themes folder"));
+            return;
+        };
+        self.themes = crate::theme_file::Library::scan(&dir);
+        self.theme_missing_said = None;
+        self.apply_theme(ctx);
+        // What went wrong with the theme in use, if anything did, is the message that matters.
+        if self.theme_missing_said.is_some() {
+            return;
+        }
+        let (good, refused) = self.themes.counts();
+        if refused > 0 {
+            self.status_err(trn!("{n} theme read; {refused} refused (see Preferences › Theme)", "{n} themes read; {refused} refused (see Preferences › Theme)", good, refused = refused));
+        } else {
+            self.status_ok(trn!("{n} theme read from the themes folder", "{n} themes read from the themes folder", good));
+        }
+    }
+
+    /// Preferences › Theme › Open Folder: the themes folder in the file manager, made if it
+    /// isn't there yet.
+    pub fn open_themes_folder(&mut self) {
+        let Some(dir) = self.themes_dir.clone() else {
+            self.status_err(tr!("This copy of AniCraft has no themes folder"));
+            return;
+        };
+        match std::fs::create_dir_all(&dir).map_err(|e| e.to_string()).and_then(|()| platform::open_folder(&dir)) {
+            Ok(()) => self.status_ok(tr!("Opened the themes folder: {path}", path = dir.display())),
+            Err(e) => self.status_err(tr!("Could not open the themes folder: {e}", e = e)),
+        }
+    }
+
+    /// Preferences › Theme › Export Current Theme: the look in use, every colour role of it,
+    /// written to the themes folder as a file to start a theme from. It is listed at once.
+    pub fn export_theme(&mut self, ctx: &egui::Context) {
+        let Some(dir) = self.themes_dir.clone() else {
+            self.status_err(tr!("This copy of AniCraft has no themes folder"));
+            return;
+        };
+        let base = theme::palette();
+        let current = match self.prefs.user_theme().and_then(|id| self.themes.get(id)).filter(|_| theme::user_theme_active()) {
+            Some(mine) => mine.name().to_string(),
+            None => crate::i18n::t(theme::Palette::ALL.iter().find(|(p, _, _)| *p == base).map_or("", |(_, name, _)| name)).to_string(),
+        };
+        let text = crate::theme_file::export(&tr!("Copy of {name}", name = current), base, &T);
+        let written = std::fs::create_dir_all(&dir).map_err(|e| e.to_string()).and_then(|()| {
+            let path = crate::theme_file::free_path(&dir, "my-theme").ok_or_else(|| tr!("the themes folder is full of exported themes").to_string())?;
+            std::fs::write(&path, text).map(|()| path).map_err(|e| e.to_string())
+        });
+        match written {
+            Ok(path) => {
+                self.themes = crate::theme_file::Library::scan(&dir);
+                self.apply_theme(ctx);
+                self.status_ok(tr!("Exported the theme to {path}: edit its colours, then Reload", path = path.display()));
+            }
+            Err(e) => self.status_err(tr!("Could not export the theme: {e}", e = e)),
+        }
+    }
+
+    /// `--theme` / `--scale`: a palette (or a theme file) and interface scale for this run only
+    /// (clamped like the preference), not saved.
+    pub fn preview_look(&mut self, ctx: &egui::Context, theme: Option<theme::Palette>, theme_file: Option<&std::path::Path>, scale: Option<f32>) {
+        if theme.is_none() && theme_file.is_none() && scale.is_none() {
             return;
         }
         let mut p = self.prefs.clone();
         if let Some(t) = theme {
             p.theme = t;
+            p.theme_file = None;
+            p.theme_follows_system = Some(false);
+        }
+        if let Some(file) = theme_file {
+            // The file's folder is the themes folder for this run.
+            self.themes_dir = file.parent().map(|d| if d.as_os_str().is_empty() { PathBuf::from(".") } else { d.to_path_buf() });
+            self.themes = self.themes_dir.as_deref().map(crate::theme_file::Library::scan).unwrap_or_default();
+            p.theme_file = file.file_stem().map(|s| s.to_string_lossy().into_owned());
+            p.theme = self.themes.get(p.theme_file.as_deref().unwrap_or("")).and_then(|e| e.theme.as_ref().ok()).map_or(theme::Palette::Graphite, |t| t.base);
             p.theme_follows_system = Some(false);
         }
         p.ui_scale = scale.unwrap_or(p.ui_scale);
@@ -1206,11 +1326,8 @@ impl App {
         }
         let before = self.prefs.palette(self.system_look);
         self.system_look = v;
-        let after = self.prefs.palette(v);
-        if after != before {
-            theme::apply_palette(ctx, after);
-            crate::onion::refresh_colors(self);
-            ctx.request_repaint();
+        if self.prefs.palette(v) != before {
+            self.apply_theme(ctx);
         }
     }
 
