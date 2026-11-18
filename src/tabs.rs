@@ -735,7 +735,7 @@ pub fn bar(app: &mut App, ui: &mut egui::Ui) {
             let p = ui.painter();
             if t.active {
                 p.rect_filled(r, theme::SQUARE, T.panel);
-                p.rect_filled(Rect::from_min_max(r.left_top(), pos2(r.right(), r.top() + 2.0)), theme::SQUARE, T.accent);
+                crate::theme::accent_bar(p, Rect::from_min_max(r.left_top(), pos2(r.right(), r.top() + 2.0)));
             } else if resp.hovered() || close.hovered() {
                 p.rect_filled(r, theme::SQUARE, T.hover);
             }

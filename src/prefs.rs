@@ -104,6 +104,11 @@ pub struct Prefs {
     /// palette this build doesn't know (a newer build's) reads as Graphite, keeping the rest.
     #[serde(deserialize_with = "lenient_palette")]
     pub theme: crate::theme::Palette,
+    /// A theme of your own, chosen by hand (ADR 0117): its file's name in the themes folder,
+    /// without `.json`. `theme` then holds the palette it is based on, which is what shows if
+    /// the file is gone or no longer passes its checks (and what an older build shows).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme_file: Option<String>,
     /// Follow the system (ADR 0064, ADR 0077): high contrast while the system asks for more
     /// contrast, otherwise light or dark as its apps are. `None` (never chosen): Dark (Graphite),
     /// still switching to high contrast when the system asks for more contrast, as creative tools
@@ -235,6 +240,7 @@ impl Default for Prefs {
             ui_font: FontChoice::Bundled,
             data_font: FontChoice::Bundled,
             theme: crate::theme::Palette::Graphite,
+            theme_file: None,
             theme_follows_system: None,
             ui_scale: 1.0,
             render_mode: RenderMode::Auto,
@@ -332,7 +338,7 @@ impl Prefs {
 
     /// Never chose a look: Dark (Graphite), with high contrast when the system asks for it.
     fn default_look(&self) -> bool {
-        self.theme_follows_system.is_none() && self.theme == crate::theme::Palette::Graphite
+        self.theme_follows_system.is_none() && self.theme == crate::theme::Palette::Graphite && self.theme_file.is_none()
     }
 
     /// The palette to draw with, given what the system says (each part `None` where it doesn't
@@ -353,7 +359,15 @@ impl Prefs {
         }
     }
 
+    /// The theme of your own to draw with (ADR 0117), if one is chosen: its file's name. None
+    /// while the theme follows the system.
+    pub fn user_theme(&self) -> Option<&str> {
+        self.theme_file.as_deref().filter(|_| !self.follows_system())
+    }
+
     pub fn sanitized(mut self) -> Prefs {
+        // A file name, not a path: nothing outside the themes folder is ever named here.
+        self.theme_file = self.theme_file.take().filter(|f| !f.is_empty() && f.chars().count() <= 128 && !f.chars().any(|c| c.is_control() || matches!(c, '/' | '\\')));
         self.ui_scale = if self.ui_scale.is_finite() { self.ui_scale.clamp(*SCALE_RANGE.start(), *SCALE_RANGE.end()) } else { 1.0 };
         self.timeline_start_gap = if self.timeline_start_gap.is_finite() { self.timeline_start_gap.clamp(*GAP_RANGE.start(), *GAP_RANGE.end()) } else { 0.0 };
         self.timeline_layer_w = if self.timeline_layer_w.is_finite() { self.timeline_layer_w.clamp(*LAYER_W_RANGE.start(), *LAYER_W_RANGE.end()) } else { LAYER_W_DEFAULT };
@@ -481,6 +495,17 @@ mod tests {
         let back = Prefs::from_json(&json);
         assert_eq!((back.theme, back.palette(look(Some(false), Some(true)))), (Palette::Light, Palette::Light));
         assert_eq!(Prefs::from_json(r#"{"theme": "Light"}"#).palette(look(None, Some(true))), Palette::Light, "named without the flag: chosen");
+        // A theme of your own (ADR 0117): kept through a round trip, over the palette it is
+        // based on; not written until one is chosen; a path or junk in its place is dropped.
+        let mine = Prefs { theme: Palette::Light, theme_file: Some("plum".into()), theme_follows_system: Some(false), ..Prefs::default() };
+        let back = Prefs::from_json(&serde_json::to_string(&mine).unwrap_or_default());
+        assert_eq!((back.user_theme(), back.palette(look(Some(true), Some(true)))), (Some("plum"), Palette::Light));
+        assert_eq!(Prefs { theme_follows_system: Some(true), ..mine.clone() }.user_theme(), None, "following the system: not yours");
+        assert!(!serde_json::to_string(&Prefs::default()).unwrap_or_default().contains("theme_file"));
+        assert_eq!(Prefs::from_json(r#"{"theme_file": "../../etc/passwd"}"#).theme_file, None);
+        assert_eq!(Prefs::from_json(r#"{"theme_file": "", "ui_scale": 1.5}"#).ui_scale, 1.5);
+        let chosen = Prefs::from_json(r#"{"theme_file": "plum"}"#);
+        assert_eq!((chosen.user_theme(), chosen.palette(look(Some(true), None))), (Some("plum"), Palette::Graphite), "a theme chosen by hand is not overridden");
         // A palette this build doesn't know (a newer file) falls back to the defaults, not a crash.
         let newer = Prefs::from_json(r#"{"theme": "Sepia", "ui_scale": 1.5}"#);
         assert_eq!((newer.theme, newer.ui_scale), (Palette::Graphite, 1.5), "the other preferences stay");

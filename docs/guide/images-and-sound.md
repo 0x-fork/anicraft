@@ -196,7 +196,9 @@ logo that brightens on every hit, a jaw that drops when a character talks.
 ![Convert Audio to Keyframes: the star's scale follows a beat, previewed on the timeline](images/audio-to-keyframes.png)
 
 1. Put the sound on a layer and the object on another layer. **Stream** sync is best: the
-   sound then stays on its frames.
+   sound then stays on its frames. With Event or Start sync the dialog still works, and a line
+   under **Frames** reminds you that the keys can drift from what is heard after a jump on the
+   timeline.
 2. Choose **Modify › Timeline › Convert Audio to Keyframes…**, or select the sound's keyframe
    and press **To Keyframes…** in **Properties**.
 3. Pick the **Layer** that gets the keys (and the **Object**, when the layer holds several).

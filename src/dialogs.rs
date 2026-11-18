@@ -385,6 +385,7 @@ fn preferences(app: &mut App, ctx: &egui::Context) {
     let (bundled_ui, bundled_mono) = crate::theme::bundled_names();
     let mut reset_confirms = false;
     let mut about_act: Option<crate::desktop_ui::Act> = None;
+    let mut theme_act: Option<ThemeAct> = None;
     let to_about = std::mem::take(&mut app.prefs_to_about);
     let title = if crate::platform::OS == crate::platform::Os::Mac { tr!("Settings") } else { tr!("Preferences") };
     let shown = crate::windows::new(ctx, title)
@@ -432,10 +433,18 @@ fn preferences(app: &mut App, ctx: &egui::Context) {
                     ui.add_space(4.0);
                     form_row(ui, LW, tr!("Theme"), |ui| {
                         ui.vertical(|ui| {
-                            // Follow system (ADR 0064), then each palette by hand.
-                            let was = if p.follows_system() { None } else { Some(p.theme) };
-                            let mut choice = was;
-                            crate::theme::radio_value(ui, &mut choice, None, text(Type::Body, tr!("Follow system")));
+                            // Follow system (ADR 0064), then each palette by hand, then your own
+                            // themes (ADR 0117).
+                            let was = if p.follows_system() {
+                                ThemeChoice::System
+                            } else {
+                                match p.user_theme() {
+                                    Some(id) => ThemeChoice::Mine(id.to_string()),
+                                    None => ThemeChoice::BuiltIn(p.theme),
+                                }
+                            };
+                            let mut choice = was.clone();
+                            crate::theme::radio_value(ui, &mut choice, ThemeChoice::System, text(Type::Body, tr!("Follow system")));
                             // What following would show now, and why (ADR 0064, ADR 0077).
                             let look = app.system_look;
                             let says = match (look.high_contrast, look.dark) {
@@ -447,15 +456,70 @@ fn preferences(app: &mut App, ctx: &egui::Context) {
                             form_note(ui, toggle_indent, text(Type::Caption, says));
                             ui.add_space(2.0);
                             for (palette, name, tip) in crate::theme::Palette::ALL {
-                                crate::theme::radio_value(ui, &mut choice, Some(palette), text(Type::Body, crate::i18n::t(name)));
+                                crate::theme::radio_value(ui, &mut choice, ThemeChoice::BuiltIn(palette), text(Type::Body, crate::i18n::t(name)));
                                 form_note(ui, toggle_indent, text(Type::Caption, crate::i18n::t(tip)));
                                 ui.add_space(2.0);
                             }
-                            if choice != was {
-                                p.theme_follows_system = Some(choice.is_none());
-                                if let Some(t) = choice {
-                                    p.theme = t;
+                            // Yours, from the themes folder: the ones that pass their checks can
+                            // be chosen; a refused one says why, naming what is at fault.
+                            for entry in &app.themes.entries {
+                                let file = entry.path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+                                match &entry.theme {
+                                    Ok(t) => {
+                                        crate::theme::radio_value(ui, &mut choice, ThemeChoice::Mine(entry.id.clone()), text(Type::Body, entry.name()));
+                                        let from = match &t.author {
+                                            Some(author) => tr!("Your theme, by {author}, from {file}.", author = author, file = file),
+                                            None => tr!("Your theme, from {file}.", file = file),
+                                        };
+                                        form_note(ui, toggle_indent, text(Type::Caption, from));
+                                        if let Some(first) = t.notes.first() {
+                                            let low = trn!("Low contrast in {n} place: {pair} is {ratio}:1.", "Low contrast in {n} places, such as {pair}, which is {ratio}:1.", t.notes.len(), pair = first.pair, ratio = format!("{:.1}", first.ratio));
+                                            form_note(ui, toggle_indent, text(Type::Caption, low));
+                                        }
+                                    }
+                                    Err(why) => {
+                                        ui.add_enabled_ui(false, |ui| {
+                                            let mut off = false;
+                                            crate::theme::radio_value(ui, &mut off, true, text(Type::Body, entry.name())).set_name(&tr!("{name} (refused)", name = entry.name()));
+                                        });
+                                        form_note(ui, toggle_indent, text(Type::Caption, tr!("{file} is not used. {why}", file = file, why = why.message())).color(T.error));
+                                    }
                                 }
+                                ui.add_space(2.0);
+                            }
+                            if app.themes.left_out > 0 {
+                                form_note(ui, toggle_indent, text(Type::Caption, trn!("{n} more theme file in the folder is not listed.", "{n} more theme files in the folder are not listed.", app.themes.left_out)));
+                            }
+                            if choice != was {
+                                p.theme_follows_system = Some(choice == ThemeChoice::System);
+                                match choice {
+                                    ThemeChoice::System => {}
+                                    ThemeChoice::BuiltIn(palette) => {
+                                        p.theme = palette;
+                                        p.theme_file = None;
+                                    }
+                                    ThemeChoice::Mine(id) => {
+                                        // The palette it is based on: what shows if its file goes.
+                                        p.theme = app.themes.get(&id).and_then(|e| e.theme.as_ref().ok()).map_or(p.theme, |t| t.base);
+                                        p.theme_file = Some(id);
+                                    }
+                                }
+                            }
+                            // Your themes folder: small files that name colours for the roles.
+                            if app.themes_dir.is_some() {
+                                ui.add_space(2.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui.button(text(Type::Body, tr!("Open Themes Folder"))).on_hover_text(tr!("Shows the folder your own themes are kept in.")).clicked() {
+                                        theme_act = Some(ThemeAct::OpenFolder);
+                                    }
+                                    if ui.button(text(Type::Body, tr!("Reload"))).on_hover_text(tr!("Reads the themes folder again, so a file you changed shows at once.")).clicked() {
+                                        theme_act = Some(ThemeAct::Reload);
+                                    }
+                                    if ui.button(text(Type::Body, tr!("Export Current Theme"))).on_hover_text(tr!("Writes the look in use to the themes folder as a file to start your own from.")).clicked() {
+                                        theme_act = Some(ThemeAct::Export);
+                                    }
+                                });
+                                ui.add(egui::Label::new(text(Type::Caption, tr!("A theme is a small file that names colours for the interface's roles. A theme whose text would be hard to read is not used, and says which colours to change."))).wrap());
                             }
                         });
                     });
@@ -666,10 +730,33 @@ fn preferences(app: &mut App, ctx: &egui::Context) {
     if p != app.prefs {
         app.set_prefs(ctx, p);
     }
+    match theme_act {
+        Some(ThemeAct::OpenFolder) => app.open_themes_folder(),
+        Some(ThemeAct::Reload) => app.reload_themes(ctx),
+        Some(ThemeAct::Export) => app.export_theme(ctx),
+        None => {}
+    }
     if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape)) {
         open = false;
     }
     app.show_prefs = open;
+}
+
+/// What Preferences › Theme has picked: following the system, a built-in palette, or a theme
+/// of the user's own by its file's name (ADR 0117).
+#[derive(Clone, Debug, PartialEq)]
+enum ThemeChoice {
+    System,
+    BuiltIn(crate::theme::Palette),
+    Mine(String),
+}
+
+/// The buttons under the themes (ADR 0117), run once the window is drawn.
+#[derive(Clone, Copy)]
+enum ThemeAct {
+    OpenFolder,
+    Reload,
+    Export,
 }
 
 // ----- licences ---------------------------------------------------------------------------------

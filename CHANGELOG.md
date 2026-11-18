@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+* **Themes of your own** (#340, ADR 0117, M8): a theme is a small JSON file that names colours
+  for the interface's roles, kept in `themes` in the settings folder (`data/themes` in a
+  portable copy).
+  * **Preferences › Appearance › Theme** lists your themes under the built-in ones and applies
+    one as soon as you click it. **Export Current Theme** writes the look in use as a file to
+    start from, **Open Themes Folder** shows where they are, and **Reload** reads them again, so
+    an edit shows at once without restarting or rebuilding.
+  * **A theme that would be hard to read is not used.** Contrast is measured for every pair of
+    colours drawn together: text needs 4.5:1 and icons and the focus ring 3:1 (WCAG AA). A theme
+    that falls short, names a role that doesn't exist or has a colour that can't be read is
+    refused whole, never applied in part, and says what to change, such as "text_dim on panel
+    has a contrast of 2.47:1; it needs 4.5:1".
+  * **Colour in icons and accent gradients**, from the theme: `icon_accent` fills an icon's
+    closed shapes under its outline, and `accent_end` turns the accent bars beside panel titles
+    and under the active tab into a gradient. The built-in themes are unchanged.
+  * `anicraft --check-theme <file>` checks a theme without opening a window, and
+    `anicraft --theme <file>.json` uses one for a single run.
+
+* **Convert Audio to Keyframes and Auto Lip-Sync say when a sound can drift** (ADR 0114
+  follow-up, M8): with a sound whose sync is Event or Start, the dialog notes that the keys
+  can drift from what is heard after a jump on the timeline, and that Stream keeps them locked.
+
 * **Convert Audio to Keyframes and Auto Lip-Sync** (ADR 0114, #332, M5).
   * **Convert Audio to Keyframes** (Modify › Timeline, or **To Keyframes…** in a sound
     keyframe's Properties): the sound's loudness on each frame drives an object on another

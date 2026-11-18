@@ -113,3 +113,7 @@ back into the dialog to edit them.
 Any sync mode but Stop is accepted, although the task said "from a stream sound". An Event
 sound keeps time with the frames only while the movie plays straight through, so the keys can
 drift from what is heard after a jump. The dialog doesn't warn about it yet.
+
+Answered in the follow-up (with ADR 0117's PR): both dialogs now show one line under the frames
+when the sound's sync is not Stream, saying the keys can drift after a jump on the timeline and
+that Stream keeps them locked. They still accept the sound.
