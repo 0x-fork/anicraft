@@ -77,6 +77,8 @@ pub enum Dialog {
     TestMovie,
     EaseEditor,
     SoundEnvelope,
+    AudioKeys,
+    LipSync,
     Recover,
     Updates,
     ManageWorkspaces,
@@ -87,7 +89,7 @@ pub enum Dialog {
 }
 
 impl Dialog {
-    pub const ALL: [Dialog; 28] = [
+    pub const ALL: [Dialog; 30] = [
         Dialog::Preferences,
         Dialog::Shortcuts,
         Dialog::Licenses,
@@ -109,6 +111,8 @@ impl Dialog {
         Dialog::TestMovie,
         Dialog::EaseEditor,
         Dialog::SoundEnvelope,
+        Dialog::AudioKeys,
+        Dialog::LipSync,
         Dialog::Recover,
         Dialog::Updates,
         Dialog::ManageWorkspaces,
@@ -145,7 +149,7 @@ impl Dialog {
             Dialog::ManageWorkspaces => "manage_workspaces",
             Dialog::SaveAsCommand => "save_as_command",
             Dialog::ManageSavedCommands => "manage_saved_commands",
-            Dialog::Updates | Dialog::PluginSettings | Dialog::Palette | Dialog::CloseUnsaved => return None,
+            Dialog::Updates | Dialog::PluginSettings | Dialog::AudioKeys | Dialog::LipSync | Dialog::Palette | Dialog::CloseUnsaved => return None,
         })
     }
 
@@ -172,6 +176,8 @@ impl Dialog {
             Dialog::TestMovie => "interactivity.md#test-movie",
             Dialog::EaseEditor => "tweens.md#custom-eases",
             Dialog::SoundEnvelope => "images-and-sound.md#effects-and-the-envelope",
+            Dialog::AudioKeys => "images-and-sound.md#convert-audio-to-keyframes",
+            Dialog::LipSync => "images-and-sound.md#auto-lip-sync",
             Dialog::Recover => "getting-started.md#autosave-and-crash-recovery",
             Dialog::Updates => "getting-started.md#install-anicraft",
             Dialog::ManageWorkspaces => "workspace.md#workspaces",
@@ -230,6 +236,9 @@ pub const COMMAND_TOPICS: &[(&str, &str)] = &[
     ("scene.", "timeline.md#scenes"),
     ("script.", "interactivity.md#frame-scripts-in-actionscript-30"),
     ("sound.", "images-and-sound.md#sounds-on-keyframes"),
+    ("sound.analyse", "images-and-sound.md#convert-audio-to-keyframes"),
+    ("sound.lip_sync", "images-and-sound.md#auto-lip-sync"),
+    ("sound.to_keyframes", "images-and-sound.md#convert-audio-to-keyframes"),
     ("stroke.", "drawing.md#line-styles"),
     ("swatch.", "drawing.md#swatches"),
     ("symbol.", "symbols-and-library.md#making-a-symbol"),
@@ -337,6 +346,13 @@ pub fn subject(app: &App, ctx: &egui::Context, pointer: bool) -> Subject {
     // Expand Fill and Soften Fill Edges (ADR 0109).
     if app.shape_dialog.is_some() {
         return Subject::Dialog(Dialog::ShapeEdges);
+    }
+    // Convert Audio to Keyframes and Auto Lip-Sync (ADR 0114).
+    if let Some(d) = &app.audio_keys {
+        return Subject::Dialog(match d.kind {
+            crate::audio_keys::Kind::Keys => Dialog::AudioKeys,
+            crate::audio_keys::Kind::Lips => Dialog::LipSync,
+        });
     }
     if app.plugin_dialog.is_some() {
         return Subject::Dialog(Dialog::PluginSettings);

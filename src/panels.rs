@@ -1306,6 +1306,15 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
                     ui.label(text(Type::Caption, tr!("of {frames}", frames = frames)));
                     mixed(ui, m.first_frame);
                 });
+                // Animate's Lip Syncing sits with Looping: the frames of a mouth symbol picked
+                // by a sound on the timeline (ADR 0114).
+                if app.s.timeline().layers.iter().any(|l| l.has_sounds()) {
+                    row_prose(ui, tr!("Lip sync"), |ui| {
+                        if ui.small_button(tr!("Lip Sync…")).on_hover_text(tr!("Auto Lip-Sync: a sound on the timeline picks this symbol's frame for each mouth shape")).named(tr!("Auto lip-sync")).clicked() {
+                            crate::audio_keys::open(app, crate::audio_keys::Kind::Lips);
+                        }
+                    });
+                }
             } else if kind == SymbolKind::MovieClip {
                 ui.label(text(Type::Caption, trn!("Plays its {n}-frame timeline on a loop from when it appears.", "Plays its {n}-frame timeline on a loop from when it appears.", frames)));
             }
@@ -3001,6 +3010,15 @@ fn sound_rows(app: &mut App, ui: &mut egui::Ui, current: Option<anicraft_engine:
         .set_name(tr!("Sound effect"));
         if ui.small_button(tr!("Edit…")).on_hover_text(tr!("Edit Envelope: the volume of each channel over the sound's time")).named(tr!("Edit sound envelope")).clicked() {
             crate::envelope::open(app);
+        }
+    });
+    // What the sound can drive (ADR 0114): an object's property by its loudness, or a mouth.
+    row_prose(ui, tr!("Animate"), |ui| {
+        if ui.small_button(tr!("To Keyframes…")).on_hover_text(tr!("Convert Audio to Keyframes: the sound's loudness keys an object's scale, alpha, position, rotation or first frame")).named(tr!("Convert audio to keyframes")).clicked() {
+            crate::audio_keys::open(app, crate::audio_keys::Kind::Keys);
+        }
+        if ui.small_button(tr!("Lip Sync…")).on_hover_text(tr!("Auto Lip-Sync: the speech picks the frames of a graphic symbol of mouth poses")).named(tr!("Auto lip-sync")).clicked() {
+            crate::audio_keys::open(app, crate::audio_keys::Kind::Lips);
         }
     });
     if let Some(x) = app.s.doc.sound(f.sound) {

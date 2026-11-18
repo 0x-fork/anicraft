@@ -31,6 +31,7 @@ pub(crate) fn safe_to_install(app: &crate::app::App) -> bool {
         && app.tl_drag == crate::timeline::TlDrag::None
         && app.me_drag.is_none()
         && app.plugin_dialog.is_none()
+        && app.audio_keys.is_none()
         && app.envelope.is_none()
 }
 

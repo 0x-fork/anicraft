@@ -643,6 +643,15 @@ fn panic_hunt_every_command() {
         json!({"sound": SOUND, "frame": 3, "extend": true, "name": "renamed"}),
         json!({"sound": u64::MAX, "repeat": 1e9}),
         json!({"sound": "a", "sync": 3}),
+        // Audio to keyframes and lip-sync (ADR 0114): every property at its limits, ranges
+        // past the sound, mouths that aren't frames, on whatever layer and object is there.
+        json!({"property": "scale", "min": 1, "max": 10_000, "threshold": 0, "smoothing": 24, "step": 1, "output": "keyframes", "to": 99_999}),
+        json!({"property": "rotation", "min": -3600, "max": 3600, "output": "motion", "channel": "left", "step": 240, "layer": 2}),
+        json!({"property": "first_frame", "min": 0, "max": 100_000, "threshold": 0.99, "from": 0, "to": 0, "mouths": {"rest": u64::MAX, "open": "nope"}}),
+        json!({"property": "alpha", "min": 100, "max": 0, "sound_layer": u64::MAX, "sound_frame": u64::MAX, "hold": 12, "what": "visemes"}),
+        json!({"property": "x", "min": -1e5, "max": 1e5, "from": 5, "to": 2, "element": u64::MAX, "mouths": [1, 2], "hold": 0, "what": 7}),
+        json!({"property": "y", "min": f64::NAN, "max": 1e30, "threshold": -1, "smoothing": 1e9, "channel": "middle", "step": 0, "output": "film", "mouths": {"grin": 1}}),
+        json!({"property": "scale_x", "min": 100, "max": 150, "sound_layer": 1, "sound_frame": 0, "layer": 1, "from": 0, "to": 100_000, "hold": 2, "mouths": {"closed": 0, "wide": 0}}),
         // Effects, envelopes and layer volumes (ADR 0039).
         json!({"effect": "custom", "envelope": [{"at": 1e300, "left": 2, "right": -1}], "volume": 1e30, "muted": "x"}),
         json!({"effect": "fade_in", "envelope": (0..40).map(|i| json!([i, 0.5, 0.5])).collect::<Vec<_>>(), "volume": -0.5}),

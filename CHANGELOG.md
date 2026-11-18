@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+* **Convert Audio to Keyframes and Auto Lip-Sync** (ADR 0114, #332, M5).
+  * **Convert Audio to Keyframes** (Modify › Timeline, or **To Keyframes…** in a sound
+    keyframe's Properties): the sound's loudness on each frame drives an object on another
+    layer. Pick its **scale**, **alpha**, **X** or **Y offset**, **rotation**, or a graphic
+    symbol's **first frame**, and the value in silence and at the loudest frame. **Threshold**
+    ignores background noise, **Smoothing** calms the movement without moving the beat,
+    **Key every** animates on twos or threes, and stereo sounds can be measured by channel. The
+    keys are written as **keyframes**, or as a **motion tween's property curve** that the
+    Motion Editor shows.
+  * **Auto Lip-Sync** (Modify › Timeline, or **Lip Sync…** beside Looping for a graphic
+    instance): speech picks the frame of a graphic symbol of mouth poses for every frame, from
+    five mouth shapes (rest, open, wide, round, closed). Mouths are found by the symbol's frame
+    labels, as the Lip-sync mouth chart template names them, and can be changed. It listens to
+    where each frame's energy lies, with no speech recognition and nothing sent anywhere; it
+    is a first pass to polish by hand.
+  * **Everything previews live**: a graph of the sound's loudness with the threshold, the
+    value the keys follow and where each key lands (or a row per mouth), and the keys
+    themselves on the stage and the timeline. OK is one undo step; Cancel leaves nothing.
+  * Headless: `sound.to_keyframes`, `sound.lip_sync` and `sound.analyse` (levels or mouth
+    shapes per frame), in `anicraft-cli`, MCP and plug-ins. The same sound always gives the
+    same keys.
+  * Fixed: a test of the graphics-failure handling could fail at random when another test was
+    running the app at the same moment; it no longer shares state with them.
 * **Pen tool improvements** (fixes #319, ADR 0115, M1): the Pen now does what Animate's does
   on the point you just placed and on paths you drew earlier.
   * **Click the last point** to make it a corner, so the next segment leaves it sharp; click

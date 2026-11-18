@@ -393,6 +393,10 @@ pub struct App {
     /// (ADR 0109).
     pub shape_dialog: Option<crate::shape_dialogs::ShapeDialog>,
     pub shape_last: crate::shape_dialogs::Last,
+    /// Convert Audio to Keyframes and Auto Lip-Sync (ADR 0114): the dialog while it is open
+    /// (its preview is a gesture it keeps open until OK or Cancel), and what it was last given.
+    pub audio_keys: Option<crate::audio_keys::Dialog>,
+    pub audio_keys_last: crate::audio_keys::Settings,
     pub show_about: bool,
     pub show_files: bool,
     pub show_licenses: bool,
@@ -764,6 +768,8 @@ impl App {
             tl_color_open: None,
             convert_last: Default::default(),
             shape_dialog: None,
+            audio_keys: None,
+            audio_keys_last: crate::audio_keys::Settings::default(),
             shape_last: Default::default(),
             show_about: false,
             show_files: false,
@@ -1249,6 +1255,45 @@ impl App {
             .collect();
         let path = std::env::temp_dir().join("anicraft-beat.wav");
         if std::fs::write(&path, anicraft_audio::wav::encode(rate, 1, &beat, anicraft_audio::wav::Bits::Int16)).is_err() {
+            return false;
+        }
+        self.perform("file.import", json!({"path": path.display().to_string()}));
+        true
+    }
+
+    /// A few made-up syllables, for screenshots of lip-sync: vowels as their first two
+    /// formants (ah, ee, oo, oh), short stops and a hum between them, two and a half seconds.
+    fn import_demo_speech(&mut self) -> bool {
+        let rate = 22_050u32;
+        // (seconds, first formant, second formant, the second's share; 0 Hz is silence)
+        let parts: [(f32, f32, f32, f32); 12] = [
+            (0.30, 0.0, 0.0, 0.0),
+            (0.26, 730.0, 1090.0, 0.5),
+            (0.07, 0.0, 0.0, 0.0),
+            (0.22, 270.0, 2290.0, 0.25),
+            (0.26, 300.0, 870.0, 0.3),
+            (0.22, 0.0, 0.0, 0.0),
+            (0.24, 570.0, 840.0, 0.5),
+            (0.07, 0.0, 0.0, 0.0),
+            (0.30, 730.0, 1090.0, 0.5),
+            (0.22, 530.0, 1840.0, 0.3),
+            (0.08, 0.0, 0.0, 0.0),
+            (0.26, 300.0, 870.0, 0.3),
+        ];
+        let mut speech: Vec<f32> = Vec::new();
+        for (seconds, f1, f2, share) in parts {
+            let n = (seconds * rate as f32) as usize;
+            for i in 0..n {
+                let t = i as f32 / rate as f32;
+                // Each syllable swells and falls away.
+                let swell = (std::f32::consts::PI * i as f32 / n as f32).sin().powf(0.6);
+                let voice = if f1 > 0.0 { 0.6 * (t * f1 * std::f32::consts::TAU).sin() + 0.6 * share * (t * f2 * std::f32::consts::TAU).sin() } else { 0.0 };
+                speech.push(swell * voice);
+            }
+        }
+        speech.extend(std::iter::repeat_n(0.0, (rate / 3) as usize));
+        let path = std::env::temp_dir().join("anicraft-hello.wav");
+        if std::fs::write(&path, anicraft_audio::wav::encode(rate, 1, &speech, anicraft_audio::wav::Bits::Int16)).is_err() {
             return false;
         }
         self.perform("file.import", json!({"path": path.display().to_string()}));
@@ -2466,6 +2511,39 @@ impl App {
                     self.run("timeline.goto", json!({"frame": 14}));
                 }
             }
+            Some("audiokeys") => {
+                // Convert Audio to Keyframes (ADR 0114): the beat as a stream, its dialog open
+                // on the demo's star, whose scale follows the beat (previewed on the timeline).
+                if self.import_demo_beat() {
+                    self.run("sound.set", json!({"frame": 0, "sync": "stream"}));
+                    let star = self.s.timeline().layers.iter().find(|l| l.name == "Star").map(|l| l.id.0);
+                    crate::audio_keys::open(self, crate::audio_keys::Kind::Keys);
+                    if let Some(id) = star {
+                        crate::audio_keys::aim(self, id, 4);
+                    }
+                }
+            }
+            Some(which @ ("lipsync" | "lipsynced")) => {
+                // Auto Lip-Sync (ADR 0114): the mouth chart template with a few made-up
+                // syllables on a sound layer; its dialog open with the mouths previewed, or
+                // ("lipsynced") the result on the timeline, the Mouth layer active on an "oh".
+                self.perform("file.new_from_template", json!({"template": "lip-sync"}));
+                if self.import_demo_speech() {
+                    self.run("sound.set", json!({"frame": 0, "sync": "stream"}));
+                    let mouth = self.s.timeline().layers.iter().find(|l| l.name == "Mouth").map(|l| l.id.0);
+                    crate::audio_keys::open(self, crate::audio_keys::Kind::Lips);
+                    if which == "lipsynced" {
+                        crate::audio_keys::finish(self);
+                        if let Some(id) = mouth {
+                            self.run("layer.select", json!({"layer": id}));
+                        }
+                        self.run("timeline.goto", json!({"frame": 10}));
+                        self.s.mark_saved();
+                    } else if let Some(id) = mouth {
+                        crate::audio_keys::aim(self, id, 10);
+                    }
+                }
+            }
             Some("plugineases") => {
                 // The demo ball's tween on a plug-in's ease (Smooth Steps 4 of the sample
                 // Stepped Eases), the timeline's ease menu open on it (ANICRAFT_PLUGINS set).
@@ -3058,7 +3136,7 @@ impl App {
 
     /// Any modal (prompt, confirmation, close guard) is open: global shortcuts pause.
     pub fn modal_open(&self) -> bool {
-        self.prompt.is_some() || self.convert.is_some() || self.shape_dialog.is_some() || self.confirm.is_some() || self.tabs.asking() || self.plugin_dialog.is_some() || self.templates.save.is_some()
+        self.prompt.is_some() || self.convert.is_some() || self.shape_dialog.is_some() || self.audio_keys.is_some() || self.confirm.is_some() || self.tabs.asking() || self.plugin_dialog.is_some() || self.templates.save.is_some()
     }
 
     /// The single entry point for user-initiated commands: asks first when the engine says the
@@ -3432,6 +3510,16 @@ impl App {
         }
         if id == "modify.soften_fill_edges" {
             crate::shape_dialogs::open(self, crate::shape_dialogs::Kind::Soften);
+            return;
+        }
+        // Convert Audio to Keyframes and Auto Lip-Sync ask what the sound drives, with a live
+        // preview (ADR 0114; headless, the commands take the settings).
+        if id == "sound.to_keyframes" {
+            crate::audio_keys::open(self, crate::audio_keys::Kind::Keys);
+            return;
+        }
+        if id == "sound.lip_sync" {
+            crate::audio_keys::open(self, crate::audio_keys::Kind::Lips);
             return;
         }
         if id == "modify.transform_origin" {
@@ -4389,6 +4477,7 @@ impl App {
         autosave::window(self, &ctx);
         crate::desktop_ui::offer(self, &ctx);
         crate::plugins_ui::show(self, &ctx);
+        crate::audio_keys::show(self, &ctx);
         crate::plugin_export_ui::show(self, &ctx);
         crate::dock_float::floating(self, &ctx);
         crate::workspaces_window::show(self, &ctx);
@@ -4411,8 +4500,9 @@ impl App {
         self.files_window(&ctx);
 
         // Close a coalesced edit (property drags) once nothing is being dragged or typed.
-        // (A plug-in dialog keeps its preview gesture open until OK or Cancel.)
-        if self.s.in_gesture() && self.plugin_dialog.is_none() && self.drag == Drag::None && !ctx.egui_is_using_pointer() && ctx.memory(|m| m.focused().is_none()) {
+        // (A plug-in dialog and Convert Audio to Keyframes keep their preview gesture open
+        // until OK or Cancel.)
+        if self.s.in_gesture() && self.plugin_dialog.is_none() && self.audio_keys.is_none() && self.drag == Drag::None && !ctx.egui_is_using_pointer() && ctx.memory(|m| m.focused().is_none()) {
             self.s.end_gesture();
         }
 
