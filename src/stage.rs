@@ -60,6 +60,8 @@ pub struct Cache {
     /// `(ready, needed)` visible tiles this frame.
     pub ready: (usize, usize),
     pub canvas: Rect,
+    /// The stage has been laid out once, so `canvas` is where it really was last frame.
+    laid_out: bool,
     pub service: Option<RenderService>,
     /// Document state of the picture on screen (an edit makes it differ).
     pub shown_state: Option<anicraft_engine::StateId>,
@@ -73,7 +75,7 @@ pub struct Cache {
 
 impl Default for Cache {
     fn default() -> Self {
-        Cache { tiles: Vec::new(), tick: 0, ms: 0.0, ready: (0, 0), canvas: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), service: None, shown_state: None, gpu: Default::default(), drawn_by: None, pattern: None }
+        Cache { tiles: Vec::new(), tick: 0, ms: 0.0, ready: (0, 0), canvas: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), laid_out: false, service: None, shown_state: None, gpu: Default::default(), drawn_by: None, pattern: None }
     }
 }
 
@@ -214,7 +216,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     crate::camera_tool::on_tool_change(app);
     crate::shape_envelope::settle(app);
     crate::camera_tool::tick(app, ui.ctx(), now);
-    app.stage_cache.canvas = canvas;
+    let canvas_was = std::mem::replace(&mut app.stage_cache.canvas, canvas);
+    let laid_out = std::mem::replace(&mut app.stage_cache.laid_out, true);
     let resp = ui.allocate_rect(canvas, Sense::click_and_drag());
     // The drawing surface: Ctrl+F6 lands here, and screen readers hear the tool in hand.
     crate::a11y::anchor(ui, crate::a11y::Region::Stage, canvas, &resp);
@@ -228,6 +231,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && app.view.pan == egui::Vec2::ZERO
     {
         app.view.fit = true;
+    }
+    // Otherwise the artist chose this view, and a panel that grows or shrinks (the Timeline's
+    // top edge, a dock, the rulers, the window) only covers or reveals the stage: the artwork
+    // stays where it is on screen (#423). The pan is measured from the canvas centre, so it
+    // takes up the centre's move.
+    if laid_out && !app.view.fit && canvas_was != canvas && canvas_was.width() > 10.0 && canvas_was.height() > 10.0 {
+        app.view.pan += canvas_was.center() - canvas.center();
     }
     if app.view.fit && canvas.width() > 10.0 && canvas.height() > 10.0 {
         app.view.zoom = ((canvas.width() - 64.0) / size.x).min((canvas.height() - 64.0) / size.y).clamp(0.05, 64.0);
