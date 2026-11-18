@@ -1087,11 +1087,14 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             let (sx0, sy0) = (sx, sy);
             // Negative is a mirror (Flip). Only edits are clamped: a scale merely shown is never
             // rewritten (#116). The engine refuses a scale too near zero.
+            // Whole percentages without a decimal ("100 %"), so both fields, the lock and the
+            // mixed mark fit beside the label at the dock's default width.
+            let percent = |v: f64, _: std::ops::RangeInclusive<usize>| if (v - v.round()).abs() < 0.05 { format!("{v:.0}") } else { format!("{v:.1}") };
             let a = ui
-                .add(egui::DragValue::new(&mut sx).suffix(" %").speed(0.5).range(-10000.0..=10000.0).clamp_existing_to_range(false).max_decimals(1))
+                .add(egui::DragValue::new(&mut sx).suffix(" %").speed(0.5).range(-10000.0..=10000.0).clamp_existing_to_range(false).max_decimals(1).custom_formatter(percent))
                 .named(tr!("Scale width"));
             let b = ui
-                .add(egui::DragValue::new(&mut sy).suffix(" %").speed(0.5).range(-10000.0..=10000.0).clamp_existing_to_range(false).max_decimals(1))
+                .add(egui::DragValue::new(&mut sy).suffix(" %").speed(0.5).range(-10000.0..=10000.0).clamp_existing_to_range(false).max_decimals(1).custom_formatter(percent))
                 .named(tr!("Scale height"));
             // The Scale lock (#304): view state, off by default. On, editing one axis scales
             // the other so the selection keeps its width:height proportion.
@@ -1109,7 +1112,13 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
                 }
                 live(app, tr_noop!("Scale"), "element.set_transform", json!({"sx": sx / 100.0, "sy": sy / 100.0}));
             }
-            mixed(ui, m.scale);
+            // Two fields and the lock fill the row: "mixed" as one faint mark (its hover says it
+            // in words), so the values stay beside their label instead of wrapping under it.
+            if m.scale {
+                ui.label(text(Type::Caption, "≠").color(T.text_faint))
+                    .on_hover_text(tr!("The selected elements differ here; it shows the first one's. A change applies to all of them"))
+                    .named(tr!("mixed"));
+            }
         });
         row(ui, tr!("Rotation"), |ui| {
             if ui.add(egui::DragValue::new(&mut rot).suffix("°").speed(0.5).range(-360.0..=360.0).max_decimals(1)).named(tr!("Rotation")).changed() {
