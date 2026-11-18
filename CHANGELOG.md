@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+* **Lines are drawn once, with no darker edges where their pieces overlapped** (ADR 0110, M3).
+  A line used to be filled as many small overlapping pieces, and pixels on its edge where two
+  pieces met came out up to half a pixel too dark: along wide curves, at round corners and
+  ends, where dashes' round ends ran together, and as dark knots at the corners of outlined
+  rectangles at small sizes. A line is now filled as one outline, on the stage (GPU and CPU)
+  and in every render and export of pixels, so it looks the same as the fill Convert Lines to
+  Fills makes from it: identical with corners, flat or square ends and dashes on straight
+  runs, and within the renderer's 0.1 px flattening on curves and round ends.
+  * A see-through line that crosses itself, folds back, or has overlapping dashes is covered
+    once everywhere, as before, and now also exactly at the edges of the overlap.
+  * SVG and HTML exports of variable-width lines write one clean outline instead of hundreds
+    of overlapping pieces.
+  * Render time is unchanged for ordinary outlined artwork (2,000 outlined shapes at 1080p:
+    9.3 to 9.0 ms; the renderers get 3 to 4 times fewer edges) and 4 to 8 % more for scenes
+    made only of lines that cross themselves.
+
 * **Fixes from your reports: drawing, selection, transform and the timeline** (M1, ADR 0108).
   * **Fixed: a drawing could vanish under a new brush stroke** (fixes #308). Where a stroke
     crossed an older one at a shallow angle, the merge could lose the older fill, sometimes
@@ -37,6 +53,7 @@
   * Checked and kept fixed with tests: a flipped symbol or image is no longer squashed by the
     Properties panel, and undoes (fixes #310, #371); Break Apart works on an imported image
     and a second time on text (fixes #341, #299).
+
 * **Modify › Shape, the colour picker's eyedropper and transformation origins, from user
   reports** (ADR 0109, M1).
   * **Convert Lines to Fills** (#179): each selected line becomes a fill of its exact outline
