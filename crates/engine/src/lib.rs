@@ -687,6 +687,13 @@ impl Session {
         self.history.budget_bytes = budget;
     }
 
+    /// Drops what the session keeps only to draw faster (its display list and the picture of an
+    /// open symbol in place): a document put aside while another is shown keeps none (ADR 0112).
+    pub fn drop_caches(&self) {
+        self.dl_cache.replace(None);
+        self.picture_cache.replace(None);
+    }
+
     /// Takes over from `from` what belongs to the editor rather than to one document (ADR
     /// 0112): the clipboards, the tool style, the plug-ins, recent files, brushes and filter
     /// presets, and how the rulers, grid and guides show. An editor with several documents open
