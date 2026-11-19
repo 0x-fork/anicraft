@@ -53,7 +53,7 @@ pub use aids::{Aids, GUIDE_REACH, Grid, Guide, GuideAxis, MAX_GUIDES};
 pub use nine_slice::symbol_box;
 pub use rich_text::{BaselineShift, CharStyle, MAX_TEXT_RUNS, MAX_URL, ParagraphStyle, StyleSummary, TextFill, TextRun, safe_url};
 pub use armature::{Armature, Bone, BoneId, JointAngle, Limits, Pose};
-pub use eval::{DisplayItem, DisplayList, Group, MAX_SYMBOL_DEPTH, evaluate, evaluate_guided, evaluate_layer_elements, evaluate_shown, evaluate_player, evaluate_scene, evaluate_scene_camera, evaluate_timeline, evaluate_timeline_at, guide_walk, instance_start};
+pub use eval::{DisplayItem, DisplayList, Group, MAX_EVAL_ELEMENTS, MAX_SYMBOL_DEPTH, evaluate, evaluate_guided, evaluate_layer_elements, evaluate_shown, evaluate_player, evaluate_scene, evaluate_scene_camera, evaluate_timeline, evaluate_timeline_at, guide_walk, instance_start};
 pub use actions::{Action, ButtonEvent, EventHandler, FrameScript, Language, PluginScript, SourceScript};
 
 use anicraft_geom::{Affine, FillRule, Path, Rect, Vec2};
@@ -1077,16 +1077,18 @@ impl Element {
     }
     /// Local-space bounds (control-point bounds for shapes, `None` for symbols).
     pub fn local_bounds(&self, doc: &Document) -> Rect {
-        element_bounds(doc, self, &Affine::IDENTITY, 0)
+        element_bounds(doc, self, &Affine::IDENTITY, 0, &std::cell::Cell::new(MAX_EVAL_ELEMENTS))
     }
     /// Bounds in the parent's space.
     pub fn bounds(&self, doc: &Document) -> Rect {
-        element_bounds(doc, self, &self.transform, 0)
+        element_bounds(doc, self, &self.transform, 0, &std::cell::Cell::new(MAX_EVAL_ELEMENTS))
     }
 }
 
-fn element_bounds(doc: &Document, el: &Element, xf: &Affine, depth: usize) -> Rect {
-    if depth > MAX_SYMBOL_DEPTH {
+/// `work` is the query's allowance of element visits ([`MAX_EVAL_ELEMENTS`]): past it the rest
+/// adds nothing, as in evaluation.
+fn element_bounds(doc: &Document, el: &Element, xf: &Affine, depth: usize, work: &std::cell::Cell<u32>) -> Rect {
+    if depth > MAX_SYMBOL_DEPTH || !eval::spend(work) {
         return Rect::EMPTY;
     }
     match &el.kind {
@@ -1099,7 +1101,7 @@ fn element_bounds(doc: &Document, el: &Element, xf: &Affine, depth: usize) -> Re
         ElementKind::Group { .. } => {
             let mut r = Rect::EMPTY;
             for child in el.kind.group_members() {
-                r = r.union(&element_bounds(doc, &child, &xf.mul(&child.transform), depth + 1));
+                r = r.union(&element_bounds(doc, &child, &xf.mul(&child.transform), depth + 1, work));
             }
             r
         }
@@ -1110,7 +1112,7 @@ fn element_bounds(doc: &Document, el: &Element, xf: &Affine, depth: usize) -> Re
                 if let Some(kf) = layer.keyframes.first() {
                     for child in &kf.elements {
                         let m = xf.mul(&child.transform);
-                        r = r.union(&element_bounds(doc, child, &m, depth + 1));
+                        r = r.union(&element_bounds(doc, child, &m, depth + 1, work));
                     }
                 }
             }
