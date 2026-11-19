@@ -522,7 +522,7 @@ fn export_svg(s: &mut Session, p: &Value) -> Result<Value> {
     let path = PathBuf::from(str_req(p, "path")?);
     let frame = opt_u32(p, "frame")?.unwrap_or(s.frame);
     if frame >= s.frame_count() {
-        return Err(EngineError::Param(format!("frame {} is past the end (the timeline has {} frames)", frame + 1, s.frame_count())));
+        return Err(EngineError::Param(format!("frame {} is past the end (the timeline has {} frames)", u64::from(frame) + 1, s.frame_count())));
     }
     let svg = frame_svg(&s.doc, s.doc.scene_start(s.scene).saturating_add(frame));
     crate::vfs::write(&path, svg.as_bytes())?;
@@ -909,4 +909,32 @@ fn set_stage(s: &mut Session, p: &Value) -> Result<Value> {
         s.doc.stage.background = c;
     }
     Ok(json!({"width": s.doc.stage.width, "height": s.doc.stage.height, "fps": s.doc.stage.fps, "background": s.doc.stage.background.to_hex()}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oversized_svg_frame_is_an_error_without_writing() {
+        // Keep this test's memory-backed files off reused test worker threads.
+        std::thread::spawn(|| {
+            crate::vfs::use_memory();
+            let mut s = Session::default();
+            let info = s.info();
+            let path = std::path::Path::new("frame.svg");
+            crate::vfs::put(path, b"keep this file".to_vec()).unwrap();
+            for (frame, shown) in [(u32::MAX, "4294967296"), (1, "2")] {
+                let error = s.execute("file.export_svg", &json!({"path": "frame.svg", "frame": frame, "confirm": true})).unwrap_err();
+                assert_eq!(error.to_string(), format!("frame {shown} is past the end (the timeline has 1 frames)"));
+                assert_eq!(crate::vfs::read(path).unwrap(), b"keep this file");
+                assert_eq!(s.info(), info);
+            }
+            s.execute("file.export_svg", &json!({"path": "frame.svg", "frame": 0, "confirm": true})).unwrap();
+            assert!(crate::vfs::read_to_string(path).unwrap().contains("<svg"));
+            assert_eq!(s.info(), info);
+        })
+        .join()
+        .unwrap();
+    }
 }
