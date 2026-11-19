@@ -75,7 +75,9 @@ step, and the shapes are selected. Pixels under half opacity stay empty.
 The shapes are raw shapes made of lines and quadratic curves, and they fit together without gaps.
 Where raw shapes on the same layer touch them, they merge as any drawing does. A large photo at a
 low threshold makes a great many shapes; the trace stops at 20,000 and asks for a higher
-threshold or minimum area.
+threshold or minimum area. A picture that is nearly all speckle (more than two million separate
+areas of colour) is refused the same way. A bitmap of up to 4096 × 4096 pixels can be traced; a
+large one can take a few seconds.
 
 ### Convert to Bitmap
 

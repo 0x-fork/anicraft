@@ -298,3 +298,31 @@ fn convert_to_bitmap_then_trace_comes_back_to_the_drawing() {
     let Some(Paint::Solid(c)) = sh.fill else { panic!("not a solid shape") };
     assert!((c.r - 0x1a as f32 / 255.0).abs() < 0.02 && (c.g - 0x8f as f32 / 255.0).abs() < 0.02, "{c:?}");
 }
+
+/// Deterministic speckle: no two neighbours alike.
+fn speckle(x: f32, y: f32) -> [u8; 4] {
+    let mut h = (x as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (y as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+    h ^= h >> 29;
+    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    h ^= h >> 32;
+    [h as u8, (h >> 8) as u8, (h >> 16) as u8, 255]
+}
+
+#[test]
+fn speckle_is_refused_in_a_sentence_before_it_costs_memory() {
+    // 1448 x 1448 pixels of noise at threshold 1: more areas than a trace may grow. It stops
+    // at the limit (the areas are counted as they are found), and says what to change.
+    let px = image(1448, 1448, speckle);
+    let err = trace(&px, &TraceSettings { color_threshold: 1, min_area: 1000, ..TraceSettings::default() }).unwrap_err().to_string();
+    assert!(err.contains("separate areas of colour") && err.contains("raise the colour threshold"), "{err}");
+    // Under the limit the same speckle is traced: small areas join until each has the minimum
+    // area, and the shapes still tile the whole image.
+    let px = image(96, 96, speckle);
+    let out = trace(&px, &TraceSettings { color_threshold: 1, min_area: 64, curve_fit: CurveFit::Pixels, ..TraceSettings::default() }).unwrap();
+    assert!(!out.is_empty() && out.len() <= 96 * 96 / 64, "{} shapes", out.len());
+    let total: f32 = out.iter().map(|t| area(&t.path, &Affine::IDENTITY)).sum();
+    assert!((total - 96.0 * 96.0).abs() < 1.0, "the shapes cover {total} of 9216 pixels");
+    // And the refusal for too many shapes still names both settings.
+    let err = trace(&image(512, 512, speckle), &TraceSettings { color_threshold: 1, min_area: 1, ..TraceSettings::default() }).unwrap_err().to_string();
+    assert!(err.contains("at most 20000"), "{err}");
+}

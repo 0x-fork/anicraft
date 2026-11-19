@@ -1735,6 +1735,42 @@ impl App {
                 }
                 self.run("element.select", json!({"ids": ids}));
             }
+            Some("tracebitmap") => {
+                // Trace Bitmap (#463): a small picture (sky, sun, hills) placed twice. The left
+                // one is traced with the defaults and shows as selected raw shapes; the right
+                // one is selected with the dialog open over it.
+                self.run("layer.new", json!({"name": "Picture"}));
+                let dir = std::env::temp_dir().join("anicraft-shot-trace");
+                let _ = std::fs::create_dir_all(&dir);
+                let (w, h) = (260u32, 180u32);
+                let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+                for y in 0..h {
+                    for x in 0..w {
+                        let (fx, fy) = (x as f32, y as f32);
+                        let hill = 120.0 + 22.0 * (fx * 0.035).sin();
+                        let far = 100.0 + 16.0 * (fx * 0.05 + 1.3).cos();
+                        let c = if fy > hill {
+                            [58, 140, 84, 255]
+                        } else if fy > far {
+                            [104, 176, 120, 255]
+                        } else if (fx - 190.0).powi(2) + (fy - 52.0).powi(2) < 30.0 * 30.0 {
+                            [250, 206, 84, 255]
+                        } else {
+                            [120, 178, 232, 255]
+                        };
+                        rgba.extend_from_slice(&c);
+                    }
+                }
+                let path = dir.join("hills.png");
+                let bitmap = anicraft_engine::render::encode_png(w, h, &rgba).ok().filter(|png| std::fs::write(&path, png).is_ok()).and_then(|_| self.run("file.import_to_library", json!({"path": path.display().to_string(), "name": "hills.png"}))).and_then(|v| v["bitmap"].as_u64());
+                if let Some(b) = bitmap {
+                    self.tool = Tool::Select;
+                    self.run("library.place", json!({"bitmap": b, "x": 420, "y": 300}));
+                    self.run("modify.trace_bitmap", json!({}));
+                    self.run("library.place", json!({"bitmap": b, "x": 800, "y": 300}));
+                    crate::trace_dialog::open(self);
+                }
+            }
             Some("warp") => {
                 // Asset Warp (ADR 0079): a checkered bitmap and a striped banner, each pinned at
                 // three points and bent at frame 1, bent the other way at frame 24 (a classic

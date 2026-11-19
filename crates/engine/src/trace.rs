@@ -28,6 +28,10 @@ use std::collections::HashMap;
 pub const MAX_TRACE_PIXELS: u64 = 4096 * 4096;
 /// Most shapes one trace makes.
 pub const MAX_REGIONS: usize = 20_000;
+/// Most areas of colour before small ones join their neighbours. Every area costs memory while
+/// they are merged (a few hundred bytes at worst), so an image that is all speckle at a low
+/// colour threshold is refused here, in one sentence, instead of taking gigabytes.
+pub const MAX_GROWN_REGIONS: usize = 2_000_000;
 
 /// How closely outlines follow the pixels (Animate's Curve Fit).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,7 +142,7 @@ pub fn trace(px: &Pixels, set: &TraceSettings) -> Result<Vec<Traced>> {
     if w == 0 || h == 0 || (w as u64) * (h as u64) > MAX_TRACE_PIXELS || px.rgba.len() != w * h * 4 {
         return Err(EngineError::State(format!("a bitmap of at most {MAX_TRACE_PIXELS} pixels can be traced")));
     }
-    let mut map = grow(px, w, h, set.color_threshold.clamp(1, 500));
+    let mut map = grow(px, w, h, set.color_threshold.clamp(1, 500))?;
     absorb_small(&mut map, w, h, set.min_area.clamp(1, 1000));
     let shown = map.colors.iter().filter(|c| c.is_some()).count();
     if shown > MAX_REGIONS {
@@ -204,7 +208,7 @@ fn neighbours(i: usize, w: usize, h: usize) -> impl Iterator<Item = usize> {
 }
 
 /// Four-connected regions of similar colour, each compared with the mean of what joined it.
-fn grow(px: &Pixels, w: usize, h: usize, threshold: u32) -> RegionMap {
+fn grow(px: &Pixels, w: usize, h: usize, threshold: u32) -> Result<RegionMap> {
     let n = w * h;
     let mut lab = vec![NONE; n];
     let (mut colors, mut sizes) = (Vec::new(), Vec::new());
@@ -212,6 +216,11 @@ fn grow(px: &Pixels, w: usize, h: usize, threshold: u32) -> RegionMap {
     for seed in 0..n {
         if lab.get(seed) != Some(&NONE) {
             continue;
+        }
+        if colors.len() >= MAX_GROWN_REGIONS {
+            return Err(EngineError::State(format!(
+                "the bitmap has more than {MAX_GROWN_REGIONS} separate areas of colour at this colour threshold; raise the colour threshold or trace a smaller bitmap"
+            )));
         }
         let r = colors.len() as u32;
         let first = pixel(px, seed);
@@ -251,7 +260,7 @@ fn grow(px: &Pixels, w: usize, h: usize, threshold: u32) -> RegionMap {
         colors.push((!clear).then(|| Rgba::new(mean(0), mean(1), mean(2), f32::from(alpha) / 255.0)));
         sizes.push(count as u32);
     }
-    RegionMap { lab, colors, sizes }
+    Ok(RegionMap { lab, colors, sizes })
 }
 
 fn root(parent: &mut [u32], r: u32) -> u32 {

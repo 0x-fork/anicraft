@@ -2,12 +2,27 @@
 
 ## Unreleased
 
-* **Trace Bitmap and Convert to Bitmap** (#463): **Modify › Bitmap › Trace Bitmap…** turns a
-  placed bitmap into filled raw shapes, one per area of colour, with Animate's colour threshold,
-  minimum area, curve fit and corner threshold. The shapes are lines and quadratic curves that
-  share their edges, so they tile without gaps. **Modify › Convert to Bitmap** draws the
-  selection into a new Library bitmap and puts it in the selection's place. Both are one undo
-  step, and `modify.trace_bitmap` and `modify.convert_to_bitmap` for scripts.
+* **From outside contributors** (M8; thank you).
+  * **Trace Bitmap and Convert to Bitmap** (by NetterSilver, #489; fixes #463). **Modify ›
+    Bitmap › Trace Bitmap…** turns a placed bitmap into filled raw shapes, one per area of
+    colour, with Animate's colour threshold, minimum area, curve fit and corner threshold. The
+    shapes are lines and quadratic curves that share their edges, so they tile without gaps and
+    merge with raw shapes they touch. **Modify › Convert to Bitmap** draws the selection into a
+    new Library bitmap and puts it in the selection's place. Both are one undo step, and
+    `modify.trace_bitmap` and `modify.convert_to_bitmap` for scripts. A trace is bounded: a
+    bitmap of up to 4096 × 4096 pixels, at most 20,000 shapes, and a picture that is all
+    speckle at a low threshold is refused in a sentence instead of using gigabytes of memory.
+    A 2048 × 2048 photo-like image traces in about 0.2 s, a 4096 × 4096 one in about 0.9 s.
+  * **Selection dots follow a gradient's detail** (by Untoldent, #404, for #295). The stipple on
+    a selected gradient fill now shows narrow bands, hard stops and a small radial centre in
+    their own contrasting colour instead of blending across them, within a fixed budget of work
+    per frame, so a screen-sized gradient costs about a fifth more than before
+    (`docs/performance.md`).
+  * **Hebrew letters draw, and `iw` means Hebrew** (by Hagai Baram, #486; ADR 0040). Builds with
+    craft-fonts embed Noto Sans Hebrew as a fallback face, so Hebrew in layer, symbol and file
+    names no longer shows as empty boxes; the legacy language code `iw` (`iw_IL`) is read as
+    `he`. The interface is not offered in Hebrew yet: right-to-left layout waits for egui, and
+    `i18n::is_rtl_code` is ready for it.
 
 * **Themes of your own** (#340, ADR 0117, M8): a theme is a small JSON file that names colours
   for the interface's roles, kept in `themes` in the settings folder (`data/themes` in a
