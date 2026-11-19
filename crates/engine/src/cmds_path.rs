@@ -81,7 +81,7 @@ fn draw_path(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Param("param 'd' is too long".into()));
     }
     // Full SVG path data: relative commands, H/V, S/T shorthands and arcs too.
-    let path = anicraft_geom::svg::parse_path_data(d).map_err(|e| EngineError::Param(format!("param 'd': {e}")))?;
+    let path = anicraft_svg::parse_path_data(d).map_err(|e| EngineError::Param(format!("param 'd': {e}")))?;
     add_path(s, "path", path, p)
 }
 
@@ -305,7 +305,7 @@ fn extend(s: &mut Session, p: &Value) -> Result<Value> {
     if d.len() > 4_000_000 {
         return Err(EngineError::Param("param 'd' is too long".into()));
     }
-    let piece = anicraft_geom::svg::parse_path_data(d).map_err(|e| EngineError::Param(format!("param 'd': {e}")))?;
+    let piece = anicraft_svg::parse_path_data(d).map_err(|e| EngineError::Param(format!("param 'd': {e}")))?;
     let at_start = match opt_str(p, "end")?.unwrap_or("end") {
         "end" => false,
         "start" => true,
