@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+* **Trace Bitmap and Convert to Bitmap** (#463): **Modify › Bitmap › Trace Bitmap…** turns a
+  placed bitmap into filled raw shapes, one per area of colour, with Animate's colour threshold,
+  minimum area, curve fit and corner threshold. The shapes are lines and quadratic curves that
+  share their edges, so they tile without gaps. **Modify › Convert to Bitmap** draws the
+  selection into a new Library bitmap and puts it in the selection's place. Both are one undo
+  step, and `modify.trace_bitmap` and `modify.convert_to_bitmap` for scripts.
+
 * **Themes of your own** (#340, ADR 0117, M8): a theme is a small JSON file that names colours
   for the interface's roles, kept in `themes` in the settings folder (`data/themes` in a
   portable copy).

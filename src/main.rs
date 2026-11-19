@@ -100,6 +100,7 @@ mod test_movie;
 mod theme;
 mod theme_file;
 mod timeline;
+mod trace_dialog;
 #[cfg(target_arch = "wasm32")]
 mod web;
 mod widthtool;
