@@ -35,6 +35,7 @@ pub mod sample;
 pub mod templates;
 pub mod sound;
 pub mod swatch;
+pub mod video;
 
 pub use filter::{Channel, FILTER_PARAMS, Filter, FilterColor, FilterEntry, FilterParam, FilterProp, FilterSide, MAX_FILTER_SLOTS, pairing as filter_pairing, active as active_filters, any_active as any_active_filter, pairs_up as filters_pair_up, MAX_BLUR, MAX_QUALITY, MAX_RAMP_STOPS, REST_SNAP, default_bevel_ramp, default_glow_ramp, pinned_stop, ramp_at};
 pub use bitmap::{Bitmap, BitmapId, ImageError, MAX_BITMAP_EDGE, Pixels, base64_decode, base64_encode, decode_png, image_to_png};
@@ -1380,6 +1381,10 @@ pub struct Layer {
     /// [`Timeline::repair_rig`]; read through [`Timeline::rig_spaces`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rig_parent: Option<LayerId>,
+    /// A reference video to trace over (ADR 0116): shown on the stage under this layer's
+    /// artwork, never in the movie or an export. Its pictures are not in the document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<Arc<video::VideoRef>>,
 }
 
 /// How a mask layer's artwork reveals the layers it masks (ADR 0070).
@@ -1475,6 +1480,7 @@ impl PartialEq for Layer {
             && self.mask_mode == o.mask_mode
             && self.opacity.to_bits() == o.opacity.to_bits()
             && self.rig_parent == o.rig_parent
+            && self.video == o.video
             && match (&self.armature, &o.armature) {
                 (Some(a), Some(b)) => arc_eq(a, b),
                 (a, b) => a.is_none() && b.is_none(),
@@ -1513,6 +1519,7 @@ impl Layer {
             mask_mode: MaskMode::Coverage,
             opacity: 1.0,
             rig_parent: None,
+            video: None,
         }
     }
     /// The layer's own opacity, `0..=1` whatever a file says (not a number: opaque).
@@ -2119,7 +2126,7 @@ impl Document {
         }
         let mut max_id = 0u64;
         let scan = |l: &Layer, max_id: &mut u64| {
-            *max_id = (*max_id).max(l.id.0);
+            *max_id = (*max_id).max(l.id.0).max(l.video.as_ref().map_or(0, |v| v.id.0));
             for b in l.armature.iter().flat_map(|a| &a.bones) {
                 // A shape armature's joint nodes take ids from the same counter (ADR 0071).
                 *max_id = (*max_id).max(b.id.0).max(b.child.0).max(b.parent.0);
@@ -2154,6 +2161,7 @@ impl Document {
                 sanitize_depth(l);
                 sanitize_armature(l);
                 sanitize_warps(l);
+                sanitize_video(l);
                 scan(l, &mut max_id);
                 sanitize_groups(l, 0, &mut max_id);
             }
@@ -2197,6 +2205,7 @@ impl Document {
                 sanitize_depth(l);
                 sanitize_armature(l);
                 sanitize_warps(l);
+                sanitize_video(l);
                 scan(l, &mut max_id);
                 sanitize_groups(l, 0, &mut max_id);
             }
@@ -2210,6 +2219,16 @@ impl Document {
         }
         self.sanitize_library_tree(&mut max_id);
         self.next_id = self.next_id.max(max_id.saturating_add(1));
+    }
+}
+
+/// A reference video (ADR 0116) a file can't mean is repaired, or dropped. Touches only what
+/// needs it.
+fn sanitize_video(layer: &mut Arc<Layer>) {
+    let Some(v) = &layer.video else { return };
+    let fixed = v.sanitized();
+    if fixed.as_ref() != Some(&**v) {
+        Arc::make_mut(layer).video = fixed.map(Arc::new);
     }
 }
 

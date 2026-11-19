@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+* **Import Video** (#369, ADR 0116, M5): **File › Import › Import Video…** brings in MP4, MOV,
+  WebM and any other video the ffmpeg on your computer reads, for reference and rotoscoping.
+  * **Frames in the document**: the video's frames become bitmaps on a new layer from the
+    playhead, one keyframe per frame at the document's frame rate, kept together in a Library
+    folder, with the video's sound on a layer of its own in time with them. Choose a frame
+    step (2 animates on twos), the largest size, and where to start and how much to take.
+  * **Reference layer for tracing**: a locked guide layer right under the layer you are on shows
+    the video beneath what you draw as you scrub and play. The video stays a file, adds nothing to the document
+    and is never in the movie or an export. Fade it with the layer's opacity; relink a moved
+    file or remove the video in Layer Properties.
+  * **Told up front**: before anything starts, the window says how many pictures of what size
+    will come in and how much memory they take, and where a long video is cut short (2000
+    pictures or 1 GB at a time) with what to change. A progress window with **Cancel**;
+    cancelling leaves the document exactly as it was, and the whole import is one undo step.
+  * AniCraft still holds no video codec: your own ffmpeg does the decoding (the one Export
+    Video uses). Without ffmpeg, the window says how to install it.
+  * Headless: `file.import_video`, `file.video_info`, `layer.set_video`.
 * **Themes of your own** (#340, ADR 0117, M8): a theme is a small JSON file that names colours
   for the interface's roles, kept in `themes` in the settings folder (`data/themes` in a
   portable copy).

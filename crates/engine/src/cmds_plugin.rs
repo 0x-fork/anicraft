@@ -37,6 +37,8 @@ pub fn plugin_may_call(id: &str) -> std::result::Result<(), &'static str> {
         "edit.cut" | "edit.copy" | "edit.paste" | "edit.paste_in_place" | "timeline.cut_frames" | "timeline.copy_frames" | "timeline.paste_frames" | "frames.cut" | "frames.copy" | "frames.paste" | "ease.copy" | "ease.paste" => {
             Err("plug-ins don't use your clipboard")
         }
+        // A reference video is a file on this computer, read by a program AniCraft starts.
+        "layer.set_video" => Err("plug-ins can't read video files or start ffmpeg"),
         _ => match id.split('.').next().unwrap_or("") {
             "file" => Err("plug-ins can't open, save, import, export or publish files"),
             // Reading the settings is harmless; changing them changes what Publish writes where.
