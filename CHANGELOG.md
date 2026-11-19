@@ -9,6 +9,10 @@
   hints as `morphHintsList`, which the XFL and `.fla` importer didn't read, so tweens came in
   without them. They now come across with their letters and points.
 
+* **Fixed: imported Animate text keeps its 2 px line spacing.** A text run in an XFL or FLA
+  file that leaves `lineSpacing` out now gets Animate's 2 px between its lines, not 0, so
+  multi-line text sits as it did in Animate.
+
 * **Themes of your own** (#340, ADR 0117, M8): a theme is a small JSON file that names colours
   for the interface's roles, kept in `themes` in the settings folder (`data/themes` in a
   portable copy).
