@@ -134,8 +134,19 @@ impl Languages {
         self.list.get(i).or(self.list.first()).unwrap_or(&ENGLISH_LANGUAGE)
     }
 
-    fn find(&self, code: &str) -> Option<usize> {
+    fn normalize_code(code: &str) -> String {
         let code = code.trim().to_ascii_lowercase().replace('_', "-");
+        if code == "iw" {
+            "he".into()
+        } else if let Some(rest) = code.strip_prefix("iw-") {
+            format!("he-{rest}")
+        } else {
+            code
+        }
+    }
+
+    fn find(&self, code: &str) -> Option<usize> {
+        let code = Self::normalize_code(code);
         self.list.iter().position(|l| l.code == code)
     }
 
@@ -152,7 +163,7 @@ impl Languages {
 
     /// The best offered language for a system locale (`de-AT`, `pt_BR.UTF-8`, `zh-Hans-CN`).
     fn match_system(&self, locale: &str) -> Option<usize> {
-        let locale = locale.split(['.', '@']).next().unwrap_or(locale).to_ascii_lowercase().replace('_', "-");
+        let locale = Self::normalize_code(locale.split(['.', '@']).next().unwrap_or(locale));
         let tags: Vec<&str> = locale.split('-').filter(|t| !t.is_empty()).collect();
         let lang = *tags.first()?;
         let mut candidates = vec![locale.clone()];

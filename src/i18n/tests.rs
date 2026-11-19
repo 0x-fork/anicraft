@@ -425,6 +425,20 @@ fn system_locales_and_preferences_resolve() {
 }
 
 #[test]
+fn legacy_iw_locale_tags_normalize_to_hebrew() {
+    let embedded = [("he", "\tSave\tשמור\n", "@id\tlanguage.name\tעברית\n\tOpen\tפתח\n")];
+    let (l, problems) = Languages::new(&embedded, &["he"]);
+    assert!(problems.is_empty(), "{problems:?}");
+    let code = |pref: &str, sys: Option<&str>| l.get(l.resolve(pref, sys)).code.clone();
+    for tag in ["he", "he-IL", "iw", "iw-IL", "iw_IL.UTF-8"] {
+        assert_eq!(code(AUTO, Some(tag)), "he", "{tag}");
+    }
+    for pref in ["he", "HE", "iw", "IW"] {
+        assert_eq!(code(pref, None), "he", "{pref}");
+    }
+}
+
+#[test]
 fn the_interface_language_changes_lookups_on_this_thread() {
     // Built without catalogs (tests don't set CRAFT_I18N_DIR): English and the pseudo-locale.
     assert_eq!(set_language("xx"), "en");
