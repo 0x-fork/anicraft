@@ -313,7 +313,7 @@ fn offered_languages_have_their_own_catalog_and_a_ready_script() {
 #[test]
 fn georgian_is_offered_only_when_its_face_is_embedded() {
     let ka = [("ka", "", "@id\tlanguage.name\tქართული\n")];
-    let offered = |face: bool| Languages::new(&ka, &ready_with(face)).0.list.iter().any(|l| l.code == "ka");
+    let offered = |face: bool| Languages::new(&ka, &ready_with(face, false)).0.list.iter().any(|l| l.code == "ka");
     assert!(!offered(false), "no face, no Georgian");
     assert!(offered(true));
     // The real build agrees with its own face.
@@ -339,6 +339,44 @@ fn georgian_is_offered_only_when_its_face_is_embedded() {
     let prop = egui::FontId::proportional(14.0);
     assert!(ctx.fonts_mut(|f| f.has_glyphs(&prop, &letters)), "Proportional lacks Georgian letters");
     println!("georgian face test: ran, {} letters covered", letters.chars().count());
+}
+
+#[test]
+fn hebrew_is_offered_only_when_its_face_is_embedded() {
+    let he = [("he", "", "@id\tlanguage.name\tעברית\n")];
+    let offered = |face: bool| Languages::new(&he, &ready_with(false, face)).0.list.iter().any(|l| l.code == "he");
+    assert!(!offered(false), "no face, no Hebrew");
+    assert!(offered(true));
+    assert_eq!(ready_codes().contains(&"he"), crate::theme::hebrew_font().is_some());
+    if std::env::var("CRAFT_FONTS_REQUIRED").is_ok_and(|v| v == "1") {
+        assert!(crate::theme::hebrew_font().is_some(), "CRAFT_FONTS_REQUIRED=1 but this build embeds no valid NotoSansHebrew-Regular.ttf (craft-fonts `Hebr`)");
+    }
+    let Some(face) = crate::theme::hebrew_font() else {
+        println!("hebrew face test: skipped, this build embeds no Hebrew face");
+        return;
+    };
+    let letters: String = ('\u{05D0}'..='\u{05EA}').collect();
+    let fonts = anicraft_engine::text::Fonts::from_faces([face.to_vec()]);
+    let laid = fonts.layout(&letters, &anicraft_engine::text::Style::default()).expect("layout");
+    assert_eq!(laid.missing, 0, "the face lacks some of U+05D0..U+05EA");
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx, None, None);
+    ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+    let prop = egui::FontId::proportional(14.0);
+    assert!(ctx.fonts_mut(|f| f.has_glyphs(&prop, &letters)), "Proportional lacks Hebrew letters");
+    println!("hebrew face test: ran, {} letters covered", letters.chars().count());
+}
+
+#[test]
+fn rtl_helper_recognizes_hebrew_and_legacy_iw() {
+    assert!(is_rtl_code("he"));
+    assert!(is_rtl_code("he-IL"));
+    assert!(is_rtl_code("iw"));
+    assert!(is_rtl_code("iw_IL"));
+    assert!(is_rtl_code("ar"));
+    assert!(!is_rtl_code("en"));
+    assert!(!is_rtl_code("ka"));
+    assert!(!is_rtl());
 }
 
 #[test]

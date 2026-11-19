@@ -39,24 +39,41 @@ pub const PSEUDO: &str = "pseudo";
 /// Languages the interface can be drawn in today: written left to right, in scripts the bundled
 /// faces cover and egui lays out a letter at a time (Latin, Greek, Cyrillic). A catalog for any
 /// other locale is embedded but not offered (docs/localisation.md › Scripts and direction).
-/// A regional variant (`es-mx`) is ready when its language is. Georgian is not listed here: its
-/// face is not bundled, so [`ready_codes`] adds it only when the build embedded Noto Sans
-/// Georgian from craft-fonts.
+/// Georgian and Hebrew are not listed here: their faces are not bundled, so [`ready_codes`] adds
+/// them only when the build embedded Noto Sans Georgian / Noto Sans Hebrew from craft-fonts.
 pub const READY: &[&str] = &[
     "az", "bg", "bs", "ca", "cs", "da", "de", "el", "es", "et", "fi", "fr", "gl", "hr", "hu", "id", "it", "kk", "lt", "lv", "nb", "nl", "pl", "pt", "pt-br", "ro", "ru", "sk", "sl", "sq", "sr", "sr-latn", "sv", "tr", "uk",
 ];
 
 /// [`READY`] plus the languages whose script needs a craft-fonts face this build embedded.
 pub fn ready_codes() -> Vec<&'static str> {
-    ready_with(crate::theme::georgian_font().is_some())
+    ready_with(crate::theme::georgian_font().is_some(), crate::theme::hebrew_font().is_some())
 }
 
-fn ready_with(georgian_face: bool) -> Vec<&'static str> {
+fn ready_with(georgian_face: bool, hebrew_face: bool) -> Vec<&'static str> {
     let mut codes = READY.to_vec();
     if georgian_face {
         codes.push("ka");
     }
+    if hebrew_face {
+        codes.push("he");
+    }
     codes
+}
+
+/// Whether `code` names a right-to-left interface language (`ar`, `dv`, `fa`, `he`, `ku`, `ps`,
+/// `sd`, `ug`, `ur`, `yi`, and legacy `iw` tags normalized via `normalize_code`).
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn is_rtl_code(code: &str) -> bool {
+    let normalized = Languages::normalize_code(code);
+    let base = normalized.split('-').next().unwrap_or("");
+    matches!(base, "ar" | "dv" | "fa" | "he" | "ku" | "ps" | "sd" | "ug" | "ur" | "yi")
+}
+
+/// Whether the active interface language uses right-to-left script direction.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn is_rtl() -> bool {
+    is_rtl_code(code())
 }
 
 enum Kind {
