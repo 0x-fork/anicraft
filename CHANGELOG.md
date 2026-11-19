@@ -2,20 +2,42 @@
 
 ## Unreleased
 
-* **Double-click the Hand tool to fit the stage in the window** (#457, M8). A single click
-  still selects the Hand tool without changing the view.
-
-* **Fixed: shape hints were lost when opening Animate files.** Animate saves a shape tween's
-  hints as `morphHintsList`, which the XFL and `.fla` importer didn't read, so tweens came in
-  without them. They now come across with their letters and points.
-
-* **Fixed: imported Animate text keeps its 2 px line spacing.** A text run in an XFL or FLA
-  file that leaves `lineSpacing` out now gets Animate's 2 px between its lines, not 0, so
-  multi-line text sits as it did in Animate.
-
-* **Fixed: dashed lines from Animate documents with Animate's default gap.** A dashed stroke
-  that doesn't name its gap now gets Animate's default of 6 px (it was drawn with 3 px gaps).
-  The same strokes saved by Flash 8–CS4 store both lengths, which is how the default was found.
+* **Fixes and hardening from the community** (M8). Thank you to everyone named here.
+  * **Double-click the Hand tool to fit the stage in the window**, as in Animate; a single click
+    still only selects the tool (#457, Wilder Ccasa).
+  * **A new oval has eight points**, one every 45°, as Animate draws it (#459, NetterSilver).
+  * **Bending an oval's edge with the Selection tool keeps its ends smooth**: the curves beside
+    the one you drag turn with it, as when a handle is dragged (#460, NetterSilver).
+  * **Animate documents**, each learned from files Animate saved (rcoenen): shape hints come
+    across (Animate writes them as `morphHintsList`, which the importer didn't read); text that
+    leaves `lineSpacing` out gets Animate's 2 px between its lines, not 0; and a dashed stroke
+    that doesn't name its gap gets Animate's 6 px, not 3.
+  * **Security: an assistant can't choose the program Export Video runs.** Over `serve` and
+    `mcp` (the live bridge too), `file.export_video` refuses an `ffmpeg` param: set
+    `ANICRAFT_FFMPEG` yourself. `exec` and `run` keep it. A request line over 64 MiB is answered
+    with an error instead of growing without bound (Dylan M. Taylor).
+  * **Security: XFL folders.** A reference that climbs out of the package with backslashes
+    (`..\x.xml`) is no longer read on Windows (Agapenor); only regular files are read, and never
+    more than the size cap, however large a file claims to be (Dylan M. Taylor).
+  * **Security: hostile documents stay bounded.** A file whose keyframes sit past frame 100,000
+    opens with them trimmed to the limit commands already keep (Agapenor). A library whose
+    symbols double at every level (2^32 shapes from 32 symbols) no longer hangs the stage or
+    runs out of memory: one frame, or one bounds query, visits at most a million elements and
+    draws what it reached (reported by Agapenor).
+  * **Never crash:** a scene index or SVG frame number at the top of its range is an error, not
+    an overflow; a rotation tween between huge or non-finite angles no longer hangs; `--fps` and
+    `--scale` refuse `NaN`, infinities and numbers too large instead of quietly using the
+    default (Mex, NetterSilver).
+  * **Files:** brush sets, filter presets and swatch files saved with a byte-order mark by
+    Windows editors import; a path with a non-finite coordinate is saved as 0 so the document
+    opens again (Mex, NetterSilver).
+  * **Small things put right:** a colour such as `#+1+2+3` is no longer read as a colour; a
+    script's Set Property values are clamped whenever a document loads; an object with a zero
+    x scale keeps its direction when taken apart and put back; guide headings such as "Foo",
+    "Foo", "Foo-1" get three different links (NetterSilver, Mex).
+  * **Building on Windows:** the web build and the signing script work from a folder with
+    square brackets in its name; `i18n-extract.ps1` gives back the caller's
+    `ANICRAFT_I18N_OUT`; `guide-shots.ps1` takes the document tabs picture too (Mex).
 
 * **Themes of your own** (#340, ADR 0117, M8): a theme is a small JSON file that names colours
   for the interface's roles, kept in `themes` in the settings folder (`data/themes` in a
@@ -398,7 +420,6 @@
   cover File, Edit and View any more.
 * **Security: safer reads and temp files.** Import to Library checks an image's size (256 MiB) before reading it, and saves, audio exports and the video soundtrack write their temporary files under unguessable names, created exclusively.
 
-* **Security: `serve` and `mcp` hardening.** Over `serve` and `mcp`, `file.export_video` refuses an `ffmpeg` parameter (set `ANICRAFT_FFMPEG` instead; `exec` and `run` keep it), and a request line over 64 MiB is answered with an error instead of growing without bound.
 * **Saved commands (command macros)** (ADR 0097, M6).
   * In the **History** panel, **Ctrl+click** steps (Shift+click a range) and choose **Save As
     Command…**: the steps come back at the end of the **Commands** menu, to run on whatever is
@@ -1279,7 +1300,6 @@
   * Headless: new `motion.pin_point` and `motion.unpin_point`; `motion.info` and the path
     commands report `pins`.
 
-* **Security: Animate import limits.** A `.fla` may inflate at most 1 GiB in all, an import keeps at most 256 megapixels of bitmaps (the rest are reported), and an XFL folder import refuses `\\` path tricks and symlinks and never reads past its size cap.
 * **Stroke caps, joins, miter limit, and dashed and dotted lines** (ADR 0046, M7). Properties ›
   Stroke has Animate's rows: **Style** (Solid, Dashed with a dash and gap editor, Dotted with
   dot spacing), **Cap** (None, Round, Square), **Join** (Miter, Round, Bevel) and **Miter**
