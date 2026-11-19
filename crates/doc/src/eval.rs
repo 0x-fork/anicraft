@@ -756,6 +756,8 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
             });
         }
         let Some((kf_start, elements)) = shown else { continue };
+        // Data bindings (ADR 0118): a table's column in place of a bound instance's property.
+        let elements = doc.bound_elements(elements, frame);
         let lc = LayerCtx { layer, frame, kf_start, clip, masks, guide, outline: layer_outline, xf: layer_xf };
         // A layer below full opacity (its own, or a folder's it is in; ADR 0111) fades as one:
         // its artwork composites in a group, and the group blends at the layer's opacity, so

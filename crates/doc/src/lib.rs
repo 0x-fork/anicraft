@@ -17,6 +17,7 @@ pub mod warp;
 mod bitmap;
 mod color_effect;
 pub mod camera;
+pub mod data;
 mod filter;
 mod easing;
 mod eval;
@@ -48,6 +49,7 @@ pub use sound::{EnvelopePoint, FrameSound, Sound, SoundEffect, SoundFormat, Soun
 pub use width::{MAX_WIDTH_FACTOR, MAX_WIDTH_POINTS, ProfilePreset, WidthPoint, WidthProfile};
 pub use stroke_style::{Cap, Dash, DashKind, Join, StrokeStyle};
 pub use camera::{Camera, DepthKey};
+pub use data::{Binding, BoundProperty, DataColumn, DataId, DataSet, DataTable, Interp};
 pub use swatch::{MAX_SWATCHES, Swatch, SwatchPaint};
 pub use parenting::{MAX_RIG_DEPTH, RigError};
 pub use aids::{Aids, GUIDE_REACH, Grid, Guide, GuideAxis, MAX_GUIDES};
@@ -1948,6 +1950,9 @@ pub struct Document {
     /// Eases the artist saved by name (ADR 0081), offered with the presets.
     #[serde(default, skip_serializing_if = "eases_is_empty")]
     pub eases: Arc<Vec<SavedEase>>,
+    /// Data tables and what they drive (ADR 0118). Left out of a file that has none.
+    #[serde(default, skip_serializing_if = "data_is_empty")]
+    pub data: Arc<DataSet>,
     /// Next free id for layers, elements and symbols.
     pub next_id: u64,
 }
@@ -1987,6 +1992,8 @@ struct DocumentFile {
     aids: Arc<Aids>,
     #[serde(default)]
     eases: Arc<Vec<SavedEase>>,
+    #[serde(default)]
+    data: Arc<DataSet>,
     #[serde(default = "first_id")]
     next_id: u64,
 }
@@ -1997,7 +2004,7 @@ impl From<DocumentFile> for Document {
         if let Some(tl) = f.timeline {
             scenes.insert(0, Arc::new(Scene { name: "Scene 1".into(), timeline: tl, guides: Vec::new() }));
         }
-        Document { stage: f.stage, scenes, library: f.library, bitmaps: f.bitmaps, sounds: f.sounds, library_tree: f.library_tree, document_class: f.document_class, publish: f.publish, aids: f.aids, swatches: f.swatches, eases: f.eases, next_id: f.next_id }
+        Document { stage: f.stage, scenes, library: f.library, bitmaps: f.bitmaps, sounds: f.sounds, library_tree: f.library_tree, document_class: f.document_class, publish: f.publish, aids: f.aids, swatches: f.swatches, eases: f.eases, data: f.data, next_id: f.next_id }
     }
 }
 
@@ -2007,6 +2014,10 @@ fn first_id() -> u64 {
 
 fn library_tree_is_empty(t: &Arc<LibraryTree>) -> bool {
     t.is_empty()
+}
+
+fn data_is_empty(d: &Arc<DataSet>) -> bool {
+    d.is_empty()
 }
 
 fn eases_is_empty(e: &Arc<Vec<SavedEase>>) -> bool {
@@ -2026,13 +2037,13 @@ static NO_TIMELINE: Timeline = Timeline { layers: Vec::new() };
 
 impl PartialEq for Document {
     fn eq(&self, o: &Document) -> bool {
-        self.stage == o.stage && self.next_id == o.next_id && self.document_class == o.document_class && arcs_eq(&self.scenes, &o.scenes) && arcs_eq(&self.library, &o.library) && arcs_eq(&self.bitmaps, &o.bitmaps) && arcs_eq(&self.sounds, &o.sounds) && arc_eq(&self.library_tree, &o.library_tree) && arc_eq(&self.publish, &o.publish) && arc_eq(&self.aids, &o.aids) && arc_eq(&self.swatches, &o.swatches) && arc_eq(&self.eases, &o.eases)
+        self.stage == o.stage && self.next_id == o.next_id && self.document_class == o.document_class && arcs_eq(&self.scenes, &o.scenes) && arcs_eq(&self.library, &o.library) && arcs_eq(&self.bitmaps, &o.bitmaps) && arcs_eq(&self.sounds, &o.sounds) && arc_eq(&self.library_tree, &o.library_tree) && arc_eq(&self.publish, &o.publish) && arc_eq(&self.aids, &o.aids) && arc_eq(&self.swatches, &o.swatches) && arc_eq(&self.eases, &o.eases) && arc_eq(&self.data, &o.data)
     }
 }
 
 impl Default for Document {
     fn default() -> Self {
-        let mut d = Document { stage: Stage::default(), scenes: vec![Arc::new(Scene::new("Scene 1"))], library: Vec::new(), bitmaps: Vec::new(), sounds: Vec::new(), library_tree: Arc::default(), document_class: String::new(), publish: Arc::default(), aids: Arc::default(), swatches: default_swatches(), eases: Arc::default(), next_id: 1 };
+        let mut d = Document { stage: Stage::default(), scenes: vec![Arc::new(Scene::new("Scene 1"))], library: Vec::new(), bitmaps: Vec::new(), sounds: Vec::new(), library_tree: Arc::default(), document_class: String::new(), publish: Arc::default(), aids: Arc::default(), swatches: default_swatches(), eases: Arc::default(), data: Arc::default(), next_id: 1 };
         let id = LayerId(d.alloc_id());
         d.timeline_mut(0).layers.push(Arc::new(Layer::new(id, "Layer 1")));
         d
@@ -2218,6 +2229,7 @@ impl Document {
             max_id = max_id.max(s.id.0);
         }
         self.sanitize_library_tree(&mut max_id);
+        self.sanitize_data(&mut max_id);
         self.next_id = self.next_id.max(max_id.saturating_add(1));
     }
 }

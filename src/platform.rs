@@ -993,13 +993,14 @@ pub fn filters(cmd: &str) -> (&'static str, &'static [&'static str]) {
         "filter.preset_export" | "filter.preset_import" => (tr_noop!("Filter preset file"), &["json"]),
         "swatch.export" => (tr_noop!("Swatch file"), &["json"]),
         "swatch.import" => (tr_noop!("Swatch file or GIMP palette"), &["json", "gpl"]),
+        "data.import_table" => (tr_noop!("Data table (CSV, TSV or JSON)"), &["csv", "tsv", "tab", "txt", "json"]),
         _ => (tr_noop!("AniCraft document"), &["anicraft"]),
     }
 }
 
 /// Commands that read a file the user picks (the others write one, or a folder of them).
 pub fn reads_file(cmd: &str) -> bool {
-    matches!(cmd, "file.open" | "plugin.install" | "file.import" | "file.import_video" | "layer.set_video" | "file.import_to_library" | "brush.preset_import" | "filter.preset_import" | "swatch.import" | "macro.run" | "macro.import")
+    matches!(cmd, "file.open" | "plugin.install" | "file.import" | "file.import_video" | "layer.set_video" | "file.import_to_library" | "brush.preset_import" | "filter.preset_import" | "swatch.import" | "data.import_table" | "macro.run" | "macro.import")
 }
 
 /// Shows the platform's own dialog (Windows common dialog, macOS panel, Linux XDG portal), with

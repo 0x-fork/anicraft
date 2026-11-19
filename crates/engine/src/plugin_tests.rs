@@ -189,6 +189,8 @@ fn every_command_namespace_has_a_plugin_policy() {
             "filter" => assert_eq!(verdict.is_ok(), matches!(c.id, "filter.move" | "filter.enable" | "filter.remove" | "filter.preset_list" | "filter.preset_apply"), "{}", c.id),
             // Swatches (ADR 0078): document data yes, swatch files no.
             "swatch" => assert_eq!(verdict.is_ok(), !matches!(c.id, "swatch.import" | "swatch.export"), "{}", c.id),
+            // Data tables (ADR 0118): the document's tables and bindings yes, reading a file no.
+            "data" => assert_eq!(verdict.is_ok(), c.id != "data.import_table", "{}", c.id),
             // Rulers, grid and guides (ADR 0076): a scene's guides yes, how you see and snap no.
             // A reference video (ADR 0116) is a file read by a program AniCraft starts.
             "layer" if c.id == "layer.set_video" => assert!(verdict.is_err(), "{} must be refused", c.id),

@@ -57,6 +57,9 @@ pub fn plugin_may_call(id: &str) -> std::result::Result<(), &'static str> {
             // The document's swatches are document data; swatch files are files.
             "swatch" if matches!(id, "swatch.import" | "swatch.export") => Err("plug-ins can't read or write swatch files"),
             "swatch" => Ok(()),
+            // Data tables and bindings are the document's (ADR 0118); a table file is a file.
+            "data" if id == "data.import_table" => Err("plug-ins can't read files: pass the values to data.set_table"),
+            "data" => Ok(()),
             "plugin" => Err("plug-ins can't install, run or remove plug-ins"),
             // Saved commands are files in your preferences (ADR 0097), and running one from a
             // plug-in would let the two call each other.

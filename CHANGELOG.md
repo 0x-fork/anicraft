@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+* **Data-driven animation** (#416, #417, #418, ADR 0118, M6): keep the numbers behind an
+  animation in the document and let them drive it.
+  * **Data tables in the Library.** **File › Import › Import Data Table…** reads CSV, TSV or
+    JSON: the first line names the columns, cells that aren't numbers become gaps, and columns
+    with no numbers are left out (the status bar says which). A table is looked up by row
+    number, a row per frame, or by a **key column** such as an age or a time. **View Table**
+    shows every row and column. Tables are saved in the `.anicraft` file.
+  * **Bind to Data** (Modify › Data, or the Data section of a symbol instance's Properties): a
+    column drives the instance's **X**, **Y**, **Scale X**, **Scale Y**, **Rotation**, **Alpha**
+    or **the frame a graphic symbol shows**, over a span of frames. Set the frames, the rows or
+    keys the span runs between (backwards too), a scale and an offset, and **Linear** or
+    **Step** between rows; the stage follows as you change them. The stage, Test Movie and
+    every export that draws frames show the same thing.
+  * **Import Again** replaces a table's values from a revised file, and everything bound to it
+    follows with no keyframes to redo.
+  * **Bake to Keyframes** writes what the bindings show as ordinary keyframes; every frame
+    looks as it did. Use it before Lottie export, which writes keys.
+  * Headless: `data.import_table`, `data.set_table`, `data.list`, `data.get`, `data.set_cell`,
+    `data.set_key`, `data.remove`, `data.bind`, `data.unbind`, `data.bindings` and `data.bake`,
+    over the CLI and MCP; plug-ins may use all but reading a file.
+  * Not yet: bindings don't follow copy, paste or duplicate; cells aren't edited in the viewer;
+    baking inside a motion tween.
+
 * **Import Video** (#369, ADR 0116, M5): **File › Import › Import Video…** brings in MP4, MOV,
   WebM and any other video the ffmpeg on your computer reads, for reference and rotoscoping.
   * **Frames in the document**: the video's frames become bitmaps on a new layer from the
