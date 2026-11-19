@@ -313,6 +313,28 @@ impl Path {
         p
     }
 
+    /// Ellipse centred at `(cx, cy)` built from eight cubic arcs (a node every 45 degrees,
+    /// starting at the right), as the Oval tool draws it.
+    pub fn ellipse8(cx: f32, cy: f32, rx: f32, ry: f32) -> Path {
+        // Control-arm length for a 45 degree arc: 4/3 * tan(pi / 16).
+        const K: f32 = 0.265_216_5;
+        const STEP: f32 = std::f32::consts::FRAC_PI_4;
+        let mut p = Path::new();
+        p.move_to(Vec2::new(cx + rx, cy));
+        for i in 0..8 {
+            let (s0, c0) = (i as f32 * STEP).sin_cos();
+            let (s1, c1) = ((i + 1) as f32 * STEP).sin_cos();
+            let end = if i == 7 { Vec2::new(cx + rx, cy) } else { Vec2::new(cx + rx * c1, cy + ry * s1) };
+            p.cubic_to(
+                Vec2::new(cx + rx * (c0 - K * s0), cy + ry * (s0 + K * c0)),
+                Vec2::new(cx + rx * (c1 + K * s1), cy + ry * (s1 - K * c1)),
+                end,
+            );
+        }
+        p.close();
+        p
+    }
+
     /// The PolyStar tool's outline (ADR 0080): a regular polygon of `sides` corners, or a star of
     /// `sides` points whose inner corners are at [`star_inner_radius`] for `point_size`, centred
     /// at `(cx, cy)` with the first corner straight up.

@@ -1442,6 +1442,8 @@ mod editing_tests;
 #[cfg(test)]
 mod brush_tests;
 #[cfg(test)]
+mod ellipse_tests;
+#[cfg(test)]
 mod brush_library_tests;
 #[cfg(test)]
 mod web_tests;
