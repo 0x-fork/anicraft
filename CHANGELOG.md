@@ -29,8 +29,9 @@
     `--scale` refuse `NaN`, infinities and numbers too large instead of quietly using the
     default (Mex, NetterSilver).
   * **Files:** brush sets, filter presets and swatch files saved with a byte-order mark by
-    Windows editors import; a path with a non-finite coordinate is saved as 0 so the document
-    opens again (Mex, NetterSilver).
+    Windows editors import. A document that somehow holds a number that isn't finite still
+    saves to a file that opens again: such a number is written as 0, and a ruined transform as
+    no transform, where before it made the file unreadable (Mex, NetterSilver).
   * **Small things put right:** a colour such as `#+1+2+3` is no longer read as a colour; a
     script's Set Property values are clamped whenever a document loads; an object with a zero
     x scale keeps its direction when taken apart and put back; guide headings such as "Foo",

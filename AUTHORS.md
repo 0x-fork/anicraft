@@ -9,7 +9,7 @@ People who have contributed to AniCraft. The repository starts from one initial 
 * mypenc: skew in Free Transform (#176).
 * Davit Matchakhelidze (devius): Georgian in the interface, with Noto Sans Georgian (#160).
 * Mex (MMexicann): SVG path data, `Math.round` and `Math.min`/`max` signed zeros, affine inverses, documentation; preset files with a byte-order mark, oversized indices, CLI numbers, guide anchors and the Windows build scripts.
-* NetterSilver (Silvertree2010): shape tweens that morph a raw shape's line with its fill, dash patterns, colour, easing and script-string parsing; an XFL nested-group regression test; eight-point ovals, smooth anchors that stay smooth when a segment is bent, and non-finite numbers in transforms, paths and scripts.
+* NetterSilver (Silvertree2010): shape tweens that morph a raw shape's line with its fill, dash patterns, colour, easing and script-string parsing; an XFL nested-group regression test; eight-point ovals, smooth anchors that stay smooth when a segment is bent, and non-finite numbers in transforms, paths, scripts and saved files.
 * jayzed80: flipped scales in Properties, CLI subcommand help and frame numbering; copy, cut and paste keys on the stage.
 * Efe Şahinbaş (MacallanTheRoot): the MCP render caption.
 * nocturney: localisation tests (Hebrew plurals, the product name).
