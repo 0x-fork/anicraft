@@ -45,8 +45,8 @@ try {
         [IO.File]::WriteAllText($scriptPath, $source)
         $env:CARGO_TARGET_DIR = if ($dev) { Join-Path $scratch 'target[2]' } else { $null }
         $target = if ($dev) { $env:CARGO_TARGET_DIR } else { Join-Path $checkout 'target' }
-        $profile = if ($dev) { 'debug' } else { 'web' }
-        $script:expectedWasm = Join-Path $target "wasm32-unknown-unknown/$profile/anicraft.wasm"
+        $profileDir = if ($dev) { 'debug' } else { 'web' }
+        $script:expectedWasm = Join-Path $target "wasm32-unknown-unknown/$profileDir/anicraft.wasm"
         $calls = [Collections.Generic.List[object]]::new()
         & $scriptPath -Dev:$dev
         Assert ($calls.Count -eq 2 -and $calls[0][0] -eq 'build' -and $calls[1][0] -eq 'run') 'missing build or guide call'
