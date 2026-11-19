@@ -397,6 +397,8 @@
 * **Floating windows open below the menu bar**: no dialog (the Custom Ease window among them) can
   cover File, Edit and View any more.
 * **Security: safer reads and temp files.** Import to Library checks an image's size (256 MiB) before reading it, and saves, audio exports and the video soundtrack write their temporary files under unguessable names, created exclusively.
+
+* **Security: `serve` and `mcp` hardening.** Over `serve` and `mcp`, `file.export_video` refuses an `ffmpeg` parameter (set `ANICRAFT_FFMPEG` instead; `exec` and `run` keep it), and a request line over 64 MiB is answered with an error instead of growing without bound.
 * **Saved commands (command macros)** (ADR 0097, M6).
   * In the **History** panel, **Ctrl+click** steps (Shift+click a range) and choose **Save As
     Command…**: the steps come back at the end of the **Commands** menu, to run on whatever is
