@@ -379,8 +379,10 @@ pub(crate) fn stroke(def: &X, bitmaps: &HashMap<String, BitmapId>, report: &mut 
         _ => Join::Round,
     };
     let miter_limit = native.miter_limit().unwrap_or(anicraft_doc::stroke_style::DEFAULT_MITER_LIMIT);
+    // Animate leaves out `dash1` and `dash2` at its defaults, 6 and 6 px: the same strokes
+    // saved by Flash 8–CS4 store both lengths, 6 and 6 where the XFL has neither.
     let dash = match native.kind() {
-        NativeStroke::Dashed => Dash::dashed(native.dash1().unwrap_or(6.0), native.dash2().unwrap_or(3.0)),
+        NativeStroke::Dashed => Dash::dashed(native.dash1().unwrap_or(6.0), native.dash2().unwrap_or(6.0)),
         NativeStroke::Dotted => Dash::dotted(native.dot_space().unwrap_or(3.0)),
         NativeStroke::Solid => None,
         _ => {
