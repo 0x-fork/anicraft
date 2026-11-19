@@ -637,6 +637,10 @@ fn stroke_caps_joints_dashes_and_dots_come_across() {
     assert_eq!(read(r#"<SolidStroke caps="square" joints="bevel" miterLimit="1e9"/>"#).0.style, StrokeStyle { cap: Cap::Square, join: Join::Bevel, miter_limit: 100.0, dash: None });
     let (dashed, _) = read(r#"<DashedStroke weight="2" dash1="8" dash2="2.5" caps="square"/>"#);
     assert_eq!(dashed.style, StrokeStyle { cap: Cap::Square, dash: Dash::dashed(8.0, 2.5), ..StrokeStyle::default() });
+    // Animate's defaults are a 6 px dash and a 6 px gap, each written only when it differs.
+    assert_eq!(read(r#"<DashedStroke weight="2"/>"#).0.style.dash, Dash::dashed(6.0, 6.0));
+    assert_eq!(read(r#"<DashedStroke weight="9" dash2="9"/>"#).0.style.dash, Dash::dashed(6.0, 9.0));
+    assert_eq!(read(r#"<DashedStroke dash1="10"/>"#).0.style.dash, Dash::dashed(10.0, 6.0));
     // No gap draws solid.
     assert_eq!(read(r#"<DashedStroke dash1="8" dash2="0"/>"#).0.style.dash, None);
     assert_eq!(read(r#"<DottedStroke weight="3" dotSpace="5"/>"#).0.style.dash, Dash::dotted(5.0));

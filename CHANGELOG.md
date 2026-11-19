@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+* **Fixed: dashed lines from Animate documents with Animate's default gap.** A dashed stroke
+  that doesn't name its gap now gets Animate's default of 6 px (it was drawn with 3 px gaps).
+  The same strokes saved by Flash 8–CS4 store both lengths, which is how the default was found.
+
 * **Themes of your own** (#340, ADR 0117, M8): a theme is a small JSON file that names colours
   for the interface's roles, kept in `themes` in the settings folder (`data/themes` in a
   portable copy).
