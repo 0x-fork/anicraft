@@ -435,6 +435,44 @@ fn shape_hints_come_across_in_either_form() {
 }
 
 #[test]
+fn shape_hints_come_across_as_animate_writes_them() {
+    // `morphHintsList` on the start keyframe, both points per record, in units of 256 twips:
+    // (0, 0) and (300, 50) px, the end as hex fixed point and decimal. The list inside
+    // `MorphShape` is not the artist's and is left alone.
+    let hint = r##"<MorphHint startPoint="0, #0" endPoint="#17.70, 3.90625" key="0"/>"##;
+    let doc = hinted_doc(&format!("<MorphShape><morphHintsList>{hint}{hint}</morphHintsList></MorphShape><morphHintsList>{hint}</morphHintsList>"), "");
+    let (d, report) = import(&HashMap::from([("DOMDocument.xml", doc)])).unwrap();
+    assert!(report.skipped.keys().all(|s| !s.contains("hint")), "{:?}", report.skipped);
+    let l = &d.timeline(0).layers[0];
+    let k = &l.keyframes[0];
+    assert_eq!(k.hints.len(), 1);
+    assert!(k.hints[0].start.distance(anicraft_geom::Vec2::new(0.0, 0.0)) < 1e-3, "{:?}", k.hints[0]);
+    assert!(k.hints[0].end.distance(anicraft_geom::Vec2::new(300.0, 50.0)) < 1e-3, "{:?}", k.hints[0]);
+    assert!(anicraft_doc::placed_on(&k.elements, k.hints[0].start).is_some());
+    assert!(anicraft_doc::placed_on(&l.keyframes[1].elements, k.hints[0].end).is_some());
+    // Either spelling gives the same hints.
+    let native = hinted_doc(r#"<shapeHints><ShapeHint startPoint="0, 0" endPoint="300, 50"/></shapeHints>"#, "");
+    let (n, _) = import(&HashMap::from([("DOMDocument.xml", native)])).unwrap();
+    assert_eq!(n.timeline(0).layers[0].keyframes[0].hints, k.hints);
+}
+
+#[test]
+fn odd_morph_hints_are_reported_not_fatal() {
+    let many: String = (0..30).map(|_| r##"<MorphHint startPoint="0, 0" endPoint="#F.A0, 0"/>"##).collect();
+    let odd = r##"<MorphHint/><MorphHint startPoint="#zz, 1"/><MorphHint startPoint="1e39, 0"/><MorphHint startPoint="#7FFFFFFF.FF, #80000000" endPoint="#F.A0, 0"/>"##;
+    let doc = hinted_doc(&format!("<morphHintsList>{odd}{many}<Other startPoint=\"0, 0\"/></morphHintsList>"), "");
+    let (d, report) = import(&HashMap::from([("DOMDocument.xml", doc)])).unwrap();
+    assert_eq!(d.timeline(0).layers[0].keyframes[0].hints.len(), 26);
+    assert!(report.skipped.contains_key("shape hints past z"), "{:?}", report.skipped);
+    assert!(report.skipped.contains_key("shape hints without a position"));
+    // No end point, and no hints on the end keyframe to take one from.
+    let doc = hinted_doc(r#"<morphHintsList><MorphHint startPoint="0, 0" endPoint="0"/></morphHintsList>"#, "");
+    let (d, report) = import(&HashMap::from([("DOMDocument.xml", doc)])).unwrap();
+    assert!(d.timeline(0).layers[0].keyframes[0].hints.is_empty());
+    assert!(report.skipped.contains_key("shape hints missing on the end keyframe"));
+}
+
+#[test]
 fn odd_shape_hints_are_reported_not_fatal() {
     let many: String = (0..30).map(|i| format!(r#"<ShapeHint index="{i}" startPoint="0, 0" endPoint="200, 0"/>"#)).collect();
     let doc = hinted_doc(&format!("<shapeHints>{many}<ShapeHint/><ShapeHint x=\"nan\" y=\"1\"/></shapeHints>"), "");
