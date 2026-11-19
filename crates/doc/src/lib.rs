@@ -1883,6 +1883,19 @@ impl Default for Stage {
 /// Largest stage edge accepted from files and commands.
 pub const MAX_STAGE_EDGE: u32 = 16_384;
 
+/// Last addressable frame (0-based); about 70 minutes at 24 fps.
+pub const MAX_FRAME: u32 = 100_000;
+
+/// Drops keyframes past [`MAX_FRAME`] and trims durations to it (files skip command checks).
+fn clamp_frames(l: &mut Layer) {
+    l.keyframes.retain(|k| k.start <= MAX_FRAME);
+    for k in &mut l.keyframes {
+        if k.end() > MAX_FRAME + 1 {
+            Arc::make_mut(k).duration = MAX_FRAME + 1 - k.start;
+        }
+    }
+}
+
 /// A scene: one part of the movie with its own main timeline. Scenes play in order.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Scene {
@@ -2149,6 +2162,7 @@ impl Document {
             }
             let tl = &mut Arc::make_mut(scene).timeline;
             for l in &mut tl.layers {
+                clamp_frames(Arc::make_mut(l));
                 Arc::make_mut(l).normalize();
                 sanitize_scripts(l);
                 sanitize_depth(l);
@@ -2188,6 +2202,7 @@ impl Document {
             }
             let tl = &mut Arc::make_mut(sym).timeline;
             for l in &mut tl.layers {
+                clamp_frames(Arc::make_mut(l));
                 Arc::make_mut(l).normalize();
                 sanitize_scripts(l);
                 // Only a scene has a camera; a symbol's camera layer is kept as a normal layer.
@@ -2485,9 +2500,35 @@ mod tests {
         d.stage.width = 0;
         d.stage.fps = f32::NAN;
         d.next_id = 0;
+        Arc::make_mut(&mut d.timeline_mut(0).layers[0]).keyframes = [Keyframe::new(0, u32::MAX), Keyframe::new(u32::MAX - 1, 5)].map(Arc::new).to_vec();
         d.sanitize();
+        assert_eq!(d.frame_count(), MAX_FRAME + 1, "frames past the limit are dropped or trimmed");
+        let keys = &d.timeline(0).layers[0].keyframes;
+        assert_eq!(keys.len(), 1);
+        assert_eq!((keys[0].start, keys[0].duration), (0, MAX_FRAME + 1));
         assert_eq!(d.stage.width, 1);
         assert_eq!(d.stage.fps, 24.0);
         assert!(d.next_id > d.timeline(0).layers[0].id.0);
+    }
+
+    #[test]
+    fn sanitize_clamps_main_and_symbol_timelines_at_the_inclusive_limit() {
+        let cases = [
+            (vec![Keyframe::new(MAX_FRAME, 10), Keyframe::new(MAX_FRAME + 1, 1)], vec![(MAX_FRAME, 1)]),
+            (vec![Keyframe::new(0, MAX_FRAME + 1)], vec![(0, MAX_FRAME + 1)]),
+            (vec![Keyframe::new(0, u32::MAX), Keyframe::new(u32::MAX - 1, 5)], vec![(0, MAX_FRAME + 1)]),
+        ];
+        for (keys, expected) in cases {
+            let mut d = Document::default();
+            Arc::make_mut(&mut d.timeline_mut(0).layers[0]).keyframes = keys.into_iter().map(Arc::new).collect();
+            let timeline = d.timeline(0).clone();
+            d.library.push(Arc::new(Symbol { id: SymbolId(100), name: "boundary".into(), kind: SymbolKind::Graphic, linkage: None, scale_grid_kept: None, scale_grid: None, timeline }));
+            d.sanitize();
+            for timeline in [d.timeline(0), &d.library[0].timeline] {
+                let actual: Vec<_> = timeline.layers[0].keyframes.iter().map(|k| (k.start, k.duration)).collect();
+                assert_eq!(actual, expected);
+                assert_eq!(timeline.frame_count(), MAX_FRAME + 1);
+            }
+        }
     }
 }

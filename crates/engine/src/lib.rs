@@ -239,7 +239,7 @@ pub use cmds_layer::LAYER_COLORS;
 const GROUP_REFUSES: &[&str] = &["timeline.", "layer.", "camera.", "bone.", "motion.", "tween.", "frames.", "sound.place", "sound.to_keyframes", "sound.lip_sync", "script.set", "script.clear"];
 
 /// Last addressable frame (0-based); about 70 minutes at 24 fps.
-pub const MAX_FRAME: u32 = 100_000;
+pub const MAX_FRAME: u32 = anicraft_doc::MAX_FRAME;
 
 /// The index of the topmost item of `dl` under `p` (stage space) that `ok` accepts (given its
 /// index). A bounding-box test rejects almost every item before any curve is flattened;
