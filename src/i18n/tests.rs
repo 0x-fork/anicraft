@@ -421,12 +421,14 @@ fn rtl_helper_recognizes_hebrew_and_legacy_iw() {
     assert!(is_rtl_code("he"));
     assert!(is_rtl_code("he-IL"));
     assert!(is_rtl_code("he-Hebr-IL"));
+    assert!(is_rtl_code("he-x-test"));
     assert!(is_rtl_code("iw"));
     assert!(is_rtl_code("iw_IL"));
     assert!(is_rtl_code("ar"));
     assert!(is_rtl_code("ku-Arab-IQ"));
     assert!(!is_rtl_code("ku-Latn-TR"));
     assert!(!is_rtl_code("sd-Deva-IN"));
+    assert!(!is_rtl_code("en-x-arab"));
     assert!(!is_rtl_code("en"));
     assert!(!is_rtl_code("ka"));
     assert!(!is_rtl());
