@@ -176,9 +176,10 @@ fn bending_an_oval_edge_keeps_its_smooth_ends_smooth() {
     for e in raw(&s) {
         assert_eq!(smooth_everywhere(&e), Ok(()), "smooth before the drag");
     }
-    // Drag the south-east arc's middle inward (#460).
-    let h = std::f32::consts::FRAC_1_SQRT_2;
-    let at = Vec2::new(100.0 + 100.0 * h, 50.0 + 50.0 * h);
+    // Drag the middle of an arc on the south-east side inward (#460). An oval has a node every
+    // 45 degrees (#459), so the middle of its first arc is at 22.5.
+    let (sin, cos) = std::f32::consts::FRAC_PI_8.sin_cos();
+    let at = Vec2::new(100.0 + 100.0 * cos, 50.0 + 50.0 * sin);
     let r = run(&mut s, "path.bend_segment", json!({"x": at.x, "y": at.y, "dx": -25, "dy": -15}));
     let got = Vec2::new(r["x"].as_f64().unwrap_or(0.0) as f32, r["y"].as_f64().unwrap_or(0.0) as f32);
     assert!(got.distance(at + Vec2::new(-25.0, -15.0)) < 1e-2, "the grabbed point follows: {r}");
