@@ -403,6 +403,18 @@ pub fn field_layout(fonts: &Fonts, style: &TextStyle, field: &TextField, box_wid
     field_lay(fonts, &anicraft_text::RichText { text: shown, runs: &[run], paragraphs: &[para], width: field.wrap_width(box_width) }, style.align, field, box_width)
 }
 
+/// A field's text laid out in the styles a script gave it with `htmlText` (ADR 0107), and the
+/// colour each of the layout's paints stands for. Links don't cut pieces here: a colour is one
+/// piece.
+pub fn field_layout_rich(fonts: &Fonts, block: &TextBlock, field: &TextField, shown: &str, rich: &anicraft_doc::html_text::RichStyles) -> std::result::Result<(anicraft_text::Layout, Vec<Rgba>), anicraft_text::TextError> {
+    let mut d = TextBlock { text: shown.to_string(), runs: Vec::new(), paragraphs: Vec::new(), ..block.clone() };
+    let runs = rich.runs.iter().map(|r| TextRun { chars: r.chars, style: CharStyle { url: String::new(), ..r.style.clone() } }).collect();
+    d.set_styles(runs, rich.paragraphs.clone());
+    let (runs, paras, paints) = rich_parts(&d);
+    let l = field_lay(fonts, &anicraft_text::RichText { text: shown, runs: &runs, paragraphs: &paras, width: field.wrap_width(block.box_width) }, d.align, field, block.box_width)?;
+    Ok((l, paints.into_iter().map(|(c, _)| c).collect()))
+}
+
 /// `t` with its text changed to `text`, its runs and paragraphs following the change (one
 /// edit: what was typed continues the style before it).
 pub(crate) fn retext(t: &TextBlock, text: &str) -> TextBlock {

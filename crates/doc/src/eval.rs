@@ -1089,6 +1089,11 @@ fn field_items(t: &crate::TextBlock, f: &crate::TextField, live: Option<(Option<
     // The text: laid out by the player when it changed, else the authored outline (a field whose
     // text changed but couldn't be laid out shows none).
     match (state.and_then(|s| s.text.as_ref()), look) {
+        (_, Some(l)) if !l.pieces.is_empty() => {
+            for (color, piece) in l.pieces.iter() {
+                out.items.push(item(piece.clone(), text_xf, Some(Paint::Solid(*color)), None, Some(inner), None));
+            }
+        }
         (_, Some(l)) => out.items.push(item(l.outline.clone(), text_xf, Some(Paint::Solid(t.color)), None, Some(inner), None)),
         (None, None) => text_fills(t, out, |path, color| item(path, text_xf, Some(Paint::Solid(color)), None, Some(inner), None)),
         (Some(_), None) => {}

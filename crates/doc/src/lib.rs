@@ -31,6 +31,7 @@ pub mod width;
 pub mod stroke_style;
 pub mod player;
 pub mod publish;
+pub mod html_text;
 pub mod rich_text;
 pub mod sample;
 pub mod templates;
@@ -1000,6 +1001,10 @@ pub struct TextField {
     /// The ActionScript 1/2 variable the field shows (kept from Animate documents, not run).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub variable: String,
+    /// What the field does when the viewer changes its text (input fields; ADR 0107): actions
+    /// run in the timeline the field is on, as an instance's event handlers are.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub on_change: Vec<actions::Action>,
 }
 
 fn black() -> Rgba {
@@ -1012,7 +1017,7 @@ fn white() -> Rgba {
 impl TextField {
     /// A single-line field of `kind`.
     pub fn new(kind: TextKind) -> TextField {
-        TextField { kind, lines: LineType::Single, selectable: true, border: false, border_color: Rgba::BLACK, background: false, background_color: Rgba::WHITE, max_chars: 0, variable: String::new() }
+        TextField { kind, lines: LineType::Single, selectable: true, border: false, border_color: Rgba::BLACK, background: false, background_color: Rgba::WHITE, max_chars: 0, variable: String::new(), on_change: Vec::new() }
     }
 
     /// The width text wraps at in a box `box_width` wide, if its lines wrap.
@@ -1032,7 +1037,9 @@ impl TextField {
 
     /// Values in range: names cut to length, at most [`MAX_FIELD_CHARS`] typed.
     pub fn sanitized(&self) -> TextField {
-        TextField { max_chars: self.max_chars.min(MAX_FIELD_CHARS as u32), variable: self.variable.chars().take(MAX_FIELD_NAME).collect(), ..self.clone() }
+        let mut on_change = self.on_change.clone();
+        actions::sanitize_actions(&mut on_change);
+        TextField { max_chars: self.max_chars.min(MAX_FIELD_CHARS as u32), variable: self.variable.chars().take(MAX_FIELD_NAME).collect(), on_change, ..self.clone() }
     }
 }
 
