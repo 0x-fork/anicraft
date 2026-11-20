@@ -449,6 +449,7 @@ const VOLUME_W: f32 = 56.0;
 /// and tween buttons, `width` wide at most. What doesn't fit scrolls sideways (Shift+wheel) in
 /// a small window or at a large interface scale, instead of being cut off.
 pub fn header_tools(app: &mut App, ui: &mut egui::Ui, width: f32) {
+    crate::theme::toolbar_scroll_bars(ui);
     let out = egui::ScrollArea::horizontal().id_salt("tl_header").max_width(width.max(40.0)).show(ui, |ui| ui.horizontal(|ui| header(app, ui)));
     app.tl_header_spill = out.content_size.x - out.inner_rect.width();
 }
@@ -1943,6 +1944,9 @@ fn fps_label(fps: f32) -> String {
     format!("{s} fps")
 }
 
+/// Side padding of the header's frame and frame-rate fields (points).
+const FIELD_PAD: f32 = 3.0;
+
 /// A typed frame rate: the number, with or without "fps" after it.
 fn parse_fps(s: &str) -> Option<f64> {
     s.trim().trim_end_matches(|c: char| c.is_alphabetic() || c.is_whitespace()).replace(',', ".").parse::<f64>().ok().filter(|v| v.is_finite())
@@ -1958,10 +1962,13 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
     // The current frame is a field (#462): click it and type a frame to go there, or drag it to
     // scrub. A number past the end goes to the last frame, as in Animate.
     let mut go = f + 1;
+    let gap = std::mem::replace(&mut ui.spacing_mut().item_spacing.x, 2.0);
     let field = ui
         .scope(|ui| {
+            // No wider than the readout it replaces: the header has no room to spare.
             let face = font(Type::DataLarge);
-            ui.spacing_mut().interact_size.x = digits as f32 * face.size * 0.62 + 2.0 * ui.spacing().button_padding.x;
+            ui.spacing_mut().button_padding.x = FIELD_PAD;
+            ui.spacing_mut().interact_size.x = digits as f32 * face.size * 0.62 + 2.0 * FIELD_PAD;
             ui.style_mut().override_font_id = Some(face);
             ui.visuals_mut().override_text_color = Some(T.accent_text);
             ui.add(egui::DragValue::new(&mut go).range(1..=app.s.frame_count().max(1)).speed(0.25))
@@ -1977,9 +1984,14 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
     }
     // And so is the frame rate (#461): the same value as the document's in Properties.
     let mut rate = fps;
-    let field = with_type(ui, Type::Data, |ui| ui.add(egui::DragValue::new(&mut rate).custom_formatter(|v, _| fps_label(v as f32)).custom_parser(parse_fps).speed(0.1).range(1.0..=120.0)))
+    let field = with_type(ui, Type::Data, |ui| {
+        ui.spacing_mut().button_padding.x = FIELD_PAD;
+        ui.spacing_mut().interact_size.x = 0.0;
+        ui.add(egui::DragValue::new(&mut rate).custom_formatter(|v, _| fps_label(v as f32)).custom_parser(parse_fps).speed(0.1).range(1.0..=120.0))
+    })
         .named(tr!("Frame rate"))
         .on_hover_text(tr!("Frame rate: click to type frames per second, or drag"));
+    ui.spacing_mut().item_spacing.x = gap;
     if field.changed() && rate != fps {
         crate::panels::live(app, tr_noop!("Frame rate"), "doc.set_stage", json!({"fps": rate}));
     }

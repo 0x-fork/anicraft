@@ -855,6 +855,13 @@ fn scroll_bars() -> egui::style::ScrollStyle {
     egui::style::ScrollStyle { bar_width: SCROLL_BAR_WIDTH, handle_min_length: TARGET, bar_inner_margin: 2.0, foreground_color: true, ..egui::style::ScrollStyle::solid() }
 }
 
+/// The exception: a one-row toolbar too wide for its place scrolls sideways under a thin bar
+/// laid over it. A lane of its own would push everything below it down whenever the row's
+/// contents changed width.
+pub fn toolbar_scroll_bars(ui: &mut egui::Ui) {
+    ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
+}
+
 mod craft_fonts {
     include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
 }
