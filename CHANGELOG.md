@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+* **An AI assistant works inside the folders you give it** (M8, ADR 0124). `anicraft-cli mcp`
+  now needs `--automation-read-root <folder>` and `--automation-write-root <folder>`, and does
+  not start without both (exit code 2, with a message that says what to add): **add the two
+  flags to your MCP client's configuration.** The assistant's commands then read files only
+  inside the read root (which may be given several times) and write only inside the write root.
+  Every file a command touches is checked as the file it really is, with `..` removed, symbolic
+  links and Windows junctions followed and, on Windows, letter case ignored; that includes files
+  a command picks itself (a plain Save, Publish's outputs, the steps of a saved command, a
+  linked video). A refusal comes before any file is touched and names the root. With
+  `--bridge`, the window applies the roots to the assistant's commands only (control protocol
+  2: a call that carries no roots may touch no file, and the bridge won't drive an older
+  AniCraft). `serve` takes the same flags, optionally. The app and the other subcommands are
+  unchanged, and the `ffmpeg` parameter is still refused over `mcp` and `serve`.
 * **Fixes from the issue tracker, second batch** (M8). Thank you to everyone who reported these.
   * **Memory no longer grows while AniCraft is left running** (#454). The list of commands
     was rebuilt for the menu bar on every frame, and four of its texts were made afresh and

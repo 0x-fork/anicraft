@@ -202,6 +202,8 @@ pub fn probe(ffmpeg: &OsStr, path: &Path) -> Result<Probe> {
     if crate::vfs::in_memory() {
         return Err(no_programs());
     }
+    // ffmpeg opens the file, not `vfs`: the automation roots are asked here (ADR 0124).
+    let path = &crate::access::for_program(path, crate::access::Access::Read)?;
     let mut child = spawn(command(ffmpeg).args(["-hide_banner", "-nostdin", "-i"]).arg(path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped())).map_err(|e| not_started(&e))?;
     let mut text = Vec::new();
     if let Some(e) = child.stderr.take() {
@@ -366,6 +368,7 @@ impl Stream {
         if crate::vfs::in_memory() {
             return Err(no_programs());
         }
+        let path = &crate::access::for_program(path, crate::access::Access::Read)?;
         let mut c = command(ffmpeg);
         c.args(["-hide_banner", "-loglevel", "error", "-nostdin"]);
         if start > 0.0 {
@@ -548,6 +551,7 @@ impl Drop for TempFile {
 /// `seconds` of the video's first sound track from `start`, as a sound (id not yet given):
 /// ffmpeg writes it as a 44.1 kHz stereo 16-bit WAV, which AniCraft's own reader takes.
 fn audio(ffmpeg: &OsStr, path: &Path, start: f64, seconds: f64) -> std::result::Result<Sound, String> {
+    let path = &crate::access::for_program(path, crate::access::Access::Read).map_err(|e| e.to_string())?;
     let tmp = TempFile(std::env::temp_dir().join(format!("anicraft-video-{}-{}.wav", std::process::id(), crate::vfs::random_suffix())));
     let mut c = command(ffmpeg);
     c.args(["-hide_banner", "-loglevel", "error", "-nostdin", "-y"]);
@@ -748,6 +752,11 @@ impl Cache {
         let Some((key, at)) = Key::of(v, frame, fps) else { return Lookup::Outside };
         if crate::vfs::in_memory() {
             return Lookup::Failed("a web browser can't run ffmpeg, so reference videos show in the desktop app only".into());
+        }
+        // A video a document links to outside the automation roots is not shown to an agent
+        // (ADR 0124); the decoding thread has no policy of its own, so it is asked here.
+        if let Err(e) = crate::access::check(Path::new(&v.path), crate::access::Access::Read) {
+            return Lookup::Failed(e.to_string());
         }
         let mut guard = lock(&self.shared.state);
         let st = &mut *guard;
