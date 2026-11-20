@@ -3940,6 +3940,12 @@ impl App {
             timeline::follow_playhead(self);
             return;
         }
+        // Shift+F5 and Shift+F6 with no frame selection act on every layer at the playhead, as
+        // F5 does (#438).
+        if let Some(p) = timeline::remove_key_params(self, id) {
+            self.request(id, p);
+            return;
+        }
         // Frame commands act on the frame selection (F5 over 3 frames on 2 layers inserts 3
         // frames on each).
         if timeline::RANGE_COMMANDS.contains(&id)

@@ -470,11 +470,14 @@ fn enabled(app: &App, id: &str) -> bool {
         "scene.next" | "scene.move_down" => app.s.scene + 1 < app.s.doc.scenes.len(),
         "timeline.clear_keyframe" => match app.frame_sel {
             Some(sel) => sel.has_keys(&app.s.timeline().layers),
-            None => app.s.active_layer().is_some_and(|l| l.keyframe_starting_at(app.s.frame).is_some()),
+            // With no frame selection it clears the keyframes at the playhead on every layer.
+            None => app.s.timeline().layers.iter().any(|l| l.keyframe_starting_at(app.s.frame).is_some()),
         },
         "timeline.paste_frames" => !app.s.frame_clipboard.is_empty(),
         "tween.add_hint" => app.s.active_layer().and_then(|l| l.hint_tween_at(app.s.frame)).is_some(),
         "tween.clear_hints" => app.s.active_layer().and_then(|l| l.hint_tween_at(app.s.frame).and_then(|(i, _)| l.keyframes.get(i))).is_some_and(|k| !k.hints.is_empty()),
+        // With no frame selection it removes the frame at the playhead on every layer.
+        "timeline.remove_frame" if app.frame_sel.is_none() => app.s.timeline().layers.iter().any(|l| l.end_frame() > app.s.frame),
         "timeline.remove_frame" | "timeline.create_tween" | "timeline.create_shape_tween" => app.s.active_layer().is_some_and(|l| l.keyframe_at(app.s.frame).is_some()),
         _ => true,
     }

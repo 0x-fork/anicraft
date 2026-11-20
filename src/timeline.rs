@@ -331,6 +331,13 @@ pub fn insert_key_params(app: &App, id: &str) -> Option<serde_json::Value> {
     }
 }
 
+/// Params for Shift+F5 and Shift+F6 with no frame selection (#438): like F5 there, they act on
+/// every layer at the playhead, so the layers that F5 extended together shrink together.
+/// `None`: not one of them, or frames are selected (they act on the selection).
+pub fn remove_key_params(app: &App, id: &str) -> Option<serde_json::Value> {
+    (matches!(id, "timeline.remove_frame" | "timeline.clear_keyframe") && app.frame_sel.is_none()).then(|| json!({"all_layers": true}))
+}
+
 /// A one-frame selection moves with the playhead after F5 / F6 / F7 (as in Animate), instead of
 /// being dropped for being left behind.
 pub fn follow_playhead(app: &mut App) {
@@ -2102,6 +2109,33 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #438: with no frame selection Shift+F5 and Shift+F6 act on every layer at the playhead,
+    /// as F5 does; with frames selected they act on the selection.
+    #[test]
+    fn shift_f5_and_shift_f6_follow_f5_onto_every_layer() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, anicraft_engine::Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        let a = app.s.layer;
+        app.run("layer.new", json!({}));
+        let len = |app: &App, l: LayerId| app.s.timeline().layer(l).map_or(0, |l| l.end_frame());
+        assert!(app.frame_sel.is_none());
+        for _ in 0..4 {
+            app.invoke("timeline.insert_frame");
+        }
+        let b = app.s.layer;
+        assert_eq!((len(&app, a), len(&app, b)), (5, 5), "F5 extends both layers");
+        app.invoke("timeline.remove_frame");
+        app.invoke("timeline.remove_frame");
+        assert_eq!((len(&app, a), len(&app, b)), (3, 3), "Shift+F5 shortens both");
+        assert_eq!(remove_key_params(&app, "timeline.clear_keyframe"), Some(json!({"all_layers": true})));
+        assert_eq!(remove_key_params(&app, "timeline.insert_frame"), None);
+        // A frame selection is what they act on instead.
+        app.frame_sel = Some(FrameSel { anchor: (b, 1), head: (b, 1) });
+        assert_eq!(remove_key_params(&app, "timeline.remove_frame"), None);
+        app.invoke("timeline.remove_frame");
+        assert_eq!((len(&app, a), len(&app, b)), (3, 2), "only the selected layer");
+    }
 
     /// #440: a layer named after a long file (an imported sound) ran under the row's eye, lock
     /// and outline toggles. Its name now stops before them and ends in an ellipsis.

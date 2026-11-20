@@ -2645,3 +2645,63 @@ fn building_the_registry_again_allocates_no_new_static_text() {
         }
     }
 }
+
+/// #438: F5 with no frame selection extends every layer at the playhead, so Shift+F5 there takes
+/// the frame off every layer too, and Shift+F6 clears the keyframes there on every layer
+/// (`all_layers`, as the editor sends with no frame selection). One undo step each.
+#[test]
+fn removing_frames_and_clearing_keys_on_every_layer_at_the_playhead() {
+    let mut s = Session::default();
+    let a = s.layer;
+    let b = anicraft_doc::LayerId(run(&mut s, "layer.new", json!({}))["layer"].as_u64().unwrap());
+    let c = anicraft_doc::LayerId(run(&mut s, "layer.new", json!({}))["layer"].as_u64().unwrap());
+    run(&mut s, "timeline.insert_frame", json!({"frame": 0, "count": 5, "all_layers": true}));
+    for l in [a, b, c] {
+        assert_eq!(starts(&s, l), vec![(0, 6)]);
+    }
+    // Shift+F5 three times: every layer loses the frames, not only the active one.
+    for _ in 0..3 {
+        run(&mut s, "timeline.remove_frame", json!({"frame": 2, "all_layers": true}));
+    }
+    for l in [a, b, c] {
+        assert_eq!(starts(&s, l), vec![(0, 3)], "layer {l:?}");
+    }
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(starts(&s, a), vec![(0, 4)], "each press is one undo step, on every layer");
+    assert_eq!(starts(&s, c), vec![(0, 4)]);
+    run(&mut s, "edit.redo", json!({}));
+    // Without it, as before: the one layer.
+    run(&mut s, "timeline.remove_frame", json!({"layer": a.0, "frame": 1}));
+    assert_eq!((starts(&s, a), starts(&s, b)), (vec![(0, 2)], vec![(0, 3)]));
+    run(&mut s, "edit.undo", json!({}));
+
+    // A layer that ends before the frame is left alone; one whose frames start later closes up.
+    run(&mut s, "timeline.remove_frame", json!({"layer": a.0, "frame": 2}));
+    assert_eq!(starts(&s, a), vec![(0, 2)]);
+    let r = run(&mut s, "timeline.remove_frame", json!({"frame": 2, "all_layers": true}));
+    assert_eq!(r["removed"], 2);
+    assert_eq!((starts(&s, a), starts(&s, b), starts(&s, c)), (vec![(0, 2)], vec![(0, 2)], vec![(0, 2)]));
+
+    // Shift+F6: keyframes at the playhead on two of the three layers are cleared together; the
+    // layer without one is skipped.
+    run(&mut s, "timeline.insert_frame", json!({"frame": 0, "count": 6, "all_layers": true}));
+    run(&mut s, "timeline.insert_keyframe", json!({"layers": [a.0, c.0], "frame": 4}));
+    assert_eq!(starts(&s, a), vec![(0, 4), (4, 4)]);
+    let r = run(&mut s, "timeline.clear_keyframe", json!({"frame": 4, "all_layers": true}));
+    assert_eq!(r["cleared"], 2);
+    for l in [a, b, c] {
+        assert_eq!(starts(&s, l), vec![(0, 8)]);
+    }
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!((starts(&s, a), starts(&s, c)), (vec![(0, 4), (4, 4)], vec![(0, 4), (4, 4)]));
+    assert!(s.execute("timeline.clear_keyframe", &json!({"frame": 2, "all_layers": true})).is_err(), "no keyframe starts there on any layer");
+    assert!(s.execute("timeline.remove_frame", &json!({"all_layers": "yes"})).is_err());
+
+    // The question before artwork is lost counts every layer the key acts on (ADR 0004).
+    run(&mut s, "timeline.goto", json!({"frame": 4}));
+    run(&mut s, "layer.select", json!({"layer": c.0}));
+    run(&mut s, "draw.rect", json!({"x": 0, "y": 0, "w": 10, "h": 10}));
+    run(&mut s, "layer.select", json!({"layer": b.0}));
+    assert!(s.confirmation("timeline.clear_keyframe", &json!({"frame": 4})).is_none(), "the active layer has no keyframe there");
+    assert!(s.confirmation("timeline.clear_keyframe", &json!({"frame": 4, "all_layers": true})).is_some(), "another layer's artwork would go");
+}
