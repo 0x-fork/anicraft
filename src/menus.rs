@@ -17,12 +17,14 @@ pub fn bar(app: &mut App, ui: &mut egui::Ui) {
     app.menu_keys.before(&ctx);
     let underline = app.menu_keys.show_keys;
     let mut tops = Vec::with_capacity(TOP_MENUS.len());
+    // Every title in the bar and where it is, for opening on hover (#455).
+    let mut titles: Vec<(egui::Id, egui::Rect)> = Vec::with_capacity(TOP_MENUS.len() + 1);
     egui::MenuBar::new().ui(ui, |ui| {
         // Keep platform-specific spacing here if the menu row ever shares the title bar again.
         ui.add_space(platform::menu_inset());
         if platform::OS == Os::Mac {
             // The application menu, as every Mac app has (About, Settings, Quit).
-            ui.menu_button(text(Type::Body, "AniCraft").strong(), |ui| {
+            let r = ui.menu_button(text(Type::Body, "AniCraft").strong(), |ui| {
                 ui.set_min_width(220.0);
                 if ui_item(ui, tr!("About AniCraft"), "", None) {
                     app.show_about = true;
@@ -36,6 +38,7 @@ pub fn bar(app: &mut App, ui: &mut egui::Ui) {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
+            titles.push((r.response.id, r.response.rect));
         }
         // Windows and Linux: no name before the menus; the window title already shows it.
         for ((top, label), key) in TOP_MENUS.into_iter().zip(&labels).zip(&keys) {
@@ -56,8 +59,10 @@ pub fn bar(app: &mut App, ui: &mut egui::Ui) {
                 ctx.accesskit_node_builder(r.response.id, |n| n.set_access_key(k));
             }
             tops.push(r.response.id);
+            titles.push((r.response.id, r.response.rect));
         }
     });
+    app.menu_keys.hover(&ctx, &titles);
     app.menu_keys.after(&ctx, tops);
 }
 
@@ -209,6 +214,24 @@ impl MenuKeys {
                 }
             }
         });
+    }
+
+    /// With one menu open, pointing at another menu's title opens that one instead (#455), as
+    /// menu bars do on every desktop. The pointer has to move onto the title: one resting there
+    /// does not take a menu back from the arrow keys. `titles`: each title's button and where it
+    /// is, this frame.
+    fn hover(&mut self, ctx: &egui::Context, titles: &[(egui::Id, egui::Rect)]) {
+        let Some(open) = titles.iter().position(|(t, _)| egui::Popup::is_id_open(ctx, Self::popup(*t))) else { return };
+        let Some(at) = ctx.input(|i| i.pointer.hover_pos().filter(|_| i.pointer.is_moving() && !i.pointer.any_down())) else { return };
+        let Some(&(title, _)) = titles.iter().enumerate().find(|(i, (_, r))| *i != open && r.contains(at)).map(|(_, t)| t) else { return };
+        // (One popup is open at a time: opening this one closes the other.)
+        egui::Popup::open_id(ctx, Self::popup(title));
+        self.stack.clear();
+        if self.engaged {
+            // The keyboard was in the menu that closed: it goes to the one that opened.
+            self.into = Some((Self::layer(title), 3));
+        }
+        ctx.request_repaint();
     }
 
     /// Alt pressed and let go with nothing else in between.
