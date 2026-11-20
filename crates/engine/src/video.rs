@@ -65,6 +65,22 @@ fn not_started(e: &std::io::Error) -> EngineError {
     EngineError::State(format!("AniCraft reads video with ffmpeg, which could not be started ({e}). Install it from ffmpeg.org, or point ANICRAFT_FFMPEG at it."))
 }
 
+/// Starts `cmd`, retrying a few times while the system says the program file is busy
+/// (`ETXTBSY`, 26 on Linux and macOS): a program written just now can still be open for
+/// writing in another process that forked meanwhile, which passes in milliseconds.
+fn spawn(cmd: &mut std::process::Command) -> std::io::Result<std::process::Child> {
+    let mut tries = 0;
+    loop {
+        match cmd.spawn() {
+            Err(e) if e.raw_os_error() == Some(26) && cfg!(unix) && tries < 20 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            r => return r,
+        }
+    }
+}
+
 /// A web page can't start programs (ADR 0036).
 fn no_programs() -> EngineError {
     EngineError::State("importing video runs ffmpeg, which can't run in a web browser: use the desktop app, or import the frames as PNG images".into())
@@ -186,7 +202,7 @@ pub fn probe(ffmpeg: &OsStr, path: &Path) -> Result<Probe> {
     if crate::vfs::in_memory() {
         return Err(no_programs());
     }
-    let mut child = command(ffmpeg).args(["-hide_banner", "-nostdin", "-i"]).arg(path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(|e| not_started(&e))?;
+    let mut child = spawn(command(ffmpeg).args(["-hide_banner", "-nostdin", "-i"]).arg(path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped())).map_err(|e| not_started(&e))?;
     let mut text = Vec::new();
     if let Some(e) = child.stderr.take() {
         let _ = e.take(PROBE_BYTES).read_to_end(&mut text);
@@ -361,7 +377,7 @@ impl Stream {
         c.arg("-i").arg(path);
         c.args(["-map", "0:v:0", "-an", "-sn", "-dn", "-vf", &format!("fps={rate},{}", scale_filter(max.0, max.1)), "-frames:v", &frames.max(1).to_string()]);
         c.args(["-c:v", "ppm", "-pix_fmt", "rgb24", "-f", "image2pipe", "-"]);
-        let mut child = c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| not_started(&e))?;
+        let mut child = spawn(c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())).map_err(|e| not_started(&e))?;
         // ffmpeg's messages are read as they come, so a full pipe never stalls it.
         let log = child.stderr.take().and_then(|e| {
             std::thread::Builder::new()
