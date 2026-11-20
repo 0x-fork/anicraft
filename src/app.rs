@@ -608,6 +608,8 @@ pub struct App {
     pub prefs_to_about: bool,
     /// Installed fonts, scanned off the UI thread on first need.
     pub system_fonts: Option<std::sync::Arc<prefs::SystemFonts>>,
+    /// Faces of this computer for scripts the interface's fonts lack (#482).
+    pub font_fallback: crate::font_fallback::Fallback,
     fonts_rx: Option<std::sync::mpsc::Receiver<prefs::SystemFonts>>,
     /// Re-check which glyphs the active fonts have (after fonts change).
     glyph_check: bool,
@@ -736,6 +738,8 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, session: Session, shot: Option<PathBuf>) -> App {
         #[cfg_attr(not(gpu_stage), allow(unused_mut))]
         let mut app = App::with_context(&cc.egui_ctx, session, shot);
+        // Names in scripts the bundled fonts lack get a face of this computer (#482).
+        app.font_fallback.enabled = true;
         // The GPU stage shares the window's device when it runs on wgpu (ADR 0029).
         #[cfg(gpu_stage)]
         app.stage_cache.gpu.set_window_device(cc.wgpu_render_state.as_ref());
@@ -920,6 +924,7 @@ impl App {
             desktop: None,
             prefs_to_about: false,
             system_fonts: None,
+            font_fallback: Default::default(),
             fonts_rx: None,
             glyph_check: true,
             copied: false,
@@ -1106,7 +1111,7 @@ impl App {
                 self.status_err(tr!("Font “{name}” is not installed; using the bundled font", name = name));
             }
         }
-        theme::install_fonts(ctx, ui_font.as_ref(), data_font.as_ref());
+        theme::install_fonts(ctx, ui_font.as_ref(), data_font.as_ref(), &self.font_fallback.faces);
         self.glyph_check = true;
     }
 
@@ -4840,6 +4845,8 @@ impl App {
         crate::test_movie::show(self, &ctx);
         crate::envelope::show(self, &ctx);
         crate::ease_editor::show(self, &ctx);
+        // Everything is painted: text no interface font could draw gets a fallback (#482).
+        crate::font_fallback::tick(self, &ctx);
 
         // Never lose work on close: intercept it while any open document has unsaved changes,
         // and ask once for all of them (ADR 0004, ADR 0112).

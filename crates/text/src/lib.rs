@@ -404,6 +404,28 @@ impl Fonts {
         FaceMatch { family: self.installed(&wanted), wanted, bold, italic }
     }
 
+    /// A face on this computer that can draw `c`, for showing text in a script the interface's
+    /// own fonts lack (#482): the regular style of the first family in `prefer` that has the
+    /// character, else of any other installed family. Files over `max_bytes` are passed over
+    /// (the caller keeps the bytes in memory), and only faces that parse are returned.
+    pub fn face_covering(&self, c: char, prefer: &[&str], max_bytes: usize) -> Option<CoveringFace> {
+        let regular = |f: &&fontdb::FaceInfo| f.style == fontdb::Style::Normal && (300..=500).contains(&f.weight.0);
+        let named = |name: &str| self.db.faces().filter(regular).filter(|f| f.families.first().is_some_and(|(n, _)| n.eq_ignore_ascii_case(name))).min_by_key(|f| f.weight.0.abs_diff(400)).map(|f| f.id);
+        let preferred = prefer.iter().filter_map(|name| named(name));
+        // Any other family, in name order so the answer is the same from run to run.
+        let mut others: Vec<(&str, fontdb::ID)> = self.db.faces().filter(regular).filter_map(|f| f.families.first().map(|(n, _)| (n.as_str(), f.id))).filter(|(n, _)| !n.starts_with('.')).collect();
+        others.sort_unstable_by(|a, b| a.0.cmp(b.0));
+        let ids = preferred.chain(others.into_iter().map(|(_, id)| id)).take(MAX_FALLBACK_SEARCH);
+        for id in ids {
+            let found = self.db.with_face_data(id, |data, index| (data.len() <= max_bytes && face_has(data, index, c)).then(|| (data.to_vec(), index)));
+            if let Some(Some((data, index))) = found {
+                let family = self.db.face(id).and_then(|f| f.families.first().map(|(n, _)| n.clone())).unwrap_or_default();
+                return Some(CoveringFace { family, data, index });
+            }
+        }
+        None
+    }
+
     /// The family used for `asked`: itself when installed (any case), else the default.
     pub fn resolve(&self, asked: &str) -> Option<String> {
         let find = |name: &str| self.families.iter().find(|f| f.eq_ignore_ascii_case(name)).cloned();
@@ -431,6 +453,24 @@ impl Fonts {
         let para = ParaStyle { align: style.align, line_spacing: style.line_spacing, ..ParaStyle::default() };
         self.layout_rich(&RichText { text, runs: &[run], paragraphs: &[para], width: style.width }, glyphs)
     }
+}
+
+/// Most faces [`Fonts::face_covering`] opens for one character.
+pub const MAX_FALLBACK_SEARCH: usize = 4096;
+
+/// A face that can draw a character the interface's fonts lack ([`Fonts::face_covering`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CoveringFace {
+    pub family: String,
+    /// The font file (a collection holds several faces: `index` says which).
+    pub data: Vec<u8>,
+    pub index: u32,
+}
+
+/// Whether face `index` of the font file `data` parses and has a glyph for `c`.
+pub fn face_has(data: &[u8], index: u32, c: char) -> bool {
+    use skrifa::MetadataProvider as _;
+    skrifa::FontRef::from_index(data, index).is_ok_and(|f| f.charmap().map(c).is_some())
 }
 
 /// The family, boldness and slant a PostScript name suggests, for fonts that aren't installed:
@@ -609,6 +649,29 @@ mod tests {
         assert!(fonts.find_face("_sans").family.is_some(), "the default families include an installed one");
         let missing = fonts.find_face("NoSuchFamily-Italic");
         assert_eq!((missing.family, missing.wanted.as_str(), missing.italic), (None, "No Such Family", true));
+    }
+
+    /// #482: a face for a character is found by coverage, preferred families first; files over
+    /// the size limit and bytes that are not a font are passed over.
+    #[test]
+    fn a_face_covering_a_character_is_found_by_what_it_can_draw() {
+        assert!(!face_has(b"not a font", 0, 'a'));
+        assert!(!face_has(&[], 0, 'a'));
+        let none = Fonts::from_faces(Vec::new());
+        assert_eq!(none.face_covering('a', &["Arial"], usize::MAX), None);
+        let Some(fonts) = fonts() else { return };
+        let Some(face) = fonts.face_covering('a', &[], usize::MAX) else { return };
+        assert!(face_has(&face.data, face.index, 'a') && !face.family.is_empty());
+        // The family asked for first wins when it has the character.
+        let again = fonts.face_covering('a', &[face.family.as_str()], usize::MAX).unwrap();
+        assert_eq!(again.family, face.family);
+        let named = fonts.face_covering('a', &["No Such Family 12345", &face.family.to_uppercase()], usize::MAX).unwrap();
+        assert_eq!(named.family, face.family, "names match in any case; a missing family is skipped");
+        // Nothing fits in no bytes, and a private-use character no face has gives nothing.
+        assert_eq!(fonts.face_covering('a', &[], 0), None);
+        if let Some(odd) = fonts.face_covering('\u{10FFFD}', &[], usize::MAX) {
+            assert!(face_has(&odd.data, odd.index, '\u{10FFFD}'));
+        }
     }
 
     #[test]

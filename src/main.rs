@@ -33,6 +33,7 @@ mod colour;
 mod colour_panel;
 mod envelope;
 mod find_panel;
+mod font_fallback;
 mod publish_panel;
 mod erasertool;
 mod bind_tool;
