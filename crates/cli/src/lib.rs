@@ -619,11 +619,13 @@ pub(crate) fn read_line<R: BufRead>(input: &mut R, max: usize) -> std::io::Resul
     String::from_utf8(buf).map(Line::Text).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
-/// Over `serve` and `mcp` a caller may not name the program Export Video runs (ADR 0004 spirit:
-/// an assistant must not start arbitrary executables); the person sets `ANICRAFT_FFMPEG` instead.
-/// Direct CLI use (`exec`, `run`) keeps the `ffmpeg` parameter.
-pub(crate) fn refuse_remote_ffmpeg(cmd: &str, params: &Value) -> Result<(), String> {
-    if cmd == "file.export_video" && params.get("ffmpeg").is_some_and(|v| !v.is_null()) {
+/// Over `serve` and `mcp` a caller may not name the program a command runs (ADR 0004 spirit: an
+/// assistant must not start arbitrary executables); the person sets `ANICRAFT_FFMPEG` instead.
+/// Direct CLI use (`exec`, `run`) keeps the `ffmpeg` parameter. Every command that takes one
+/// means the same by it (Export Video, Import Video, video info, relinking a layer's video), so
+/// the parameter is refused by name: a new command that runs ffmpeg is covered when it is added.
+pub(crate) fn refuse_remote_ffmpeg(_cmd: &str, params: &Value) -> Result<(), String> {
+    if params.get("ffmpeg").is_some_and(|v| !v.is_null()) {
         return Err("the ffmpeg parameter is not accepted here: set the ANICRAFT_FFMPEG environment variable to choose the program".into());
     }
     Ok(())
@@ -725,6 +727,13 @@ mod tests {
         let r = handle_request(&mut s, r#"{"cmd":"file.export_video","params":{"path":"a.mp4","ffmpeg":"/bin/sh"}}"#);
         assert_eq!(r["ok"], false);
         assert!(r["error"].as_str().unwrap().contains("ANICRAFT_FFMPEG"));
+        // Every command that runs ffmpeg takes the same parameter, and none may be given it here.
+        let takes_it: Vec<&str> = commands().iter().filter(|c| c.params.contains("ffmpeg?")).map(|c| c.id).collect();
+        assert!(takes_it.contains(&"file.export_video") && takes_it.contains(&"file.import_video"), "{takes_it:?}");
+        for id in takes_it {
+            let r = handle_request(&mut s, &json!({"cmd": id, "params": {"path": "a.mp4", "ffmpeg": "/bin/sh"}}).to_string());
+            assert!(r["error"].as_str().is_some_and(|e| e.contains("ANICRAFT_FFMPEG")), "{id}: {r}");
+        }
         // Direct CLI use is not filtered: the command runs and fails on the missing program, not on the parameter.
         let e = exec(&mut s, "file.export_video", &json!({"path": "a.mp4", "ffmpeg": "/nonexistent/anicraft-ffmpeg"})).unwrap_err();
         assert!(!e.contains("ANICRAFT_FFMPEG environment variable"), "{e}");

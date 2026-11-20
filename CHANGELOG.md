@@ -12,8 +12,9 @@
     across (Animate writes them as `morphHintsList`, which the importer didn't read); text that
     leaves `lineSpacing` out gets Animate's 2 px between its lines, not 0; and a dashed stroke
     that doesn't name its gap gets Animate's 6 px, not 3.
-  * **Security: an assistant can't choose the program Export Video runs.** Over `serve` and
-    `mcp` (the live bridge too), `file.export_video` refuses an `ffmpeg` param: set
+  * **Security: an assistant can't choose the program that makes or reads video.** Over `serve`
+    and `mcp` (the live bridge too), Export Video, Import Video and every other command refuse
+    an `ffmpeg` param: set
     `ANICRAFT_FFMPEG` yourself. `exec` and `run` keep it. A request line over 64 MiB is answered
     with an error instead of growing without bound (Dylan M. Taylor).
   * **Security: XFL folders.** A reference that climbs out of the package with backslashes
