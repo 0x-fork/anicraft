@@ -5,6 +5,7 @@
 //! JSON params, so headless and interactive behaviour cannot drift apart.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod access;
 mod anim;
 mod cmds_actions;
 mod cmds_bone;
@@ -751,6 +752,9 @@ impl Session {
     /// Runs a command by id. Mutating commands are atomic: on error the document is restored.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
+        // An agent's command names files inside its automation roots only (ADR 0124); checked
+        // first, so neither the confirmation below nor the command looks at a refused file.
+        access::check_params(id, params).map_err(EngineError::State)?;
         // Irreversible loss (unsaved work, files on disk) needs explicit consent, whoever asks.
         if let Some(c) = self.confirmation(id, params)
             && c.irreversible
@@ -1391,6 +1395,8 @@ pub fn element_label(doc: &Document, e: &Element) -> String {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod access_tests;
 
 #[cfg(test)]
 mod parenting_tests;

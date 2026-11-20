@@ -206,6 +206,8 @@ pub(crate) fn open(s: &mut Session, p: &Value) -> Result<Value> {
         } else if crate::vfs::in_memory() {
             return Err(EngineError::Param("an XFL document is a folder, which a web browser can't hand over: open the .fla instead".into()));
         } else {
+            // The XFL reader opens the folder's files itself (ADR 0124).
+            crate::access::check(&path, crate::access::Access::Read)?;
             anicraft_xfl::import_path(&path)
         };
         let (mut doc, report) = imported.map_err(|e| EngineError::Format(format!("{}: {e}", path.display())))?;
@@ -648,6 +650,8 @@ fn export_video(s: &mut Session, p: &Value) -> Result<Value> {
         // ffmpeg writes the file itself, and a web browser can't start it (ADR 0036).
         return Err(EngineError::State("video export runs ffmpeg, which can't run in a web browser: export an animated GIF, a PNG sequence or an HTML page instead".into()));
     }
+    // ffmpeg writes the file, not `vfs`: the automation roots are asked here (ADR 0124).
+    let path = crate::access::for_program(&path, crate::access::Access::Write)?;
     let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
     // Sound is encoded by the same ffmpeg: Opus in WebM (royalty-free), AAC in MP4.
     let (codec, audio_codec): (&[&str], &[&str]) = match ext.as_deref() {
