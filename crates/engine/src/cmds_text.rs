@@ -334,9 +334,10 @@ pub(crate) fn lay_out_block(d: &TextBlock) -> Result<(TextBlock, Option<String>,
     let (runs, paras, paints) = rich_parts(&d);
     match (d.field.clone(), d.on_path.clone()) {
         (_, Some(on)) => {
-            // One line along the path (line breaks become spaces), anchored by the alignment.
-            let line: String = d.text.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c }).collect();
-            let l = fonts.layout_rich(&anicraft_text::RichText { text: &line, runs: &runs, paragraphs: &[anicraft_text::ParaStyle::default()], width: None }, true).map_err(layout_err)?;
+            // Lines along the path (ADR 0107): laid out left-aligned with each paragraph's
+            // line spacing; the block's alignment anchors every line along the path.
+            let lines: Vec<anicraft_text::ParaStyle> = paras.iter().map(|q| anicraft_text::ParaStyle { line_spacing: q.line_spacing, ..anicraft_text::ParaStyle::default() }).collect();
+            let l = fonts.layout_rich(&anicraft_text::RichText { text: &d.text, runs: &runs, paragraphs: &lines, width: None }, true).map_err(layout_err)?;
             let offset = if on.offset.is_finite() { on.offset.clamp(-MAX_PATH_OFFSET, MAX_PATH_OFFSET) } else { 0.0 };
             let set = anicraft_text::on_path_boxed(&l.glyphs, &on.path, anicraft_text::PathPlacement { offset, flip: on.flip, align: align_text(d.align) }).ok_or_else(|| EngineError::State("the path has no length to set text along".into()))?;
             d.width = None;
