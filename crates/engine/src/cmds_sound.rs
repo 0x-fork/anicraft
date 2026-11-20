@@ -412,18 +412,21 @@ pub(crate) fn soundtrack(s: &Session, first: u32, last: u32, rate: u32) -> (Vec<
 }
 
 /// A soundtrack WAV in the temp folder (for ffmpeg), removed when dropped.
-pub(crate) struct TempTrack(pub PathBuf);
+pub(crate) struct TempTrack(pub PathBuf, crate::access::Own);
 
 impl Drop for TempTrack {
     fn drop(&mut self) {
-        let _ = crate::vfs::remove_file(&self.0);
+        let _ = crate::vfs::remove_file(self.1.path());
     }
 }
 
 /// The soundtrack of movie frames `first..=last` as a 48 kHz 16-bit WAV in the temp folder.
 pub(crate) fn temp_track(s: &Session, first: u32, last: u32) -> Result<TempTrack> {
     const RATE: u32 = 48_000;
-    let track = TempTrack(std::env::temp_dir().join(format!("anicraft-track-{}-{}.wav", std::process::id(), crate::vfs::random_suffix())));
+    let file = std::env::temp_dir().join(format!("anicraft-track-{}-{}.wav", std::process::id(), crate::vfs::random_suffix()));
+    // AniCraft's own file: allowed whatever the automation roots are (ADR 0124).
+    let own = crate::access::own(&file);
+    let track = TempTrack(file, own);
     let (voices, a, b) = soundtrack(s, first, last, RATE);
     write_mix(&track.0, &voices, RATE, a, b, wav::Bits::Int16)?;
     Ok(track)
