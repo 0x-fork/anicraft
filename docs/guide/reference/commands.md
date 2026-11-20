@@ -608,7 +608,7 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Pencil Stroke** `draw.freehand` · changes the document
   Parameters: `{points: [[x, y], ..], mode?: "smooth"|"straighten"|"ink", tolerance? (stage units), closed?, stroke?, stroke_width?, object?}`
 - **Move Points** `path.move_points` · changes the document
-  Parameters: `{id, points: [[cmd, slot], ..], dx, dy, smooth?: bool} (a handle moved alone at a smooth anchor turns the other one with it, keeping its length, unless smooth is false: Alt breaks the pair)`
+  Parameters: `{id (a shape, or text on a path: the path it follows, ADR 0107), points: [[cmd, slot], ..], dx, dy, smooth?: bool} (a handle moved alone at a smooth anchor turns the other one with it, keeping its length, unless smooth is false: Alt breaks the pair)`
 - **Add Anchor Point** `path.add_point` · changes the document
   Parameters: `{id, x, y, slop?}`
 - **Delete Anchor Points** `path.delete_points` · changes the document
@@ -760,7 +760,7 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Text on Path** `text.path` · changes the document
   Parameters: `{offset? (px along the path), flip?: bool (along the path backwards, on its other side), release?: bool (back to lines of text where it starts)} on the selected text on a path (ADR 0070)`
 - **Text Type** `text.field` · changes the document
-  Parameters: `{type?: static|dynamic|input, lines?: single|multiline|multiline_no_wrap|password (input only), width?, height? (the field's box, px), selectable?, border?, background?, border_color?, background_color?, max_chars? (input; 0: no limit), variable? (kept, not run)} on the selected text; dynamic and input fields are named with instance.set_name and scripted in Test Movie and the HTML export (ADR 0066)`
+  Parameters: `{type?: static|dynamic|input, lines?: single|multiline|multiline_no_wrap|password (input only), width?, height? (the field's box, px), selectable?, border?, background?, border_color?, background_color?, max_chars? (input; 0: no limit), variable? (kept, not run), embed?: characters whose glyph outlines the HTML export carries for this field's font, so text a script sets is drawn in it where the font's licence allows ("": none; ADR 0107)} on the selected text; dynamic and input fields are named with instance.set_name and scripted in Test Movie and the HTML export (ADR 0066)`
 - **Width Profile** `stroke.set_profile` · changes the document
   Parameters: `{profile: uniform|taper_both|taper_start|taper_end|bulge|pinch | [[t, left, right], ..], id? (default: the selected shapes)}`
 - **Width** `stroke.set_width_point` · changes the document
@@ -798,7 +798,7 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Reference Video** `layer.set_video` · changes the document
   Parameters: `{layer?, path? (relink: another file, or the same one where it moved), start? (the timeline frame, from 0, where the video begins), offset? (seconds into the video shown there), remove? (true: the layer keeps its artwork and loses the video), ffmpeg?} changes a layer's reference video (ADR 0116) → {layer, video}`
 - **Set Actions** `actions.set` · changes the document
-  Parameters: `{actions: [{op: stop|play|goto_and_play|goto_and_stop|next_frame|prev_frame|next_scene|prev_scene|trace|set_property, target?, frame?, scene?, message?, property?, value?}] | plugin: id, entry?, symbol?: id (a movie clip's timeline), layer?, frame?} sets what the keyframe at the frame runs; or {element, event: click|press|release|over|out, actions} sets an instance's event handler. An empty list clears it`
+  Parameters: `{actions: [{op: stop|play|goto_and_play|goto_and_stop|next_frame|prev_frame|next_scene|prev_scene|trace|set_property, target?, frame?, scene?, message?, property?, value?}] | plugin: id, entry?, symbol?: id (a movie clip's timeline), layer?, frame?} sets what the keyframe at the frame runs; or {element, event: click|press|release|over|out, actions} (or event: change on an input text field: what it does when the viewer changes its text, ADR 0107) sets an instance's event handler. An empty list clears it`
 - **Clear Actions** `actions.clear` · changes the document
   Parameters: `{symbol?, layer?, frame?} clears the keyframe's actions; {element, event?} clears an instance's handlers (one event, or all)`
 - **List Actions** `actions.list`

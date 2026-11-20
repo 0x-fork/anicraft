@@ -178,7 +178,7 @@ impl Parallel {
 
     /// The distance along the parallel curve under distance `s` along the path (past the
     /// path's ends it carries on at the path's own pace).
-    fn from_path(&self, s: f32) -> f32 {
+    fn along_at(&self, s: f32) -> f32 {
         let n = self.along.len().saturating_sub(1).max(1);
         if s <= 0.0 {
             return s;
@@ -193,7 +193,7 @@ impl Parallel {
     }
 
     /// The distance along the path over distance `t` along the parallel curve (in range).
-    fn to_path(&self, t: f32) -> f32 {
+    fn path_at(&self, t: f32) -> f32 {
         let n = self.along.len().saturating_sub(1).max(1);
         let i = self.along.partition_point(|l| *l <= t).clamp(1, n);
         let (a, b) = (self.along.get(i - 1).copied().unwrap_or(0.0), self.along.get(i).copied().unwrap_or(0.0));
@@ -271,7 +271,7 @@ pub fn on_path(glyphs: &[PlacedGlyph], path: &Path, how: PathPlacement) -> Optio
         // Where the glyph's middle is along its line, and how long that line is.
         let (anchor, total) = match parallel {
             None => (offset, length),
-            Some((_, par)) => (par.from_path(if closed { offset.rem_euclid(length) } else { offset }), par.total()),
+            Some((_, par)) => (par.along_at(if closed { offset.rem_euclid(length) } else { offset }), par.total()),
         };
         let mid = anchor - back + g.x + g.advance * 0.5;
         // A parallel curve squeezed to (almost) nothing, as at a circle's centre, holds no text.
@@ -290,7 +290,7 @@ pub fn on_path(glyphs: &[PlacedGlyph], path: &Path, how: PathPlacement) -> Optio
         let (p, dir) = match parallel {
             None => at(t),
             Some((d, par)) => {
-                let (p, dir) = at(par.to_path(t));
+                let (p, dir) = at(par.path_at(t));
                 (p + Vec2::new(-dir.y, dir.x) * *d, dir)
             }
         };

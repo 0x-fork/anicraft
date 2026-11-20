@@ -272,3 +272,57 @@ fn line_breaks_set_further_lines_parallel_to_the_path() {
     assert!(t5.on_path.is_none() && t5.text == "First\nFloor" && t5.box_height > lh * 1.8);
 }
 
+/// Hostile parameters on the new surfaces (ADR 0107) return errors, never panic, and leave a
+/// document that still evaluates and saves.
+#[test]
+fn hostile_point_edits_embeds_and_change_events_never_panic() {
+    if !fonts() {
+        return;
+    }
+    let (mut s, text, line) = text_and_line();
+    run(&mut s, "element.select", json!({"ids": [text.0]}));
+    run(&mut s, "text.edit", json!({"text": "a\n\n\nb\n".repeat(40)}));
+    run(&mut s, "element.select", json!({"ids": [text.0, line.0]}));
+    run(&mut s, "text.attach_path", json!({}));
+    let id = text.0;
+    let wild = [json!(null), json!(-1), json!(1e308), json!(u64::MAX), json!("x"), json!([]), json!({}), json!(f64::MIN_POSITIVE)];
+    let mut tried = 0;
+    for a in &wild {
+        for b in &wild {
+            for p in [
+                json!({"id": id, "points": [[a, b]], "dx": b, "dy": a}),
+                json!({"id": id, "points": [[1, 0]], "dx": a, "dy": b}),
+                json!({"id": id, "points": a, "dx": 1, "dy": 1, "smooth": b}),
+            ] {
+                let _ = s.execute("path.move_points", &p);
+                tried += 1;
+            }
+            let _ = s.execute("path.add_point", &json!({"id": id, "x": a, "y": b, "slop": a}));
+            let _ = s.execute("path.delete_points", &json!({"id": id, "cmds": [a, b]}));
+            let _ = s.execute("path.convert_point", &json!({"id": id, "cmd": a, "smooth": b}));
+            let _ = s.execute("text.path", &json!({"offset": a, "flip": b}));
+            let _ = s.execute("text.field", &json!({"embed": a, "type": b}));
+            let _ = s.execute("actions.set", &json!({"element": id, "event": "change", "actions": a}));
+            let _ = s.execute("actions.clear", &json!({"element": a, "event": "change"}));
+        }
+    }
+    assert!(tried > 100);
+    // Far moves that stay in range, a path folded onto itself, many lines: still text on a path.
+    for (dx, dy) in [(1e5, -1e5), (-1e5, 1e5), (-399.0, 0.0), (0.5, 0.5)] {
+        let _ = s.execute("path.move_points", &json!({"id": id, "points": [[1, 0]], "dx": dx, "dy": dy}));
+    }
+    let (_, t) = text_of(&s, text);
+    assert!(t.on_path.is_some());
+    assert!(t.outline.cmds.iter().all(|c| match c {
+        anicraft_geom::PathCmd::MoveTo(p) | anicraft_geom::PathCmd::LineTo(p) => p.is_finite(),
+        _ => true,
+    }));
+    let saved = crate::format::to_json(&s.doc).unwrap();
+    assert_eq!(crate::format::from_json(&saved).unwrap(), s.doc);
+    assert!(anicraft_render::render_frame(&s.doc, 0, 0.25).is_ok());
+    // Plug-ins may call what artists can: the namespaces already have their policy.
+    for cmd in ["path.move_points", "text.field", "text.path", "actions.set"] {
+        let _ = crate::cmds_plugin::plugin_may_call(cmd);
+    }
+}
+

@@ -1086,7 +1086,7 @@ fn the_js_player_runs_html_text_change_events_and_limits_like_the_rust_player() 
         "Script on frame 5 of the main timeline stopped: line 1: the main timeline isn't a text field".to_string(),
         "Script on frame 6 of the main timeline stopped: line 1: `htmlText` is set to text, not null".to_string(),
     ] {
-        assert!(lines.iter().any(|l| *l == want), "the movie never wrote {want:?}: {lines:#?}");
+        assert!(lines.contains(&want), "the movie never wrote {want:?}: {lines:#?}");
     }
     // The hostile markup left nothing behind in what the field reads back.
     let html = lines.iter().find(|l| l.starts_with("<p align=\"right\">")).expect("htmlText read back");

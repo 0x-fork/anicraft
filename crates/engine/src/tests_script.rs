@@ -362,7 +362,7 @@ fn fields_embed_glyph_outlines_in_the_html_export() {
         // The usual case: the outlines are in the page, and the report counts them.
         "embedded" => {
             let n = rows[0]["glyphs"].as_u64().unwrap();
-            assert!(n >= 10 && n <= 17, "{v}");
+            assert!((10..=17).contains(&n), "{v}");
             assert!(html.contains("\"fonts\":[{"), "the page carries the face");
             assert!(v["notes"].as_object().unwrap().iter().any(|(k, c)| k.starts_with("glyph outlines embedded") && c.as_u64() == Some(n)), "{v}");
             assert!(html.len() > before["bytes"].as_u64().unwrap() as usize, "the glyphs add to the page");
