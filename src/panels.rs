@@ -1504,6 +1504,15 @@ fn text_path_rows(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::El
             app.run("text.release_path", json!({}));
         }
     });
+    // The path is the text's own: the Subselection tool reshapes it in place (ADR 0107).
+    row_prose(ui, tr!("Shape"), |ui| {
+        let on_tool = app.tool == crate::app::Tool::Subselect;
+        let key = app.keymap.primary("tool.subselection").map(crate::platform::shortcut_label).unwrap_or_default();
+        if ui.selectable_label(on_tool, tr!("Edit Path")).on_hover_text(tr!("Reshape the path with the Subselection tool ({key}): drag its points and handles, double-click it to add a point; the text follows", key = key)).clicked() && !on_tool {
+            app.tool = crate::app::Tool::Subselect;
+            app.status_ok(tr!("Drag the path's points to reshape it; the text follows."));
+        }
+    });
 }
 
 /// A text type's name, as the Properties panel shows it.
@@ -1597,6 +1606,42 @@ fn text_field_rows(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
                 ui.label(text(Type::Caption, tr!("no limit")).color(T.text_faint));
             }
         });
+    }
+    // Animate's Embed: the characters whose outlines travel with the HTML export, so text a
+    // script sets is drawn in this font in any browser (ADR 0107). Dynamic text only: what a
+    // viewer types into an input field is drawn by the browser.
+    if kind == TextKind::Dynamic {
+        let mut embed = f.embed.clone();
+        row_prose(ui, tr!("Embed"), |ui| {
+            let r = ui.add(egui::TextEdit::singleline(&mut embed).desired_width(crate::theme::fit(ui, 110.0)).hint_text(tr!("characters"))).named(tr!("Characters to embed"));
+            if r.on_hover_text(tr!("The HTML export carries these characters' outlines in this field's font, so text a script sets looks the same in every browser. Left out, with a note in the export's report, when the font's licence doesn't allow embedding.")).changed() {
+                live(app, tr_noop!("Embed characters"), "text.field", json!({"embed": embed}));
+            }
+            ui.menu_button(tr!("Add"), |ui| {
+                let sets: [(&str, String); 5] = [
+                    (tr!("Uppercase (A–Z)"), ('A'..='Z').collect()),
+                    (tr!("Lowercase (a–z)"), ('a'..='z').collect()),
+                    (tr!("Numerals (0–9)"), ('0'..='9').collect()),
+                    (tr!("Punctuation and space"), " !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".to_string()),
+                    (tr!("The characters in this text"), t.text.clone()),
+                ];
+                for (label, chars) in sets {
+                    if ui.button(label).clicked() {
+                        app.run("text.field", json!({"embed": format!("{}{}", f.embed, chars)}));
+                        ui.close();
+                    }
+                }
+                if !f.embed.is_empty() && ui.button(tr!("None")).on_hover_text(tr!("Embed nothing: the page draws changed text with the browser's fonts")).clicked() {
+                    app.run("text.field", json!({"embed": ""}));
+                    ui.close();
+                }
+            })
+            .response
+            .on_hover_text(tr!("Add a set of characters to embed"));
+        });
+        if !f.embed.is_empty() {
+            ui.label(text(Type::Caption, trn!("{n} character embedded in the HTML export", "{n} characters embedded in the HTML export", f.embed.chars().count())).color(T.text_faint));
+        }
     }
     if !f.variable.is_empty() {
         row(ui, tr!("Variable"), |ui| {

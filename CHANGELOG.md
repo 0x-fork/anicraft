@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+* **Text: paths you can reshape, lines on a path, and the rest of the text-field API** (M5,
+  ADR 0107).
+  * **Edit the path of text on a path in place.** With the Subselection tool (or Properties ›
+    Path › **Edit Path**) the path a text follows shows its points: drag points and handles and
+    the text follows live, one undo step a drag; add, delete and convert points as on a shape.
+    Headless, the `path.*` point commands take the text's id.
+  * **Several lines on a path.** Line breaks now set further lines alongside the path, each on
+    its own parallel curve with its own letter spacing, anchored by the alignment; Flip moves the
+    whole block. Up to 64 lines. (Line breaks used to be drawn as spaces.)
+  * **`htmlText`** on dynamic and input fields, in the subset Flash fields took (`<b>`, `<i>`,
+    `<u>`, `<font face size color>`, `<a href>`, `<p align>`, `<br>`), read into styled runs
+    and written back; sanitised, so no tag, script or unsafe link survives as markup.
+  * **Change events**: `field.addEventListener(Event.CHANGE, …)` fires once for each edit a
+    viewer makes, and input fields have a **change event** in the Actions panel
+    (`actions.set {element, event: "change"}`).
+  * **`maxChars` and `restrict`** can be read and set by scripts; typing a refused character no
+    longer deletes the selection.
+  * **Embedded characters in the HTML export**: a dynamic field's **Embed** list
+    (`text.field {embed}`) carries those letters' outlines in the page, so script-set text keeps
+    your font in every browser. The font's licence bits (`OS/2` `fsType`) are checked first;
+    fonts that don't allow it are left out and named in the report.
+  * All of it plays the same in Test Movie and the HTML page (parity tests, including 400
+    generated HTML strings through both readers).
+
 * **An AI assistant works inside the folders you give it** (M8, ADR 0124). `anicraft-cli mcp`
   now needs `--automation-read-root <folder>` and `--automation-write-root <folder>`, and does
   not start without both (exit code 2, with a message that says what to add): **add the two

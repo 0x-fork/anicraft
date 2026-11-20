@@ -395,6 +395,7 @@ pub const NOT_FILES: &[&str] = &[
     "frames.edit_multiple",
     "draw.path",
     "path.extend",
+    "path.move_points",
     // Deletes the plug-in's own file in the plug-ins folder: asked where it is deleted.
     "plugin.remove",
     "text.attach_path",
