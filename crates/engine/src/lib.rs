@@ -51,6 +51,7 @@ pub mod cmds_audio_keys;
 pub mod cmds_data;
 pub mod data_import;
 pub mod cmds_text;
+pub mod embed;
 mod cmds_timeline;
 mod cmds_view;
 mod cmds_width;

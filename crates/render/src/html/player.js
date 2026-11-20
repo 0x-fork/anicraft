@@ -460,7 +460,9 @@ var AniCraft = (function () {
     for (const it of items) dl.items.push(it);
     if (!v) return;
     // `rich`: the styles changed text is drawn in when a script set them (`htmlText`).
-    if (v.field) v.field({ tf: tf, name: name, m: xf, c: color, clip: clip, group: group, key: key, text: text, rich: text !== null && fs && fs.rich !== null ? fs.rich : null, focused: focused, items: items });
+    // `rich`: the styles changed text is drawn in when a script set them (`htmlText`); `mx`:
+    // the most characters the viewer may type now.
+    if (v.field) v.field({ tf: tf, name: name, m: xf, c: color, clip: clip, group: group, key: key, text: text, rich: text !== null && fs && fs.rich !== null ? fs.rich : null, mx: fieldMax(fs, tf), focused: focused, items: items });
     else for (const it of items) v.item(it);
   }
 
@@ -2457,6 +2459,139 @@ var AniCraft = (function () {
     return ok;
   }
 
+  // ----- laying out changed text for the page (ADR 0107) ---------------------------------------
+  //
+  // Text a script or the viewer changed has no outline: the page lays it out. This is the part
+  // of that with no canvas in it, so the tests can run it: `text` in `styles` ({ runs, paras })
+  // broken into lines (where it breaks, and in a Multiline field wrapped at the box less its
+  // gutters, greedily at spaces, across runs), each line a list of stretches in one style with
+  // their place. A stretch whose face is embedded (`faces`, the movie's `fonts`) and has every
+  // character is measured by its glyphs' advances and carries the face, for the page to draw
+  // its outlines; any other is measured by `measure(style, text)` (the browser's fonts).
+  const MAX_LINES = 1000;
+  function embeddedFace(faces, st) {
+    for (const f of faces || []) if (f.f === st.font && !!f.b === st.bold && !!f.i === st.italic) return f;
+    return null;
+  }
+  function fieldLayout(tf, text, styles, faces, measure) {
+    const chars = Array.from(text);
+    const runs = styles.runs, paras = styles.paras;
+    if (runs.length === 0) return [];
+    const wrap = tf.ln === "multiline" ? Math.max(tf.w - 4, 1) : 0;
+    const lsp = (tf.font && tf.font.lsp) || 0;
+    // A stretch of characters in run `k`, measured.
+    const token = (cs, k, space) => {
+      const st = runs[k] ? runs[k].s : runs[runs.length - 1].s;
+      let face = embeddedFace(faces, st);
+      let w = 0;
+      if (face !== null) {
+        for (const c of cs) {
+          const g = face.g[c];
+          if (g === undefined) {
+            face = null;
+            break;
+          }
+          w += (g[0] * st.size) / 1000 + st.ls;
+        }
+      }
+      const t = cs.join("");
+      if (face === null) w = measure(st, t);
+      return { text: t, st: st, w: w, face: face, space: space };
+    };
+    const lines = [];
+    let top = 2;
+    let run = 0, left = runs.length > 0 ? runs[0].n : Infinity;
+    const runAt = () => {
+      while (run < runs.length - 1 && left <= 0) {
+        run += 1;
+        left = runs[run].n;
+      }
+      left -= 1;
+      return run;
+    };
+    const flush = (toks, para, firstRun) => {
+      while (toks.length > 0 && toks[toks.length - 1].space) toks.pop();
+      // Room above and below the baseline: the most any stretch needs (an empty line: the run
+      // its paragraph starts in).
+      const metric = (st, face) => (face ? [(face.a * st.size) / 1000, (face.lh * st.size) / 1000] : [st.size * 0.95, st.size * 1.2]);
+      let asc = 0, below = 0;
+      if (toks.length === 0) {
+        const st = runs[firstRun] ? runs[firstRun].s : runs[runs.length - 1].s;
+        const m = metric(st, embeddedFace(faces, st));
+        asc = m[0];
+        below = m[1] - m[0];
+      }
+      let w = 0;
+      for (const t of toks) {
+        const m = metric(t.st, t.face);
+        asc = Math.max(asc, m[0]);
+        below = Math.max(below, m[1] - m[0]);
+        w += t.w;
+      }
+      const al = (paras[para] || paras[paras.length - 1] || { al: "left" }).al;
+      let x = al === "center" ? (tf.w - w) / 2 : al === "right" ? tf.w - 2 - w : 2;
+      const segs = [];
+      for (const t of toks) {
+        const last = segs[segs.length - 1];
+        // Neighbours in one style and face draw as one stretch.
+        if (last && last.st === t.st && last.face === t.face) {
+          last.text += t.text;
+          last.w += t.w;
+        } else segs.push({ text: t.text, st: t.st, x: x, w: t.w, face: t.face });
+        x += t.w;
+      }
+      const h = Math.max(asc + below + lsp, 1);
+      if (lines.length < MAX_LINES) lines.push({ top: top, base: top + asc, h: h, w: w, segs: segs });
+      top += h;
+    };
+    let para = 0;
+    let toks = [], width = 0, breakAt = -1, firstRun = 0, started = false;
+    let word = [], wordRun = -1, wordSpace = false;
+    const endWord = () => {
+      if (word.length === 0) return;
+      const t = token(word, wordRun, wordSpace);
+      word = [];
+      if (wrap && !t.space && width + t.w > wrap && toks.length > 0) {
+        // Wrap: at the last space if there is one, else here.
+        const rest = breakAt >= 0 ? toks.splice(breakAt) : [];
+        flush(toks, para, firstRun);
+        toks = rest;
+        width = rest.reduce((s, x) => s + x.w, 0);
+        breakAt = -1;
+      }
+      toks.push(t);
+      width += t.w;
+      if (t.space) breakAt = toks.length;
+    };
+    for (const c of chars) {
+      const k = runAt();
+      if (!started) {
+        firstRun = k;
+        started = true;
+      }
+      if (c === "\n") {
+        endWord();
+        flush(toks, para, firstRun);
+        toks = [];
+        width = 0;
+        breakAt = -1;
+        para += 1;
+        started = false;
+        continue;
+      }
+      const space = c === " ";
+      if (word.length > 0 && (k !== wordRun || space !== wordSpace)) endWord();
+      wordRun = k;
+      wordSpace = space;
+      word.push(c);
+    }
+    endWord();
+    // An empty last line is in the style the text ends in.
+    if (!started) firstRun = run;
+    flush(toks, para, firstRun);
+    return lines;
+  }
+
   // ----- text fields (player.rs, field.rs; ADR 0066) -------------------------------------------
   //
   // In the browser the viewer types into a real <input> or <textarea> that canvas.js lays over
@@ -2760,5 +2895,5 @@ var AniCraft = (function () {
     return s.replace(/[A-Z]/g, (c) => c.toLowerCase());
   }
 
-  return { Player: Player, evaluate: evaluate, applyEffect: applyEffect, recolours: recolours, mul: mul, meanScale: meanScale, finite: finite, htmlText: { parse: parseHtml, write: writeHtml }, restrictAllows: restrictAllows, fieldStyles: fieldStyles };
+  return { Player: Player, evaluate: evaluate, applyEffect: applyEffect, recolours: recolours, mul: mul, meanScale: meanScale, finite: finite, htmlText: { parse: parseHtml, write: writeHtml }, restrictAllows: restrictAllows, fieldStyles: fieldStyles, fieldLayout: fieldLayout, embeddedFace: embeddedFace };
 })();

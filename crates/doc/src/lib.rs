@@ -1005,6 +1005,22 @@ pub struct TextField {
     /// run in the timeline the field is on, as an instance's event handlers are.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub on_change: Vec<actions::Action>,
+    /// The characters whose glyph outlines the HTML export carries for this field's font
+    /// (ADR 0107), so text a script sets is drawn in the author's font where the font's licence
+    /// allows; empty: the viewer's browser fonts. Each character once, at most
+    /// [`MAX_EMBED_CHARS`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub embed: String,
+}
+
+/// Most characters a field embeds.
+pub const MAX_EMBED_CHARS: usize = 1024;
+
+/// A list of characters to embed as a field keeps it: each once, in order, no control
+/// characters, at most [`MAX_EMBED_CHARS`].
+pub fn embed_chars(chars: &str) -> String {
+    let mut seen = std::collections::BTreeSet::new();
+    chars.chars().take(MAX_EMBED_CHARS * 64).filter(|c| !c.is_control() && seen.insert(*c)).take(MAX_EMBED_CHARS).collect()
 }
 
 fn black() -> Rgba {
@@ -1017,7 +1033,7 @@ fn white() -> Rgba {
 impl TextField {
     /// A single-line field of `kind`.
     pub fn new(kind: TextKind) -> TextField {
-        TextField { kind, lines: LineType::Single, selectable: true, border: false, border_color: Rgba::BLACK, background: false, background_color: Rgba::WHITE, max_chars: 0, variable: String::new(), on_change: Vec::new() }
+        TextField { kind, lines: LineType::Single, selectable: true, border: false, border_color: Rgba::BLACK, background: false, background_color: Rgba::WHITE, max_chars: 0, variable: String::new(), on_change: Vec::new(), embed: String::new() }
     }
 
     /// The width text wraps at in a box `box_width` wide, if its lines wrap.
@@ -1039,7 +1055,7 @@ impl TextField {
     pub fn sanitized(&self) -> TextField {
         let mut on_change = self.on_change.clone();
         actions::sanitize_actions(&mut on_change);
-        TextField { max_chars: self.max_chars.min(MAX_FIELD_CHARS as u32), variable: self.variable.chars().take(MAX_FIELD_NAME).collect(), on_change, ..self.clone() }
+        TextField { max_chars: self.max_chars.min(MAX_FIELD_CHARS as u32), variable: self.variable.chars().take(MAX_FIELD_NAME).collect(), on_change, embed: embed_chars(&self.embed), ..self.clone() }
     }
 }
 

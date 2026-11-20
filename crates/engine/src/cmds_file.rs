@@ -861,9 +861,14 @@ fn export_html(s: &mut Session, p: &Value) -> Result<Value> {
         Some(t) if !t.trim().is_empty() => t.to_string(),
         _ => stem,
     };
-    let opts = anicraft_render::html::HtmlOptions { title, sound: opt_bool(p, "sound")?.unwrap_or(true), fit: opt_bool(p, "fit")?.unwrap_or(true) };
     let started = web_time::Instant::now();
-    let out = anicraft_render::html::to_html(&s.doc, &opts).map_err(EngineError::Param)?;
+    // Glyph outlines for fields that embed characters (ADR 0107), where the fonts allow it.
+    let embedded = crate::embed::embedded_faces(&s.doc);
+    let opts = anicraft_render::html::HtmlOptions { title, sound: opt_bool(p, "sound")?.unwrap_or(true), fit: opt_bool(p, "fit")?.unwrap_or(true), fonts: embedded.faces };
+    let mut out = anicraft_render::html::to_html(&s.doc, &opts).map_err(EngineError::Param)?;
+    for (note, n) in embedded.notes {
+        out.report.insert(note, n);
+    }
     crate::vfs::write(&path, out.html.as_bytes())?;
     let summary = if out.report.is_empty() {
         String::new()
@@ -886,6 +891,7 @@ fn export_html(s: &mut Session, p: &Value) -> Result<Value> {
         "ms": started.elapsed().as_millis() as u64,
         "report": summary,
         "notes": out.report,
+        "fonts": embedded.summary,
     }))
 }
 

@@ -1139,6 +1139,79 @@ fn the_js_html_text_reader_and_writer_match_rust_on_any_input() {
     }
 }
 
+/// Embedded glyphs (ADR 0107): the faces handed to the export reach the page with their
+/// advances and outlines, and the page's layout measures and places text with them, falling
+/// back to the browser's fonts for a stretch with a character the face lacks.
+#[test]
+fn embedded_glyphs_reach_the_page_and_its_layout_uses_them() {
+    use crate::html::EmbeddedFace;
+    let doc = html_fields_doc();
+    // A face for the fields' own style (Inter, bold): A and B 600 wide, a space 250, at 1000.
+    let glyph = |c: char, adv: f32| (c, adv, Arc::new(if c == ' ' { Path::new() } else { Path::rect(50.0, -700.0, 500.0, 700.0) }));
+    let face = EmbeddedFace { family: "Inter".into(), bold: true, italic: false, ascent: 900.0, line_height: 1200.0, glyphs: vec![glyph('A', 600.0), glyph('B', 600.0), glyph(' ', 250.0)] };
+    let empty = EmbeddedFace { family: "Nothing".into(), ..EmbeddedFace::default() };
+    let hostile = EmbeddedFace { family: "Bad".into(), ascent: f32::NAN, glyphs: vec![glyph('x', 1.0)], ..EmbeddedFace::default() };
+    let plain = movie(&doc, &HtmlOptions::default());
+    assert!(plain.json.get("fonts").is_none(), "pages without embedded glyphs are as before");
+    let m = movie(&doc, &HtmlOptions { fonts: vec![face, empty, hostile], ..HtmlOptions::default() });
+    let fonts = m.json["fonts"].as_array().expect("fonts");
+    assert_eq!(fonts.len(), 1, "faces without glyphs or with broken metrics are left out: {fonts:?}");
+    assert_eq!((fonts[0]["f"].as_str(), fonts[0]["b"].as_bool(), fonts[0]["a"].as_f64(), fonts[0]["lh"].as_f64()), (Some("Inter"), Some(true), Some(900.0), Some(1200.0)));
+    let a = &fonts[0]["g"]["A"];
+    assert_eq!(a[0], 600.0);
+    let path = a[1].as_u64().unwrap() as usize;
+    assert_eq!(fonts[0]["g"]["B"][1].as_u64(), Some(path as u64), "the same outline is stored once");
+    assert_eq!(m.json["paths"].as_array().unwrap().len(), m.paths.len(), "the page's paths include the glyphs");
+    assert!(m.json["paths"][path].as_str().unwrap().contains("-700"), "{}", m.json["paths"][path]);
+    // The page's layout: the dynamic field (100 wide, centred, 14 px, letter spacing 0.5).
+    let mut js = Js::new(&m);
+    js.ctx
+        .eval(Source::from_bytes(
+            "function L(text, html, multiline) { var tf = Object.assign({}, FIELD); if (multiline) tf.ln = 'multiline'; \
+               var styles = html === null ? AniCraft.fieldStyles({ text: text, rich: null }, tf) : (function () { var p = AniCraft.htmlText.parse(html, AniCraft.fieldStyles({ text: '', rich: null }, tf).runs[0].s, { al: tf.al }); text = p.text; return { runs: p.runs, paras: p.paras }; })(); \
+               return AniCraft.fieldLayout(tf, text, styles, P.M.fonts, function (st, t) { return Array.from(t).length * st.size * 0.5; }).map(function (l) { return [l.top, l.base, l.h, l.w, l.segs.map(function (s) { return [s.text, s.x, s.w, s.face !== null, s.st.bold, s.st.size]; })]; }); }",
+        ))
+        .unwrap();
+    // The field's exported settings, found in the movie's data.
+    fn find_tf(v: &Value) -> Option<&Value> {
+        match v {
+            Value::Object(o) => o.get("tf").filter(|t| t["k"] == "dynamic" && t["t"] == "Score").or_else(|| o.values().find_map(find_tf)),
+            Value::Array(a) => a.iter().find_map(find_tf),
+            _ => None,
+        }
+    }
+    let tf = find_tf(&m.json).expect("the dynamic field").clone();
+    js.ctx.eval(Source::from_bytes(&format!("var FIELD = {tf};"))).unwrap();
+    // "AB A": glyph advances 600 × 14 / 1000 + 0.5 each, the space 250 × 14 / 1000 + 0.5.
+    let lines = js.eval("L('AB A', null, false)");
+    let w = 3.0 * (8.4 + 0.5) + (3.5 + 0.5);
+    let near = |v: &Value, want: f64| (v.as_f64().unwrap() - want).abs() < 1e-6;
+    assert_eq!(lines.as_array().unwrap().len(), 1);
+    assert!(near(&lines[0][3], w) && near(&lines[0][0], 2.0) && near(&lines[0][1], 2.0 + 0.9 * 14.0) && near(&lines[0][2], 1.2 * 14.0 + 2.0), "{lines}");
+    assert_eq!(lines[0][4].as_array().unwrap().len(), 1, "one stretch: {lines}");
+    assert!(lines[0][4][0][3] == true && near(&lines[0][4][0][1], (100.0 - w) / 2.0), "embedded and centred: {lines}");
+    // A character the face lacks: that word is the browser's (measured by it), the rest embedded.
+    let lines = js.eval("L('AB xy', null, false)");
+    let segs = lines[0][4].as_array().unwrap();
+    assert_eq!(segs.iter().map(|s| (s[0].as_str().unwrap(), s[3].as_bool().unwrap())).collect::<Vec<_>>(), vec![("AB ", true), ("xy", false)], "{lines}");
+    assert!(near(&segs[1][2], 2.0 * 14.0 * 0.5));
+    // Styled text wraps at spaces across runs; each line makes room for its tallest stretch,
+    // and paragraphs align on their own.
+    let lines = js.eval("L('', '<p align=\"right\">AB AB AB AB <font size=\"28\">AB</font> AB</p>last<br>', true)");
+    let rows = lines.as_array().unwrap();
+    assert_eq!(rows.len(), 4, "two wrapped lines, a line and an empty one: {lines}");
+    assert_eq!(rows[0][4].as_array().unwrap().iter().map(|s| s[0].as_str().unwrap()).collect::<String>(), "AB AB AB AB", "{lines}");
+    assert!(rows[1][4].as_array().unwrap().iter().any(|s| s[5] == 28.0) && near(&rows[1][2], 1.2 * 28.0 + 2.0), "{lines}");
+    let right_edge = |row: &Value| row[4].as_array().unwrap().last().map(|s| s[1].as_f64().unwrap() + s[2].as_f64().unwrap()).unwrap();
+    assert!((right_edge(&rows[0]) - 98.0).abs() < 1e-6 && (right_edge(&rows[1]) - 98.0).abs() < 1e-6, "right-aligned: {lines}");
+    assert_eq!(rows[2][4][0][0], "last");
+    assert!(near(&rows[2][0], rows[1][0].as_f64().unwrap() + rows[1][2].as_f64().unwrap()), "lines stack: {lines}");
+    assert_eq!(rows[3][4].as_array().unwrap().len(), 0);
+    // Empty text is one empty line; a very long text is capped.
+    assert_eq!(js.eval("L('', null, false)").as_array().unwrap().len(), 1);
+    assert_eq!(js.eval("L(Array(3000).join('\\n'), null, false)").as_array().unwrap().len(), 1000);
+}
+
 #[test]
 fn text_fields_export_as_named_instances_and_static_text_as_before() {
     use anicraft_doc::{LineType, TextField, TextKind};

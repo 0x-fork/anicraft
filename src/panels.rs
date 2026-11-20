@@ -1607,6 +1607,42 @@ fn text_field_rows(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             }
         });
     }
+    // Animate's Embed: the characters whose outlines travel with the HTML export, so text a
+    // script sets is drawn in this font in any browser (ADR 0107). Dynamic text only: what a
+    // viewer types into an input field is drawn by the browser.
+    if kind == TextKind::Dynamic {
+        let mut embed = f.embed.clone();
+        row_prose(ui, tr!("Embed"), |ui| {
+            let r = ui.add(egui::TextEdit::singleline(&mut embed).desired_width(crate::theme::fit(ui, 110.0)).hint_text(tr!("characters"))).named(tr!("Characters to embed"));
+            if r.on_hover_text(tr!("The HTML export carries these characters' outlines in this field's font, so text a script sets looks the same in every browser. Left out, with a note in the export's report, when the font's licence doesn't allow embedding.")).changed() {
+                live(app, tr_noop!("Embed characters"), "text.field", json!({"embed": embed}));
+            }
+            ui.menu_button(tr!("Add"), |ui| {
+                let sets: [(&str, String); 5] = [
+                    (tr!("Uppercase (A–Z)"), ('A'..='Z').collect()),
+                    (tr!("Lowercase (a–z)"), ('a'..='z').collect()),
+                    (tr!("Numerals (0–9)"), ('0'..='9').collect()),
+                    (tr!("Punctuation and space"), " !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".to_string()),
+                    (tr!("The characters in this text"), t.text.clone()),
+                ];
+                for (label, chars) in sets {
+                    if ui.button(label).clicked() {
+                        app.run("text.field", json!({"embed": format!("{}{}", f.embed, chars)}));
+                        ui.close();
+                    }
+                }
+                if !f.embed.is_empty() && ui.button(tr!("None")).on_hover_text(tr!("Embed nothing: the page draws changed text with the browser's fonts")).clicked() {
+                    app.run("text.field", json!({"embed": ""}));
+                    ui.close();
+                }
+            })
+            .response
+            .on_hover_text(tr!("Add a set of characters to embed"));
+        });
+        if !f.embed.is_empty() {
+            ui.label(text(Type::Caption, trn!("{n} character embedded in the HTML export", "{n} characters embedded in the HTML export", f.embed.chars().count())).color(T.text_faint));
+        }
+    }
     if !f.variable.is_empty() {
         row(ui, tr!("Variable"), |ui| {
             ui.label(text(Type::Data, f.variable.as_str())).on_hover_text(tr!("Kept from the Animate document: an ActionScript 1.0 or 2.0 variable, which doesn't run here"));

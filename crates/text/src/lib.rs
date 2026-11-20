@@ -13,7 +13,9 @@
 use anicraft_geom::{Path, PathCmd, Vec2};
 use std::sync::{Arc, OnceLock};
 
+mod embed;
 mod rich;
+pub use embed::{EMBED_EM, Embedding, GlyphTable, MAX_EMBED_CHARS, TableGlyph};
 pub use rich::{MAX_FACES, MAX_RUNS, ParaStyle, RichText, Run, RunStyle, Shift, sanitize_para, sanitize_run};
 
 /// Families tried, in order, when none is asked for or the one asked for isn't installed.

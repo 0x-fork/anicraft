@@ -321,3 +321,74 @@ fn html_text_change_events_and_limits_run_in_test_movie() {
     assert!(v["output"].as_array().unwrap().iter().any(|l| l["line"] == "ab"), "{}", v["output"]);
 }
 
+/// Embedded glyphs (ADR 0107) through the commands: `text.field {embed}` keeps each character
+/// once, the HTML export carries the outlines where the font's licence allows and says what it
+/// did, and a document without embedded characters exports exactly as before.
+#[test]
+fn fields_embed_glyph_outlines_in_the_html_export() {
+    if anicraft_text::Fonts::get().families().is_empty() {
+        return;
+    }
+    let mut s = Session::default();
+    let ok = |s: &mut Session, id: &str, p: Value| s.execute(id, &p).unwrap_or_else(|e| panic!("{id} {p}: {e}"));
+    ok(&mut s, "text.create", json!({"text": "Score: 0", "type": "dynamic", "x": 20, "y": 20, "size": 20}));
+    ok(&mut s, "instance.set_name", json!({"name": "score_txt"}));
+    ok(&mut s, "script.set", json!({"frame": 0, "text": "score_txt.text = \"Score: 12\";"}));
+    let dir = std::env::temp_dir().join(format!("anicraft-embed-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let page = |s: &mut Session, name: &str| {
+        let file = dir.join(name);
+        let v = s.execute("file.export_html", &json!({"path": file.display().to_string()})).unwrap();
+        (v, std::fs::read_to_string(&file).unwrap())
+    };
+    let (before, html) = page(&mut s, "plain.html");
+    assert!(!html.contains("\"fonts\":") && before["fonts"].as_array().is_some_and(Vec::is_empty), "{before}");
+    // Characters to embed: each once, controls dropped; one undo step; saved with the field.
+    let steps = s.history().undo_len();
+    ok(&mut s, "text.field", json!({"embed": "Score: 0123456789 Score\u{7}"}));
+    assert_eq!(s.history().undo_len(), steps + 1);
+    let field = |s: &Session| match &s.doc.timeline(0).layers[0].keyframes[0].elements[0].kind {
+        ElementKind::Text(t) => t.field.clone().unwrap(),
+        _ => panic!("text"),
+    };
+    assert_eq!(field(&s).embed, "Score: 0123456789");
+    let saved = crate::format::to_json(&s.doc).unwrap();
+    assert_eq!(crate::format::from_json(&saved).unwrap(), s.doc);
+    assert!(s.execute("text.field", &json!({"embed": "x".repeat(anicraft_doc::MAX_EMBED_CHARS * 4 + 1)})).is_err());
+    let (v, html) = page(&mut s, "embedded.html");
+    let rows = v["fonts"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{v}");
+    match rows[0]["state"].as_str().unwrap() {
+        // The usual case: the outlines are in the page, and the report counts them.
+        "embedded" => {
+            let n = rows[0]["glyphs"].as_u64().unwrap();
+            assert!(n >= 10 && n <= 17, "{v}");
+            assert!(html.contains("\"fonts\":[{"), "the page carries the face");
+            assert!(v["notes"].as_object().unwrap().iter().any(|(k, c)| k.starts_with("glyph outlines embedded") && c.as_u64() == Some(n)), "{v}");
+            assert!(html.len() > before["bytes"].as_u64().unwrap() as usize, "the glyphs add to the page");
+        }
+        // A computer whose default face forbids embedding: nothing embedded, and it says so.
+        other => {
+            assert!(!html.contains("\"fonts\":"), "{other}");
+            assert!(v["notes"].as_object().unwrap().keys().any(|k| k.contains("licence") || k.contains("installed")), "{v}");
+        }
+    }
+    // An input field's embedded characters are noted, not used: the browser draws what is typed.
+    ok(&mut s, "text.field", json!({"type": "input"}));
+    let (v, _) = page(&mut s, "input.html");
+    assert!(v["fonts"].as_array().unwrap().is_empty() && v["notes"].as_object().unwrap().keys().any(|k| k.starts_with("input fields with characters to embed")), "{v}");
+    // A font that isn't on this computer is never swapped for another face's glyphs.
+    ok(&mut s, "text.field", json!({"type": "dynamic"}));
+    let mut doc = s.doc.clone();
+    {
+        let l = std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut doc.scenes[0]).timeline.layers[0]);
+        let k = std::sync::Arc::make_mut(&mut l.keyframes[0]);
+        if let ElementKind::Text(t) = &mut std::sync::Arc::make_mut(&mut k.elements[0]).kind {
+            std::sync::Arc::make_mut(t).font = "No Such Family 12345".into();
+        }
+    }
+    let e = crate::embed::embedded_faces(&doc);
+    assert!(e.faces.is_empty() && e.summary[0]["state"] == "not installed", "{:?}", e.summary);
+    std::fs::remove_dir_all(&dir).ok();
+}
+

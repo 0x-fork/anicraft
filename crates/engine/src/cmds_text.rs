@@ -79,7 +79,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         c("text.path", "Text on Path", "", None, "{offset? (px along the path), flip?: bool (along the path backwards, on its other side), release?: bool (back to lines of text where it starts)} on the selected text on a path (ADR 0070)", true, |s, p| s.each_layer(false, |s| set_path(s, p))),
         c("text.release_path", "Release Text from Path", "Modify/Text", None, "{} the selected text on a path goes back to lines of text (ADR 0070)", true, |s, _| s.each_layer(false, |s| set_path(s, &json!({"release": true})))),
-        c("text.field", "Text Type", "", None, "{type?: static|dynamic|input, lines?: single|multiline|multiline_no_wrap|password (input only), width?, height? (the field's box, px), selectable?, border?, background?, border_color?, background_color?, max_chars? (input; 0: no limit), variable? (kept, not run)} on the selected text; dynamic and input fields are named with instance.set_name and scripted in Test Movie and the HTML export (ADR 0066)", true, |s, p| s.each_layer(false, |s| set_field(s, p))),
+        c("text.field", "Text Type", "", None, "{type?: static|dynamic|input, lines?: single|multiline|multiline_no_wrap|password (input only), width?, height? (the field's box, px), selectable?, border?, background?, border_color?, background_color?, max_chars? (input; 0: no limit), variable? (kept, not run), embed?: characters whose glyph outlines the HTML export carries for this field's font, so text a script sets is drawn in it where the font's licence allows (\"\": none; ADR 0107)} on the selected text; dynamic and input fields are named with instance.set_name and scripted in Test Movie and the HTML export (ADR 0066)", true, |s, p| s.each_layer(false, |s| set_field(s, p))),
     ]
 }
 
@@ -576,6 +576,11 @@ fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Param(format!("'max_chars' is at most {MAX_FIELD_CHARS}")));
     }
     let variable = opt_str(p, "variable")?.map(|v| v.trim().chars().take(MAX_FIELD_NAME).collect::<String>());
+    let embed = match opt_str(p, "embed")? {
+        Some(e) if e.chars().count() > anicraft_doc::MAX_EMBED_CHARS * 4 => return Err(EngineError::Param(format!("'embed' is at most {} characters", anicraft_doc::MAX_EMBED_CHARS * 4))),
+        Some(e) => Some(anicraft_doc::embed_chars(e)),
+        None => None,
+    };
     let (selectable, border, background) = (opt_bool(p, "selectable")?, opt_bool(p, "border")?, opt_bool(p, "background")?);
     let (border_color, background_color) = (opt_color(p, "border_color")?, opt_color(p, "background_color")?);
     let mut changed = 0;
@@ -629,6 +634,9 @@ fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
             f.max_chars = max_chars.unwrap_or(f.max_chars);
             if let Some(v) = &variable {
                 f.variable.clone_from(v);
+            }
+            if let Some(e) = &embed {
+                f.embed.clone_from(e);
             }
             let (b, n, _) = lay_out_block(&TextBlock { field: Some(f.sanitized()), box_width: width.unwrap_or(bw), box_height: height.unwrap_or(bh), ..(**t).clone() })?;
             (b, n)
