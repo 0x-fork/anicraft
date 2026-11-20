@@ -7,10 +7,29 @@ use crate::{ColorTransform, Document, Element, ElementId, ElementKind, Layer, La
 use anicraft_geom::walk::PathWalk;
 use anicraft_geom::{Affine, FillRule, Path};
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::sync::Arc;
 
 /// Symbols nested deeper than this are not drawn (guards cyclic libraries).
 pub const MAX_SYMBOL_DEPTH: usize = 32;
+
+/// Most elements one evaluation (or one bounds query) visits, nested symbols and groups
+/// included. The depth cap alone leaves a symbol holding two instances of the next, 32 deep,
+/// to expand 2^32 times, which no file may make AniCraft do: past the allowance the rest is
+/// left out, so a hostile or damaged document draws in part instead of hanging or running
+/// out of memory. Real scenes stay far below it (the heaviest benchmark has 50,000 shapes).
+pub const MAX_EVAL_ELEMENTS: u32 = 1_000_000;
+
+/// Takes one visit from `work`; `false` once the allowance is spent.
+pub(crate) fn spend(work: &Cell<u32>) -> bool {
+    match work.get().checked_sub(1) {
+        Some(left) => {
+            work.set(left);
+            true
+        }
+        None => false,
+    }
+}
 
 /// One shape to draw, fully resolved to stage space.
 #[derive(Clone, Debug)]
@@ -163,7 +182,8 @@ pub fn evaluate(doc: &Document, frame: u32) -> DisplayList {
 /// applied: what the stage shows while editing (and what picking and bounds use).
 pub fn evaluate_scene(doc: &Document, scene: usize, frame: u32) -> DisplayList {
     let mut out = DisplayList::default();
-    eval_timeline(doc, doc.timeline(scene), frame, &Ctx::top(Affine::IDENTITY), &mut out, None);
+    let work = Cell::new(MAX_EVAL_ELEMENTS);
+    eval_timeline(doc, doc.timeline(scene), frame, &Ctx::top(Affine::IDENTITY, &work), &mut out, None);
     out
 }
 
@@ -172,7 +192,8 @@ pub fn evaluate_scene(doc: &Document, scene: usize, frame: u32) -> DisplayList {
 /// top-level ones, as a scene's are in [`evaluate_scene`].
 pub fn evaluate_timeline(doc: &Document, tl: &Timeline, frame: u32) -> DisplayList {
     let mut out = DisplayList::default();
-    eval_timeline(doc, tl, frame, &Ctx::top(Affine::IDENTITY), &mut out, None);
+    let work = Cell::new(MAX_EVAL_ELEMENTS);
+    eval_timeline(doc, tl, frame, &Ctx::top(Affine::IDENTITY, &work), &mut out, None);
     out
 }
 
@@ -182,7 +203,8 @@ pub fn evaluate_timeline(doc: &Document, tl: &Timeline, frame: u32) -> DisplayLi
 /// skin or Edit Multiple Frames composes its frames (ADR 0051).
 pub fn evaluate_timeline_at(doc: &Document, tl: &Timeline, frame: u32, xf: Affine) -> DisplayList {
     let mut out = DisplayList::default();
-    eval_timeline(doc, tl, frame, &Ctx::top(xf), &mut out, None);
+    let work = Cell::new(MAX_EVAL_ELEMENTS);
+    eval_timeline(doc, tl, frame, &Ctx::top(xf, &work), &mut out, None);
     out
 }
 
@@ -192,7 +214,8 @@ pub fn evaluate_timeline_at(doc: &Document, tl: &Timeline, frame: u32, xf: Affin
 pub fn evaluate_scene_camera(doc: &Document, scene: usize, frame: u32) -> DisplayList {
     let tl = doc.timeline(scene);
     let mut out = DisplayList::default();
-    eval_timeline(doc, tl, frame, &Ctx::through(tl.camera_at(frame, &doc.stage)), &mut out, None);
+    let work = Cell::new(MAX_EVAL_ELEMENTS);
+    eval_timeline(doc, tl, frame, &Ctx::through(tl.camera_at(frame, &doc.stage), &work), &mut out, None);
     out
 }
 
@@ -201,9 +224,10 @@ pub fn evaluate_scene_camera(doc: &Document, scene: usize, frame: u32) -> Displa
 /// through the scene's camera.
 pub fn evaluate_player(doc: &Document, state: &PlayerState) -> DisplayList {
     let mut out = DisplayList::default();
+    let work = Cell::new(MAX_EVAL_ELEMENTS);
     let play = Play { state, path: Vec::new() };
     let tl = doc.timeline(state.scene);
-    eval_timeline(doc, tl, state.root.frame, &Ctx::through(tl.camera_at(state.root.frame, &doc.stage)), &mut out, Some(&play));
+    eval_timeline(doc, tl, state.root.frame, &Ctx::through(tl.camera_at(state.root.frame, &doc.stage), &work), &mut out, Some(&play));
     out
 }
 
@@ -211,7 +235,8 @@ pub fn evaluate_player(doc: &Document, state: &PlayerState) -> DisplayList {
 /// clip's artwork, as the player sees it when `play` is given.
 pub(crate) fn evaluate_symbol(doc: &Document, tl: &Timeline, frame: u32, xf: Affine, play: Option<&Play<'_>>) -> DisplayList {
     let mut out = DisplayList::default();
-    let mut cx = Ctx::top(xf);
+    let work = Cell::new(MAX_EVAL_ELEMENTS);
+    let mut cx = Ctx::top(xf, &work);
     cx.depth = 1;
     cx.stage = false;
     eval_timeline(doc, tl, frame, &cx, &mut out, play);
@@ -576,7 +601,10 @@ fn interpolate(a: &Element, b: &Element, pr: Progress, morph: bool, hints: &[(an
 
 /// What a timeline is evaluated inside of.
 #[derive(Clone, Copy)]
-struct Ctx {
+struct Ctx<'a> {
+    /// The evaluation's allowance of element visits ([`MAX_EVAL_ELEMENTS`]), shared by everything
+    /// nested in it.
+    work: &'a Cell<u32>,
     /// Local → stage transform and colour effect of the enclosing instance.
     xf: Affine,
     color: ColorTransform,
@@ -603,14 +631,14 @@ struct Ctx {
     slice: Option<Slicing>,
 }
 
-impl Ctx {
-    fn top(xf: Affine) -> Ctx {
-        Ctx { xf, color: ColorTransform::IDENTITY, depth: 0, root: None, outline: None, stage: true, clip: None, masks: None, guide: false, group: None, camera: None, slice: None }
+impl<'a> Ctx<'a> {
+    fn top(xf: Affine, work: &'a Cell<u32>) -> Ctx<'a> {
+        Ctx { work, xf, color: ColorTransform::IDENTITY, depth: 0, root: None, outline: None, stage: true, clip: None, masks: None, guide: false, group: None, camera: None, slice: None }
     }
 
     /// A main timeline seen through `camera`: its tint colours everything.
-    fn through(camera: Option<Camera>) -> Ctx {
-        let mut cx = Ctx::top(Affine::IDENTITY);
+    fn through(camera: Option<Camera>, work: &'a Cell<u32>) -> Ctx<'a> {
+        let mut cx = Ctx::top(Affine::IDENTITY, work);
         cx.stage = false;
         if let Some(c) = camera {
             cx.color = c.color();
@@ -672,7 +700,7 @@ fn follow(g: &PathWalk, orient: bool, from: &Affine, to: &Affine, t: f32, tw: Af
     if out.is_finite() { out } else { tw }
 }
 
-fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut DisplayList, play: Option<&Play<'_>>) {
+fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx<'_>, out: &mut DisplayList, play: Option<&Play<'_>>) {
     if cx.depth > MAX_SYMBOL_DEPTH {
         return;
     }
@@ -794,7 +822,11 @@ struct LayerCtx<'a> {
     xf: Affine,
 }
 
-fn eval_element(doc: &Document, cx: &Ctx, lc: &LayerCtx<'_>, el: &Element, out: &mut DisplayList, play: Option<&Play<'_>>) {
+fn eval_element(doc: &Document, cx: &Ctx<'_>, lc: &LayerCtx<'_>, el: &Element, out: &mut DisplayList, play: Option<&Play<'_>>) {
+    // Every element drawn counts, however deep: see MAX_EVAL_ELEMENTS.
+    if !spend(cx.work) {
+        return;
+    }
     let LayerCtx { layer, frame, kf_start, clip, masks, guide, outline: layer_outline, xf: layer_xf } = *lc;
     // In the player, a symbol instance has its own path, and maybe properties a script set.
     let child = match (&el.kind, play) {
@@ -952,7 +984,7 @@ fn eval_element(doc: &Document, cx: &Ctx, lc: &LayerCtx<'_>, el: &Element, out: 
             };
             // A symbol with 9-slice guides, scaled: its shapes are sliced (ADR 0055).
             let slice = crate::nine_slice::slicing(doc, sym, &el.transform).map(|s| Slicing { post: layer_xf.mul(&s.post), ..s });
-            let inner = Ctx { xf, color, depth: cx.depth + 1, root: Some((root_layer, root_el)), outline: layer_outline, stage: cx.stage, clip, masks, guide, group, camera: None, slice };
+            let inner = Ctx { work: cx.work, xf, color, depth: cx.depth + 1, root: Some((root_layer, root_el)), outline: layer_outline, stage: cx.stage, clip, masks, guide, group, camera: None, slice };
             eval_timeline(doc, &sym.timeline, local, &inner, out, child.as_ref());
         }
     }

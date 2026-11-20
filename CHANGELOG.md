@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+* **Fixes and hardening from the community** (M8). Thank you to everyone named here.
+  * **Double-click the Hand tool to fit the stage in the window**, as in Animate; a single click
+    still only selects the tool (#457, Wilder Ccasa).
+  * **A new oval has eight points**, one every 45°, as Animate draws it (#459, NetterSilver).
+  * **Bending an oval's edge with the Selection tool keeps its ends smooth**: the curves beside
+    the one you drag turn with it, as when a handle is dragged (#460, NetterSilver).
+  * **Animate documents**, each learned from files Animate saved (rcoenen): shape hints come
+    across (Animate writes them as `morphHintsList`, which the importer didn't read); text that
+    leaves `lineSpacing` out gets Animate's 2 px between its lines, not 0; and a dashed stroke
+    that doesn't name its gap gets Animate's 6 px, not 3.
+  * **Security: an assistant can't choose the program that makes or reads video.** Over `serve`
+    and `mcp` (the live bridge too), Export Video, Import Video and every other command refuse
+    an `ffmpeg` param: set
+    `ANICRAFT_FFMPEG` yourself. `exec` and `run` keep it. A request line over 64 MiB is answered
+    with an error instead of growing without bound (Dylan M. Taylor).
+  * **Security: XFL folders.** A reference that climbs out of the package with backslashes
+    (`..\x.xml`) is no longer read on Windows (Agapenor); only regular files are read, and never
+    more than the size cap, however large a file claims to be (Dylan M. Taylor).
+  * **Security: hostile documents stay bounded.** A file whose keyframes sit past frame 100,000
+    opens with them trimmed to the limit commands already keep (Agapenor). A library whose
+    symbols double at every level (2^32 shapes from 32 symbols) no longer hangs the stage or
+    runs out of memory: one frame, or one bounds query, visits at most a million elements and
+    draws what it reached (reported by Agapenor).
+  * **Never crash:** a scene index or SVG frame number at the top of its range is an error, not
+    an overflow; a rotation tween between huge or non-finite angles no longer hangs; `--fps` and
+    `--scale` refuse `NaN`, infinities and numbers too large instead of quietly using the
+    default (Mex, NetterSilver).
+  * **Files:** brush sets, filter presets and swatch files saved with a byte-order mark by
+    Windows editors import. A document that somehow holds a number that isn't finite still
+    saves to a file that opens again: such a number is written as 0, and a ruined transform as
+    no transform, where before it made the file unreadable (Mex, NetterSilver).
+  * **Small things put right:** a colour such as `#+1+2+3` is no longer read as a colour; a
+    script's Set Property values are clamped whenever a document loads; an object with a zero
+    x scale keeps its direction when taken apart and put back; guide headings such as "Foo",
+    "Foo", "Foo-1" get three different links (NetterSilver, Mex).
+  * **Building on Windows:** the web build and the signing script work from a folder with
+    square brackets in its name; `i18n-extract.ps1` gives back the caller's
+    `ANICRAFT_I18N_OUT`; `guide-shots.ps1` takes the document tabs picture too (Mex).
 * **From outside contributors** (M8; thank you).
   * **Trace Bitmap and Convert to Bitmap** (by NetterSilver, #489; fixes #463). **Modify ›
     Bitmap › Trace Bitmap…** turns a placed bitmap into filled raw shapes, one per area of
@@ -444,6 +482,7 @@
 * **Floating windows open below the menu bar**: no dialog (the Custom Ease window among them) can
   cover File, Edit and View any more.
 * **Security: safer reads and temp files.** Import to Library checks an image's size (256 MiB) before reading it, and saves, audio exports and the video soundtrack write their temporary files under unguessable names, created exclusively.
+
 * **Saved commands (command macros)** (ADR 0097, M6).
   * In the **History** panel, **Ctrl+click** steps (Shift+click a range) and choose **Save As
     Command…**: the steps come back at the end of the **Commands** menu, to run on whatever is
