@@ -526,6 +526,8 @@ pub struct App {
     pub dock: crate::dock::Layout,
     /// The dock's view state: a tab being dragged, where groups were drawn.
     pub dock_view: crate::dock_ui::DockView,
+    /// Window › Hide Panels (F4): the arrangement to bring back, while every panel is hidden.
+    pub hidden_panels: Option<crate::dock::Layout>,
     /// Window › Workspace › Manage Workspaces… (ADR 0087).
     pub manage_workspaces: crate::workspaces_window::Manage,
     /// The Motion Editor's view state: the property whose curve it shows, the picked key
@@ -696,6 +698,18 @@ pub const VIEW_SHORTCUTS: &[(&str, &str)] = &[
     ("F3", "view.find_next"),
     ("Shift+F3", "view.find_prev"),
     ("Alt+F3", "view.movie_explorer"),
+    // Window › each panel, open and closed from the keyboard with Animate's keys (#456), and F4
+    // for all of them at once. (Animate's Align key, Ctrl+K, is the command palette here: Align,
+    // Layer Depth and the Motion Editor take a key in the shortcut editor, `VIEW_UNBOUND`.)
+    ("Ctrl+Alt+T", "view.panel.timeline"),
+    ("Ctrl+F2", "view.panel.tools"),
+    ("Ctrl+F3", "view.panel.properties"),
+    ("Ctrl+L", "view.panel.library"),
+    ("F2", "view.panel.output"),
+    ("Ctrl+Shift+F9", "view.panel.colour"),
+    ("Ctrl+F9", "view.panel.swatches"),
+    ("Ctrl+F10", "view.panel.history"),
+    ("F4", "view.hide_panels"),
     // The open documents (ADR 0112): Close and Close All as in Animate, and the tab keys of
     // browsers (Ctrl+Tab and Ctrl+Shift+Tab work too).
     ("Ctrl+W", "view.close_document"),
@@ -706,6 +720,9 @@ pub const VIEW_SHORTCUTS: &[(&str, &str)] = &[
     ("[", "view.brush_smaller"),
     ("]", "view.brush_larger"),
 ];
+
+/// View actions without a default key: they can be given one in the shortcut editor.
+pub const VIEW_UNBOUND: &[&str] = &["view.panel.align", "view.panel.layer_depth", "view.panel.motion_editor"];
 
 impl App {
     /// Show the last update's result once the native window begins drawing.
@@ -919,6 +936,7 @@ impl App {
             tl_heard: None,
             tl_refocus: false,
             menu_keys: Default::default(),
+            hidden_panels: None,
             system_look: platform::SystemLook::default(),
             themes: Default::default(),
             themes_dir: None,
@@ -4271,10 +4289,14 @@ impl App {
                         self.run("timeline.goto", json!({"frame": 0}));
                     }
                 }
-                "view.actions" => self.toggle_panel(crate::dock::Panel::Actions),
+                "view.hide_panels" => self.toggle_hide_panels(),
+                id if crate::dock::Panel::from_action(id).is_some() => {
+                    if let Some(p) = crate::dock::Panel::from_action(id) {
+                        self.window_menu_panel(p);
+                    }
+                }
                 "view.find_next" => crate::find_panel::step(self, true),
                 "view.find_prev" => crate::find_panel::step(self, false),
-                "view.movie_explorer" => crate::movie_explorer::open(self),
                 "view.close_document" => crate::tabs::close_active(self),
                 "view.close_all_documents" => crate::tabs::close_all(self),
                 "view.next_document" => crate::tabs::step(self, true),

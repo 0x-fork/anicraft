@@ -730,18 +730,16 @@ pub(crate) fn menu_contents(app: &mut App, ui: &mut egui::Ui, top: &str, cmds: &
             // Every panel: ticked while it is in front; choosing one brings it forward, or
             // closes it when it already is.
             for p in crate::dock::Panel::ALL {
-                let key = match p {
-                    crate::dock::Panel::Actions => app.keymap.primary("view.actions").unwrap_or(""),
-                    crate::dock::Panel::MovieExplorer => app.keymap.primary("view.movie_explorer").unwrap_or(""),
-                    _ => "",
-                };
+                // Its key, as set in the shortcut editor (#456).
+                let key = app.keymap.primary(p.action()).unwrap_or("");
                 if ui_item(ui, crate::i18n::t(p.label()), key, Some(app.panel_visible(p))) {
-                    if p == crate::dock::Panel::MovieExplorer && !app.panel_visible(p) {
-                        crate::movie_explorer::open(app);
-                    } else {
-                        app.toggle_panel(p);
-                    }
+                    app.window_menu_panel(p);
                 }
+            }
+            // Every panel at once (F4, as in Animate): the stage takes the window.
+            let key = app.keymap.primary("view.hide_panels").unwrap_or("");
+            if ui_item(ui, if app.hidden_panels.is_some() { tr!("Show Panels") } else { tr!("Hide Panels") }, key, None) {
+                app.toggle_hide_panels();
             }
             // Brush presets with previews, and your own (ADR 0068).
             if ui_item(ui, tr!("Brush Library"), "", Some(app.brush_lib.open)) {
