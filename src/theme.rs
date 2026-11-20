@@ -835,6 +835,7 @@ fn restyle(ctx: &egui::Context, t: Tokens) {
         s.spacing.icon_width = 16.0;
         s.spacing.icon_width_inner = 9.0;
         s.spacing.menu_margin = egui::Margin::same(6);
+        s.spacing.scroll = scroll_bars();
         // Built-in text styles follow the roles, so plain widgets match the guidelines too.
         use egui::TextStyle;
         s.text_styles.insert(TextStyle::Body, font(Type::Body));
@@ -843,6 +844,15 @@ fn restyle(ctx: &egui::Context, t: Tokens) {
         s.text_styles.insert(TextStyle::Heading, font(Type::Title));
         s.text_styles.insert(TextStyle::Monospace, font(Type::Data));
     });
+}
+
+/// Scroll bars (#483) are part of the layout, not an overlay that shows on hover: wherever there
+/// is more than fits, a bar is there at rest, in its own lane beside the content, showing how
+/// much more there is and where you are in it, and wide enough to grab without aiming.
+pub const SCROLL_BAR_WIDTH: f32 = 10.0;
+
+fn scroll_bars() -> egui::style::ScrollStyle {
+    egui::style::ScrollStyle { bar_width: SCROLL_BAR_WIDTH, handle_min_length: TARGET, bar_inner_margin: 2.0, foreground_color: true, ..egui::style::ScrollStyle::solid() }
 }
 
 mod craft_fonts {

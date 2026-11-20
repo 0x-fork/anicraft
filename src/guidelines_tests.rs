@@ -159,3 +159,32 @@ fn floating_windows_stay_below_the_menu_bar() {
         }
     }
 }
+
+/// #483: a scroll bar is there at rest wherever there is more than fits, in a lane of its own
+/// beside the content and wide enough to grab; it does not wait for the pointer to come near.
+#[test]
+fn scroll_bars_are_always_shown_in_their_own_lane() {
+    let ctx = egui::Context::default();
+    crate::theme::apply(&ctx);
+    let style = ctx.global_style().spacing.scroll;
+    assert!(!style.floating, "scroll bars do not float over the content");
+    assert!(style.bar_width >= 8.0 && style.handle_min_length >= crate::theme::TARGET, "{style:?}");
+    // Ten rows in room for three: the content gives up the bar's lane with no pointer anywhere.
+    // (The lane opens over a few frames.)
+    let mut widths = (0.0, 0.0);
+    for _ in 0..30 {
+        let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))), ..Default::default() }, |ui| {
+            ui.allocate_ui(egui::vec2(200.0, 60.0), |ui| {
+                widths.0 = ui.available_width();
+                egui::ScrollArea::vertical().max_height(60.0).show(ui, |ui| {
+                    widths.1 = ui.available_width();
+                    for row in 0..10 {
+                        ui.label(format!("row {row}"));
+                    }
+                });
+            });
+        });
+        out.textures_delta.clear();
+    }
+    assert!(widths.0 - widths.1 >= crate::theme::SCROLL_BAR_WIDTH, "the bar has its lane at rest: {widths:?}");
+}
