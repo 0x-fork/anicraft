@@ -259,3 +259,65 @@ fn text_fields_are_made_named_saved_and_typed_into() {
     // Plug-ins may set text types (document content, like the rest of text.*).
     assert!(crate::cmds_plugin::plugin_may_call("text.field").is_ok());
 }
+
+/// The rest of the text-field API (ADR 0107), end to end through commands: `htmlText` laid out
+/// in its colours with this computer's fonts, change events from scripts and from the action
+/// list, `maxChars` and `restrict`, in a headless Test Movie.
+#[test]
+fn html_text_change_events_and_limits_run_in_test_movie() {
+    if anicraft_text::Fonts::get().families().is_empty() {
+        return;
+    }
+    let mut s = Session::default();
+    let ok = |s: &mut Session, id: &str, p: Value| s.execute(id, &p).unwrap_or_else(|e| panic!("{id} {p}: {e}"));
+    ok(&mut s, "text.create", json!({"text": "0", "type": "dynamic", "x": 20, "y": 20, "size": 20}));
+    ok(&mut s, "text.field", json!({"width": 300, "height": 60, "lines": "multiline"}));
+    ok(&mut s, "instance.set_name", json!({"name": "out_txt"}));
+    let input = ok(&mut s, "text.create", json!({"text": "", "type": "input", "x": 20, "y": 100, "size": 20}))["element"].as_u64().unwrap();
+    ok(&mut s, "text.field", json!({"width": 200, "height": 30}));
+    ok(&mut s, "instance.set_name", json!({"name": "name_txt"}));
+    // The action list's change event: only on input fields, one undo step, listed, cleared.
+    let steps = s.history().undo_len();
+    let v = ok(&mut s, "actions.set", json!({"element": input, "event": "change", "actions": [{"op": "trace", "message": "edited"}]}));
+    assert_eq!((v["event"].as_str(), v["actions"].as_u64()), (Some("change"), Some(1)));
+    assert_eq!(s.history().undo_len(), steps + 1);
+    let list = ok(&mut s, "actions.list", json!({}));
+    assert!(list["instances"].as_array().unwrap().iter().any(|i| i["element"] == input && i["events"][0]["event"] == "change" && i["field"] == "input"), "{list}");
+    let dynamic = s.doc.timeline(0).layers[0].keyframes[0].elements.iter().find(|e| e.name == "out_txt").unwrap().id.0;
+    assert!(s.execute("actions.set", &json!({"element": dynamic, "event": "change", "actions": []})).unwrap_err().to_string().contains("only input text fields"));
+    assert_eq!(ok(&mut s, "actions.clear", json!({"element": input, "event": "change"}))["cleared"], 1);
+    s.undo().unwrap();
+    ok(&mut s, "script.set", json!({"frame": 0, "text": "stop();\nvar n:int = 0;\nout_txt.htmlText = \"<p align=\\\"center\\\">Type <b>your</b> <font color=\\\"#cc0000\\\" size=\\\"28\\\">NAME</font></p>\";\nname_txt.maxChars = 6;\nname_txt.restrict = \"A-Z\";\nname_txt.addEventListener(Event.CHANGE, onChange);\nfunction onChange(e:Event):void { n++; out_txt.htmlText = \"<i>\" + e.target.text + \"</i> (\" + n + \")\"; }\ntrace(out_txt.htmlText);"}));
+    // The file keeps it all.
+    let saved = crate::format::to_json(&s.doc).unwrap();
+    assert_eq!(crate::format::from_json(&saved).unwrap(), s.doc);
+    // The first frame: styled text, read back as HTML in the subset.
+    let v = ok(&mut s, "control.test_movie", json!({"frames": 1}));
+    let line = v["output"].as_array().unwrap().iter().map(|l| l["line"].as_str().unwrap_or("").to_string()).find(|l| l.starts_with("<p")).expect("htmlText traced");
+    assert!(line.starts_with("<p align=\"center\"><font face=") && line.contains("<b>your</b>") && line.contains("size=\"28\" color=\"#cc0000\">NAME</font></p>"), "{line}");
+    // Typing: lower case and digits are refused, six capitals at most, one change per edit.
+    let v = ok(&mut s, "control.test_movie", json!({"frames": 3, "events": [{"tick": 1, "type": "click", "x": 40, "y": 112}, {"tick": 1, "type": "text", "text": "aB1cDEFGHIJ"}]}));
+    let fields = v["state"]["fields"].as_array().unwrap();
+    let text_of = |n: &str| fields.iter().find(|f| f["name"] == n).map(|f| f["text"].clone()).unwrap();
+    assert_eq!(text_of("name_txt"), "BDEFGH");
+    assert_eq!(text_of("out_txt"), "BDEFGH (6)", "six edits, six events");
+    let edited = v["output"].as_array().unwrap().iter().filter(|l| l["line"] == "edited").count();
+    assert_eq!(edited, 6, "the action list's change event ran with each: {}", v["output"]);
+    // The look a styled field gets: one piece per colour, laid out by the engine's fonts.
+    let block = match &s.doc.timeline(0).layers[0].keyframes[0].elements.iter().find(|e| e.name == "out_txt").unwrap().kind {
+        ElementKind::Text(t) => t.clone(),
+        _ => panic!("text"),
+    };
+    let parsed = anicraft_doc::html_text::parse("black <font color=\"#ff0000\">red</font> <b>bold</b>", &block.char_style(), &block.para_style());
+    let look = crate::player::field_look(&block, &parsed.text, Some(&parsed.styles)).expect("laid out");
+    assert_eq!(look.pieces.len(), 2, "black and red");
+    assert!(look.pieces[1].0.r > 0.9 && look.pieces[1].0.g < 0.1);
+    let plain = crate::player::field_look(&block, &parsed.text, None).unwrap();
+    assert!(plain.pieces.is_empty(), "one colour draws as one outline, as before");
+    assert!(look.outline != plain.outline, "the bold run has its own glyphs");
+    // Hostile HTML never reaches the layout as markup or stops the movie.
+    ok(&mut s, "script.set", json!({"frame": 0, "text": "out_txt.htmlText = \"<script>x</script><a href=\\\"javascript:1\\\">a</a><font size=\\\"1e99\\\">b</font>\" + \"<b>\";\ntrace(out_txt.text);"}));
+    let v = ok(&mut s, "control.test_movie", json!({"frames": 1}));
+    assert!(v["output"].as_array().unwrap().iter().any(|l| l["line"] == "ab"), "{}", v["output"]);
+}
+
