@@ -873,17 +873,25 @@ pub fn embedded_fonts() -> Vec<std::sync::Arc<[u8]>> {
 }
 
 /// Noto Sans Georgian (craft-fonts `Geor`) when this build embedded a face that parses and covers
-/// the Georgian letters. The
-/// interface offers Georgian only then (`i18n::ready_codes`), and `install_fonts` loads the same
-/// face: epaint panics on bytes it cannot parse, so a damaged file must never reach it.
+/// the Georgian letters. The interface offers Georgian only then (`i18n::ready_codes`), and
+/// `install_fonts` loads the same face: epaint panics on bytes it cannot parse, so a damaged file
+/// must never reach it.
 pub fn georgian_font() -> Option<&'static [u8]> {
     static FACE: std::sync::OnceLock<Option<&'static [u8]>> = std::sync::OnceLock::new();
-    *FACE.get_or_init(|| craft_fonts::GEORGIAN_FONT.filter(|b| parses_as_font(b)))
+    *FACE.get_or_init(|| craft_fonts::GEORGIAN_FONT.filter(|b| covers_range(b, '\u{10D0}'..='\u{10FA}')))
 }
 
-/// Whether `bytes` is a font file that draws every Georgian letter (U+10D0..U+10FA).
-fn parses_as_font(bytes: &[u8]) -> bool {
-    let letters: String = ('\u{10D0}'..='\u{10FA}').collect();
+/// Noto Sans Hebrew (craft-fonts `Hebr`) when this build embedded a face that parses and covers
+/// the Hebrew letters (Alef..Tav), loaded under the same guard as [`georgian_font`]. It draws Hebrew
+/// letters in names; the interface is not offered in Hebrew yet (`i18n::READY`).
+pub fn hebrew_font() -> Option<&'static [u8]> {
+    static FACE: std::sync::OnceLock<Option<&'static [u8]>> = std::sync::OnceLock::new();
+    *FACE.get_or_init(|| craft_fonts::HEBREW_FONT.filter(|b| covers_range(b, '\u{05D0}'..='\u{05EA}')))
+}
+
+/// Whether `bytes` is a valid font file that covers every Unicode scalar in `range`.
+fn covers_range(bytes: &[u8], range: std::ops::RangeInclusive<char>) -> bool {
+    let letters: String = range.collect();
     let fonts = anicraft_engine::text::Fonts::from_faces([bytes.to_vec()]);
     fonts.layout(&letters, &anicraft_engine::text::Style::default()).is_ok_and(|laid| laid.missing == 0)
 }
@@ -892,8 +900,10 @@ fn parses_as_font(bytes: &[u8]) -> bool {
 mod georgian_face_tests {
     #[test]
     fn garbage_bytes_are_not_a_font() {
-        assert!(!super::parses_as_font(b"not a font file at all"));
-        assert!(!super::parses_as_font(&[]));
+        assert!(!super::covers_range(b"not a font file at all", '\u{10D0}'..='\u{10FA}'));
+        assert!(!super::covers_range(&[], '\u{10D0}'..='\u{10FA}'));
+        assert!(!super::covers_range(b"not a font file at all", '\u{05D0}'..='\u{05EA}'));
+        assert!(!super::covers_range(&[], '\u{05D0}'..='\u{05EA}'));
     }
 }
 
@@ -912,8 +922,8 @@ pub type UserFont = (String, Vec<u8>, u32);
 
 /// Installs the UI typefaces (ADR 0005). Order in each family: the user's system font (from
 /// Preferences), then the craft-fonts pair (when embedded at build time), then egui's bundled
-/// fonts, which stay as fallbacks for glyph coverage, then Noto Sans Georgian (when embedded)
-/// for the letters none of them has.
+/// fonts, which stay as fallbacks for glyph coverage, then Noto Sans Georgian / Hebrew (when
+/// embedded) for the scripts none of them has.
 pub fn install_fonts(ctx: &egui::Context, ui_font: Option<&UserFont>, data_font: Option<&UserFont>) {
     use egui::{FontData, FontDefinitions, FontFamily};
     use std::sync::Arc;
@@ -924,10 +934,12 @@ pub fn install_fonts(ctx: &egui::Context, ui_font: Option<&UserFont>, data_font:
             defs.families.entry(family).or_default().insert(0, name.to_owned());
         }
     }
-    if let Some(b) = georgian_font() {
-        defs.font_data.insert("craft-noto-sans-georgian".to_owned(), Arc::new(FontData::from_static(b)));
-        for family in [FontFamily::Proportional, FontFamily::Monospace] {
-            defs.families.entry(family).or_default().push("craft-noto-sans-georgian".to_owned());
+    for (bytes, name) in [(georgian_font(), "craft-noto-sans-georgian"), (hebrew_font(), "craft-noto-sans-hebrew")] {
+        if let Some(b) = bytes {
+            defs.font_data.insert(name.to_owned(), Arc::new(FontData::from_static(b)));
+            for family in [FontFamily::Proportional, FontFamily::Monospace] {
+                defs.families.entry(family).or_default().push(name.to_owned());
+            }
         }
     }
     for (user, family) in [(ui_font, FontFamily::Proportional), (data_font, FontFamily::Monospace)] {

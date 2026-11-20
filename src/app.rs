@@ -393,6 +393,8 @@ pub struct App {
     /// (ADR 0109).
     pub shape_dialog: Option<crate::shape_dialogs::ShapeDialog>,
     pub shape_last: crate::shape_dialogs::Last,
+    pub trace: Option<crate::trace_dialog::TraceDialog>,
+    pub trace_last: anicraft_engine::trace::TraceSettings,
     /// Convert Audio to Keyframes and Auto Lip-Sync (ADR 0114): the dialog while it is open
     /// (its preview is a gesture it keeps open until OK or Cancel), and what it was last given.
     pub audio_keys: Option<crate::audio_keys::Dialog>,
@@ -785,6 +787,8 @@ impl App {
             tl_color_open: None,
             convert_last: Default::default(),
             shape_dialog: None,
+            trace: None,
+            trace_last: Default::default(),
             audio_keys: None,
             data_view: None,
             data_reimport: None,
@@ -1786,6 +1790,42 @@ impl App {
                     }
                 }
                 self.run("element.select", json!({"ids": ids}));
+            }
+            Some("tracebitmap") => {
+                // Trace Bitmap (#463): a small picture (sky, sun, hills) placed twice. The left
+                // one is traced with the defaults and shows as selected raw shapes; the right
+                // one is selected with the dialog open over it.
+                self.run("layer.new", json!({"name": "Picture"}));
+                let dir = std::env::temp_dir().join("anicraft-shot-trace");
+                let _ = std::fs::create_dir_all(&dir);
+                let (w, h) = (260u32, 180u32);
+                let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+                for y in 0..h {
+                    for x in 0..w {
+                        let (fx, fy) = (x as f32, y as f32);
+                        let hill = 120.0 + 22.0 * (fx * 0.035).sin();
+                        let far = 100.0 + 16.0 * (fx * 0.05 + 1.3).cos();
+                        let c = if fy > hill {
+                            [58, 140, 84, 255]
+                        } else if fy > far {
+                            [104, 176, 120, 255]
+                        } else if (fx - 190.0).powi(2) + (fy - 52.0).powi(2) < 30.0 * 30.0 {
+                            [250, 206, 84, 255]
+                        } else {
+                            [120, 178, 232, 255]
+                        };
+                        rgba.extend_from_slice(&c);
+                    }
+                }
+                let path = dir.join("hills.png");
+                let bitmap = anicraft_engine::render::encode_png(w, h, &rgba).ok().filter(|png| std::fs::write(&path, png).is_ok()).and_then(|_| self.run("file.import_to_library", json!({"path": path.display().to_string(), "name": "hills.png"}))).and_then(|v| v["bitmap"].as_u64());
+                if let Some(b) = bitmap {
+                    self.tool = Tool::Select;
+                    self.run("library.place", json!({"bitmap": b, "x": 420, "y": 300}));
+                    self.run("modify.trace_bitmap", json!({}));
+                    self.run("library.place", json!({"bitmap": b, "x": 800, "y": 300}));
+                    crate::trace_dialog::open(self);
+                }
             }
             Some("warp") => {
                 // Asset Warp (ADR 0079): a checkered bitmap and a striped banner, each pinned at
@@ -3327,7 +3367,7 @@ impl App {
 
     /// Any modal (prompt, confirmation, close guard) is open: global shortcuts pause.
     pub fn modal_open(&self) -> bool {
-        self.prompt.is_some() || self.convert.is_some() || self.shape_dialog.is_some() || self.audio_keys.is_some() || self.confirm.is_some() || self.tabs.asking() || self.plugin_dialog.is_some() || self.templates.save.is_some() || self.video_import.is_some()
+        self.prompt.is_some() || self.convert.is_some() || self.shape_dialog.is_some() || self.trace.is_some() || self.audio_keys.is_some() || self.confirm.is_some() || self.tabs.asking() || self.plugin_dialog.is_some() || self.templates.save.is_some() || self.video_import.is_some()
     }
 
     /// The single entry point for user-initiated commands: asks first when the engine says the
@@ -3755,6 +3795,11 @@ impl App {
         }
         if id == "modify.soften_fill_edges" {
             crate::shape_dialogs::open(self, crate::shape_dialogs::Kind::Soften);
+            return;
+        }
+        // Modify › Bitmap › Trace Bitmap asks for Animate's four settings (#463).
+        if id == "modify.trace_bitmap" {
+            crate::trace_dialog::open(self);
             return;
         }
         // Convert Audio to Keyframes and Auto Lip-Sync ask what the sound drives, with a live
@@ -4731,6 +4776,7 @@ impl App {
         self.prompt_window(&ctx);
         crate::convert_symbol::window(self, &ctx);
         crate::shape_dialogs::window(self, &ctx);
+        crate::trace_dialog::window(self, &ctx);
         crate::aids_dialog::window(self, &ctx);
         crate::templates::save_window(self, &ctx);
         crate::layer_props::window(self, &ctx);
