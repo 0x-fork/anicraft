@@ -1504,6 +1504,15 @@ fn text_path_rows(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::El
             app.run("text.release_path", json!({}));
         }
     });
+    // The path is the text's own: the Subselection tool reshapes it in place (ADR 0107).
+    row_prose(ui, tr!("Shape"), |ui| {
+        let on_tool = app.tool == crate::app::Tool::Subselect;
+        let key = app.keymap.primary("tool.subselection").map(crate::platform::shortcut_label).unwrap_or_default();
+        if ui.selectable_label(on_tool, tr!("Edit Path")).on_hover_text(tr!("Reshape the path with the Subselection tool ({key}): drag its points and handles, double-click it to add a point; the text follows", key = key)).clicked() && !on_tool {
+            app.tool = crate::app::Tool::Subselect;
+            app.status_ok(tr!("Drag the path's points to reshape it; the text follows."));
+        }
+    });
 }
 
 /// A text type's name, as the Properties panel shows it.

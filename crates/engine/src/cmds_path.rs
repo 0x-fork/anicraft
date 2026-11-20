@@ -28,7 +28,7 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             draw_freehand,
         ),
-        c("path.move_points", "Move Points", "", None, "{id, points: [[cmd, slot], ..], dx, dy, smooth?: bool} (a handle moved alone at a smooth anchor turns the other one with it, keeping its length, unless smooth is false: Alt breaks the pair)", true, move_points),
+        c("path.move_points", "Move Points", "", None, "{id (a shape, or text on a path: the path it follows, ADR 0107), points: [[cmd, slot], ..], dx, dy, smooth?: bool} (a handle moved alone at a smooth anchor turns the other one with it, keeping its length, unless smooth is false: Alt breaks the pair)", true, move_points),
         c("path.add_point", "Add Anchor Point", "", None, "{id, x, y, slop?}", true, add_point),
         c("path.delete_points", "Delete Anchor Points", "", None, "{id, cmds: [..]}", true, delete_points),
         c("path.convert_point", "Convert Anchor Point", "", None, "{id, cmd, smooth: bool}", true, convert_point),
