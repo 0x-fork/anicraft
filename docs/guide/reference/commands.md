@@ -126,13 +126,13 @@ This page is generated from the command registry, so it always matches the versi
 - **Frame** `timeline.insert_frame` · Insert › Timeline · **F5** · changes the document
   Parameters: `{layer? | layers?: [..] | all_layers?: true (every layer with frames at or after the frame, as F5 with no frame selection; the active layer when none has), frame?, count?, advance?: true (the playhead moves onto the last frame inserted, as the key does in the editor)}`
 - **Remove Frame** `timeline.remove_frame` · Insert › Timeline · **Shift+F5** (macOS **⇧F5**) · changes the document
-  Parameters: `{layer? | layers?: [..], frame?, count?}`
+  Parameters: `{layer? | layers?: [..] | all_layers?: true (every layer with frames at or after the frame, as Shift+F5 with no frame selection: the layers stay in step), frame?, count?}`
 - **Keyframe** `timeline.insert_keyframe` · Insert › Timeline · **F6** · changes the document
   Parameters: `{layer? | layers?: [..], frame?, count? (every frame of the range becomes a keyframe), advance?: true (on a keyframe the new key goes on the next frame, and the playhead moves onto it, as the key does in the editor)}`
 - **Blank Keyframe** `timeline.insert_blank_keyframe` · Insert › Timeline · **F7** · changes the document
   Parameters: `{layer? | layers?: [..], frame?, count? (every frame of the range becomes a blank keyframe; keyframes already there are kept), advance?: true (on a keyframe the blank key goes on the next frame instead of clearing it, and the playhead moves onto it)}`
 - **Clear Keyframe** `timeline.clear_keyframe` · Insert › Timeline · **Shift+F6** (macOS **⇧F6**) · changes the document
-  Parameters: `{layer? | layers?: [..], frame?, count?}`
+  Parameters: `{layer? | layers?: [..] | all_layers?: true (every layer with a keyframe there, as Shift+F6 with no frame selection), frame?, count?}`
 - **Create Motion Tween** `timeline.create_motion_tween` · changes the document
   Parameters: `{layer?, frame?} (several objects on the key become one graphic symbol; a one-frame span grows to a second)`
 - **Create Classic Tween** `timeline.create_tween` · changes the document
@@ -154,7 +154,7 @@ This page is generated from the command registry, so it always matches the versi
 
 ## Modify
 
-- **Document Settings** `doc.set_stage` · changes the document
+- **Document Settings** `doc.set_stage` · **Ctrl+J** (macOS **⌘J**) · changes the document
   Parameters: `{width?, height?, fps?, background?: "#rrggbb"}`
 - **Envelope** `modify.envelope` · Modify › Transform
   Parameters: `{} opens an envelope around the selected shapes and drawing objects on the active layer (ADR 0080): a mesh of 4 × 4 Bézier control points over their bounds, at rest → {points: [[x, y] × 16] (row by row from the top-left), bounds: [x, y, w, h], shapes}. Then modify.envelope_move bends them. Symbols, text, groups and bitmaps can't be bent: break them apart first`
@@ -595,6 +595,8 @@ These commands have no menu item: the panels, the stage and the timeline use the
   Parameters: `{symbol} the selected instances show another symbol, keeping their transform, colour effect, blending, filters, looping, actions and instance name`
 - **Drop** `draw.drop` · changes the document
   Parameters: `{} the selected raw shapes cut and join the raw shapes they touch (after a move), on each layer`
+- **Float** `draw.float` · changes the document
+  Parameters: `{} the selected raw shapes stay whole, on top of the drawing, until they are deselected: then they cut and join what they lie on (as the editor leaves a moved selection, ADR 0122)`
 - **Select Connected** `element.select_connected`
   Parameters: `{x, y, add?, slop?} a raw stroke and the strokes joined to it, or a raw fill and the strokes on and in it`
 - **Transform** `modify.transform` · changes the document

@@ -1007,11 +1007,12 @@ impl App {
     }
 
     /// Runs an engine command, reporting failures in the status bar.
-    /// After a move, selected raw shapes merge where they land (ADR 0031).
+    /// After a move, selected raw shapes float over what they landed on, and merge with it when
+    /// they are deselected, as in Animate (ADR 0122, #487): until then they can be moved on.
     pub fn drop_raw(&mut self) {
         let raw = self.s.selected_elements().iter().any(|(_, e)| matches!(&e.kind, anicraft_engine::doc::ElementKind::Shape(sh) if sh.merge));
         if raw {
-            self.run("draw.drop", json!({}));
+            self.run("draw.float", json!({}));
         }
     }
 
@@ -4351,7 +4352,7 @@ impl App {
         if nudge != egui::Vec2::ZERO && crate::onion::editing(self) {
             crate::onion::nudge(self, anicraft_engine::geom::Vec2::new(nudge.x, nudge.y));
         } else if nudge != egui::Vec2::ZERO && !self.s.selection.is_empty() {
-            // One undo step: the move, and raw shapes merging where they land (ADR 0031).
+            // One undo step: the move, with raw shapes left floating where they land (ADR 0122).
             let own = !self.s.in_gesture();
             if own {
                 self.s.begin_gesture(tr_noop!("Move")); // i18n-exempt: an undo label (the engine's English, translated where shown)
