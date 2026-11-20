@@ -2705,3 +2705,41 @@ fn removing_frames_and_clearing_keys_on_every_layer_at_the_playhead() {
     assert!(s.confirmation("timeline.clear_keyframe", &json!({"frame": 4})).is_none(), "the active layer has no keyframe there");
     assert!(s.confirmation("timeline.clear_keyframe", &json!({"frame": 4, "all_layers": true})).is_some(), "another layer's artwork would go");
 }
+
+/// #490: a guide drawn as a zigzag with the Line tool is several raw strokes (one per straight
+/// run between corners). The guided object stopped at the first sharp peak, since only the
+/// first stroke was followed. The strokes that meet end to end are one path.
+#[test]
+fn a_motion_guide_with_sharp_corners_is_followed_to_its_end() {
+    let mut s = Session::default();
+    let art = s.layer;
+    run(&mut s, "draw.ellipse", json!({"x": -10, "y": -10, "w": 20, "h": 20}));
+    run(&mut s, "timeline.goto", json!({"frame": 20}));
+    run(&mut s, "timeline.insert_keyframe", json!({}));
+    run(&mut s, "edit.select_all", json!({}));
+    run(&mut s, "element.translate", json!({"dx": 400, "dy": 0}));
+    run(&mut s, "timeline.goto", json!({"frame": 0}));
+    run(&mut s, "timeline.create_tween", json!({}));
+    run(&mut s, "layer.add_motion_guide", json!({"layer": art.0}));
+    // A zigzag as the editor draws it (merge drawing): peak at (100,-100), valley at (200,0),
+    // peak at (300,-100). Drawn out of order, and one run backwards.
+    for (a, b) in [((100, -100), (200, 0)), ((0, 0), (100, -100)), ((400, 0), (300, -100)), ((200, 0), (300, -100))] {
+        run(&mut s, "draw.line", json!({"x0": a.0, "y0": a.1, "x1": b.0, "y1": b.1, "object": false}));
+    }
+    let at = |s: &Session, f| anicraft_doc::evaluate_scene(&s.doc, s.scene, f).items.iter().find(|i| i.layer == art).unwrap().transform.translation();
+    let (first, last) = (at(&s, 0), at(&s, 20));
+    assert!(first.distance(anicraft_geom::Vec2::new(0.0, 0.0)) < 1.0 && last.distance(anicraft_geom::Vec2::new(400.0, 0.0)) < 1.0, "{first:?} → {last:?}");
+    // Even speed along the whole zigzag (four runs of the same length): a quarter of the way
+    // is the first peak, half the valley, three quarters the second peak.
+    for (f, want) in [(5, (100.0, -100.0)), (10, (200.0, 0.0)), (15, (300.0, -100.0))] {
+        let p = at(&s, f);
+        assert!(p.distance(anicraft_geom::Vec2::new(want.0, want.1)) < 1.5, "frame {f}: {p:?}, not {want:?}");
+    }
+    // And it keeps moving past each corner.
+    let mut prev = at(&s, 0);
+    for f in 1..=20 {
+        let p = at(&s, f);
+        assert!(p.distance(prev) > 10.0, "it stopped at frame {f}: {prev:?} → {p:?}");
+        prev = p;
+    }
+}
