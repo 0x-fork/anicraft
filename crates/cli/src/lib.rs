@@ -128,7 +128,7 @@ pub const USAGE_EXIT: i32 = 2;
 
 /// The exit code for an error from [`run`].
 pub fn exit_code(error: &str) -> i32 {
-    if error.starts_with(ROOTS_REQUIRED) || error.starts_with("--automation-") { USAGE_EXIT } else { 1 }
+    if error.starts_with(ROOTS_REQUIRED) || error.starts_with("--automation-") || error.starts_with("flag --automation-") { USAGE_EXIT } else { 1 }
 }
 
 /// The folders given with `--automation-read-root` (once or more) and `--automation-write-root`
@@ -828,6 +828,7 @@ pub(crate) mod tests {
             vec!["mcp", "--bridge", "9878", "--automation-write-root", &out],
             vec!["mcp", "--automation-read-root", &work, "--automation-write-root", &out, "--automation-write-root", &out],
             vec!["mcp", "--automation-read-root", "", "--automation-write-root", &out],
+            vec!["mcp", "--automation-read-root", &work, "--automation-write-root"],
         ] {
             let e = run(&argv).unwrap_err();
             assert!(e.contains("--automation-read-root") || e.contains("--automation-write-root"), "{argv:?}: {e}");

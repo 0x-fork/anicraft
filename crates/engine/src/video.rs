@@ -203,7 +203,7 @@ pub fn probe(ffmpeg: &OsStr, path: &Path) -> Result<Probe> {
         return Err(no_programs());
     }
     // ffmpeg opens the file, not `vfs`: the automation roots are asked here (ADR 0124).
-    crate::access::check(path, crate::access::Access::Read)?;
+    let path = &crate::access::for_program(path, crate::access::Access::Read)?;
     let mut child = spawn(command(ffmpeg).args(["-hide_banner", "-nostdin", "-i"]).arg(path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped())).map_err(|e| not_started(&e))?;
     let mut text = Vec::new();
     if let Some(e) = child.stderr.take() {
@@ -368,7 +368,7 @@ impl Stream {
         if crate::vfs::in_memory() {
             return Err(no_programs());
         }
-        crate::access::check(path, crate::access::Access::Read)?;
+        let path = &crate::access::for_program(path, crate::access::Access::Read)?;
         let mut c = command(ffmpeg);
         c.args(["-hide_banner", "-loglevel", "error", "-nostdin"]);
         if start > 0.0 {
@@ -551,7 +551,7 @@ impl Drop for TempFile {
 /// `seconds` of the video's first sound track from `start`, as a sound (id not yet given):
 /// ffmpeg writes it as a 44.1 kHz stereo 16-bit WAV, which AniCraft's own reader takes.
 fn audio(ffmpeg: &OsStr, path: &Path, start: f64, seconds: f64) -> std::result::Result<Sound, String> {
-    crate::access::check_str(path, crate::access::Access::Read)?;
+    let path = &crate::access::for_program(path, crate::access::Access::Read).map_err(|e| e.to_string())?;
     let tmp = TempFile(std::env::temp_dir().join(format!("anicraft-video-{}-{}.wav", std::process::id(), crate::vfs::random_suffix())));
     let mut c = command(ffmpeg);
     c.args(["-hide_banner", "-loglevel", "error", "-nostdin", "-y"]);

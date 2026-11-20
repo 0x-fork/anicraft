@@ -361,6 +361,8 @@ pub(crate) fn write_mix(path: &Path, voices: &[Voice], rate: u32, from: u64, to:
     let frames = to.saturating_sub(from);
     let header = wav::header(rate, 2, bits, frames).ok_or_else(|| EngineError::Param("that much audio does not fit in a WAV file (4 GB); lower 'rate' or the frame range".into()))?;
     let tmp = path.with_extension(format!("{}.wav.tmp", crate::vfs::random_suffix()));
+    // Staging for one of AniCraft's own temporary files is its own too (ADR 0124).
+    let _own = crate::access::is_own(path).then(|| crate::access::own(&tmp));
     let result = (|| -> Result<u64> {
         let mut f = crate::vfs::Writer::create_new(&tmp)?;
         f.write_all(&header)?;

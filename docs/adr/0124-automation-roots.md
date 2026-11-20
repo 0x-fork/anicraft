@@ -120,6 +120,10 @@ inside a root; each Craft app has its own. PhotoCraft's flags are the model for 
 * **Hard links** inside a root to files outside it can't be told apart from files.
 * **The XFL folder reader** refuses links for the package's files but follows a linked
   *folder* inside a package; an assistant cannot create one through AniCraft.
+* **What ffmpeg opens on its own.** ffmpeg is handed the checked file's resolved path, but a
+  media file can name others (an HLS playlist's segments), and ffmpeg follows those under its
+  own rules, not ours. Import Video inside the roots should be given footage, not playlists
+  from an untrusted source.
 * The roots limit AniCraft's commands. They are not a sandbox for the assistant's other tools.
 
 ## Not in this slice

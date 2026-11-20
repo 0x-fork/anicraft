@@ -651,7 +651,7 @@ fn export_video(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::State("video export runs ffmpeg, which can't run in a web browser: export an animated GIF, a PNG sequence or an HTML page instead".into()));
     }
     // ffmpeg writes the file, not `vfs`: the automation roots are asked here (ADR 0124).
-    crate::access::check(&path, crate::access::Access::Write)?;
+    let path = crate::access::for_program(&path, crate::access::Access::Write)?;
     let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
     // Sound is encoded by the same ffmpeg: Opus in WebM (royalty-free), AAC in MP4.
     let (codec, audio_codec): (&[&str], &[&str]) = match ext.as_deref() {

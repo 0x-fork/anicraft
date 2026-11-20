@@ -290,6 +290,15 @@ fn reload(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let Some(folder) = s.plugins.folder() {
         crate::access::check(folder, crate::access::Access::Read)?;
+        // Each file too: a link in the folder may lead out of the roots.
+        const MOST: usize = 65_536;
+        let entries = crate::vfs::list(folder, MOST);
+        if crate::access::active() && entries.len() >= MOST {
+            return Err(EngineError::State("the plug-ins folder holds too many files to check against the automation roots".into()));
+        }
+        for entry in entries {
+            crate::access::check(&entry, crate::access::Access::Read)?;
+        }
     }
     let rep = s.plugins.reload().map_err(plugin_err)?;
     Ok(json!({

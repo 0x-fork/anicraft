@@ -157,10 +157,11 @@ impl Roots {
 
 /// The file `path` names, as the operating system would find it: absolute, with `.` and `..`
 /// gone and every symbolic link and junction followed, in the spelling the disk has (so on
-/// Windows `C:\WORK\A.PNG` and `c:\work\a.png` resolve alike). The part that doesn't exist yet
-/// (a file about to be written, folders about to be made) is kept as given, below the
-/// resolved part that does exist. A link that points nowhere is refused: writing through it
-/// would create a file wherever it points.
+/// Windows `C:\WORK\A.PNG` and `c:\work\a.png` resolve alike). It is walked one name at a
+/// time: a name that exists is resolved by the system, one that doesn't (a file about to be
+/// written, folders about to be made) is kept as given, and `..` then steps back by name, so
+/// a link reached after a missing folder and `..` is still followed. A link that points
+/// nowhere is refused: writing through it would create a file wherever it points.
 pub fn resolve(path: &Path) -> io::Result<PathBuf> {
     let invalid = |m: &str| io::Error::new(io::ErrorKind::InvalidInput, m.to_string());
     let abs = std::path::absolute(path)?;
@@ -168,38 +169,38 @@ pub fn resolve(path: &Path) -> io::Result<PathBuf> {
     if parts.len() > MAX_COMPONENTS {
         return Err(invalid("the path is too deep"));
     }
-    for k in (1..=parts.len()).rev() {
-        // A drive letter alone (`C:`) names the working folder on that drive, not its root.
-        if matches!(parts.get(k - 1), Some(Component::Prefix(_))) {
-            continue;
-        }
-        let existing: PathBuf = parts.iter().take(k).collect();
-        match std::fs::canonicalize(&existing) {
-            Ok(mut out) => {
-                for c in parts.iter().skip(k) {
-                    match c {
-                        Component::Normal(n) => out.push(n),
-                        Component::CurDir => {}
-                        Component::ParentDir => {
-                            if !out.pop() {
-                                return Err(invalid("the path leaves the root folder"));
-                            }
+    // The drive or share and its root folder, which must exist.
+    let start = parts.iter().take_while(|c| matches!(c, Component::Prefix(_) | Component::RootDir)).count();
+    if start == 0 || !matches!(parts.get(start - 1), Some(Component::RootDir)) {
+        return Err(invalid("the path is not absolute"));
+    }
+    let mut out = std::fs::canonicalize(parts.iter().take(start).collect::<PathBuf>())?;
+    for c in parts.iter().skip(start) {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    return Err(invalid("the path leaves the root folder"));
+                }
+            }
+            Component::Normal(name) => {
+                let next = out.join(name);
+                out = match std::fs::canonicalize(&next) {
+                    Ok(real) => real,
+                    // Not there, or a link to something that isn't: the second can't be allowed.
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                        if std::fs::symlink_metadata(&next).is_ok() {
+                            return Err(invalid("the path goes through a link that points nowhere"));
                         }
-                        Component::RootDir | Component::Prefix(_) => return Err(invalid("the path is not valid")),
+                        next
                     }
-                }
-                return Ok(out);
+                    Err(e) => return Err(e),
+                };
             }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                // Not there, or a link to something that isn't: the second can't be allowed.
-                if std::fs::symlink_metadata(&existing).is_ok() {
-                    return Err(invalid("the path goes through a link that points nowhere"));
-                }
-            }
-            Err(e) => return Err(e),
+            Component::RootDir | Component::Prefix(_) => return Err(invalid("the path is not valid")),
         }
     }
-    Err(io::Error::new(io::ErrorKind::NotFound, "no part of the path exists"))
+    Ok(out)
 }
 
 /// The policy in force on this thread, and the first access it refused.
@@ -300,9 +301,22 @@ pub fn check(path: &Path, access: Access) -> io::Result<()> {
     })
 }
 
-/// [`check`], for callers whose errors are text.
-pub fn check_str(path: &Path, access: Access) -> Result<(), String> {
-    check(path, access).map_err(|e| e.to_string())
+/// Whether `path` is a temporary file of AniCraft's own ([`own`]).
+pub fn is_own(path: &Path) -> bool {
+    OWN.with(|o| o.borrow().iter().any(|p| p == path))
+}
+
+/// The path to hand a program that opens the file itself (ffmpeg). With no policy in force it
+/// is `path` as given. Under a policy it is the checked file's resolved, absolute spelling:
+/// the program must open the file that was checked, and it may read the given text another
+/// way (ffmpeg takes `file:/tmp/x.mp4` as a protocol, where the file system sees a folder
+/// named `file:`).
+pub fn for_program(path: &Path, access: Access) -> io::Result<PathBuf> {
+    check(path, access)?;
+    if !active() || crate::vfs::in_memory() || is_own(path) {
+        return Ok(path.to_path_buf());
+    }
+    resolve(path).map(|p| PathBuf::from(display(&p)))
 }
 
 use Access::{Read, Write};
@@ -519,6 +533,9 @@ mod tests {
             std::os::unix::fs::symlink(s.0.join("secret").join("made"), s.0.join("out").join("dangling")).unwrap();
             assert!(r.permit(&s.0.join("out").join("dangling"), Access::Write).is_err());
         }
+        // A link reached after a folder that isn't there and `..` is followed all the same.
+        assert!(r.permit(&s.0.join("in").join("missing").join("..").join("way-out").join("new.txt"), Access::Probe).is_err());
+        assert!(r.permit(&s.0.join("out").join("missing").join("..").join("..").join("in").join("way-out").join("new"), Access::Probe).is_err());
         // A root given through a link is the folder it leads to.
         let via = Roots::new(&[s.0.join("secret").join("way-in")], None).unwrap();
         assert_eq!(via.read(), r.read());
@@ -570,10 +587,16 @@ mod tests {
             assert!(check(&tmp, Access::Write).is_err());
             let held = own(&tmp);
             assert!(check(&tmp, Access::Write).is_ok());
+            assert_eq!(for_program(&tmp, Access::Write).unwrap(), tmp);
+            // A program is handed the file that was checked, spelt so it can't be read another way.
+            let given = for_program(&s.0.join("in").join(".").join("a.txt"), Access::Read).unwrap();
+            assert!(given.is_absolute() && given.ends_with("a.txt") && !given.display().to_string().contains("file:"), "{}", given.display());
+            assert!(for_program(&secret, Access::Read).is_err());
             drop(held);
             assert!(check(&tmp, Access::Write).is_err());
         }
         assert!(!active() && check(&secret, Access::Read).is_ok());
+        assert_eq!(for_program(Path::new("a.mp4"), Access::Write).unwrap(), Path::new("a.mp4"), "no policy: as given");
     }
 
     #[test]
