@@ -52,7 +52,10 @@ inside a root; each Craft app has its own. PhotoCraft's flags are the model for 
    is exact for folders that aren't there. A link that points nowhere is refused, since writing
    through it would create its target. The result must start with a resolved root, component
    by component. So case-insensitivity on Windows comes from the file system's own answer,
-   not from our folding of names.
+   not from our folding of names. Before any of that, on Windows, a path on another computer
+   (`\\server\share\…`) or a device path (`\\.\…`) is refused by its spelling alone, unless a
+   root is on that same share: resolving it would contact the server and offer it the
+   person's sign-in. (A mapped drive letter can't be told from a local one.)
 
 4. **Where the check sits: in the engine, in three places**, under one scoped, per-thread
    policy (`access::confine(roots)`, in force until its guard drops):
@@ -124,7 +127,7 @@ inside a root; each Craft app has its own. PhotoCraft's flags are the model for 
 * Roots saved in the app's preferences, and a switch in the window (craft-libs
   `AgentSettings`), so the desktop app can cap what any bridge asks for.
 * A shared `craft-libs` helper for resolving and checking roots, so the Craft apps stop
-  carrying one each (proposed there; `engine::access::resolve` and `Roots` are written to
+  carrying one each (proposed in storytold/craft-libs#2527 and #45; `engine::access::resolve` and `Roots` are written to
   move as they are).
 * `ANICRAFT_AUTOMATION_*_ROOT` environment variables.
 

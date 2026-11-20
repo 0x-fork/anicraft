@@ -123,8 +123,33 @@ impl Roots {
         }
     }
 
+    /// Whether `path` (absolute) may be looked at on disk at all. On Windows, resolving a path
+    /// on another computer (`\\server\share\…`) contacts that computer and offers it the
+    /// person's sign-in, and a device path (`\\.\…`) is no file: both are refused by their
+    /// spelling, before the file system is asked. A share is allowed when a root is on it.
+    fn reachable(&self, abs: &Path) -> bool {
+        use std::path::Prefix;
+        let share = |p: &Path| match p.components().next() {
+            Some(Component::Prefix(x)) => match x.kind() {
+                Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => Some(Some((server.to_ascii_lowercase(), share.to_ascii_lowercase()))),
+                Prefix::Disk(_) | Prefix::VerbatimDisk(_) => None,
+                Prefix::Verbatim(_) | Prefix::DeviceNS(_) => Some(None),
+            },
+            _ => None,
+        };
+        match share(abs) {
+            None => true,
+            Some(None) => false,
+            Some(there) => self.read.iter().chain(&self.write).any(|r| share(r) == Some(there.clone())),
+        }
+    }
+
     /// `path` resolved, when this policy allows `access` to it; the error names the roots.
     pub fn permit(&self, path: &Path, access: Access) -> Result<PathBuf, String> {
+        let abs = std::path::absolute(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        if !self.reachable(&abs) {
+            return Err(self.refusal(&abs, access));
+        }
         let resolved = resolve(path).map_err(|e| format!("{}: {e}", path.display()))?;
         if self.inside(&resolved, access) { Ok(resolved) } else { Err(self.refusal(&resolved, access)) }
     }
@@ -510,6 +535,12 @@ mod tests {
         assert!(r.permit(&slashes, Access::Read).is_ok(), "forward slashes");
         // A device name inside the root is the device, not a file there.
         assert!(r.permit(&s.0.join("out").join("NUL"), Access::Write).is_err());
+        // Another computer is refused by its spelling: asking it would offer it a sign-in.
+        // (`.invalid` never resolves, so a regression here fails slowly rather than leaks.)
+        for there in [r"\\anicraft-test.invalid\share\a.png", r"\\?\UNC\anicraft-test.invalid\share\a.png", "//anicraft-test.invalid/share/a.png", r"\\.\PhysicalDrive0", r"\\?\GLOBALROOT\Device\x"] {
+            let e = r.permit(Path::new(there), Access::Probe).unwrap_err();
+            assert!(e.contains("outside the folders automation may use"), "{there}: {e}");
+        }
         assert!(!display(&r.read()[0]).starts_with(r"\\?\"));
     }
 

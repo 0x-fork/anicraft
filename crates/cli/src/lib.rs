@@ -88,6 +88,9 @@ impl Args {
         while let Some(a) = it.next() {
             if a == "--sample" {
                 positional.push(a.clone());
+            } else if let Some((k, v)) = a.strip_prefix("--").and_then(|f| f.split_once('=')) {
+                // `--flag=value`, as MCP client configurations often write the roots.
+                flags.push((k.to_string(), v.to_string()));
             } else if let Some(k) = a.strip_prefix("--") {
                 let v = it.next().ok_or_else(|| format!("flag --{k} needs a value"))?;
                 flags.push((k.to_string(), v.clone()));
@@ -846,6 +849,9 @@ pub(crate) mod tests {
         assert_eq!(read.len(), 2);
         assert!(write.is_absolute());
         assert!(automation_folders(&Args::parse(&[]).unwrap()).unwrap().is_none(), "serve without roots works as before");
+        let eq = Args::parse(&[format!("--automation-read-root={work}"), format!("--automation-write-root={out}")]).unwrap();
+        assert_eq!(automation_folders(&eq).unwrap().map(|(r, _)| r.len()), Some(1), "--flag=value");
+        assert_eq!(exit_code(&run(&["mcp", "--automation-read-root=", &format!("--automation-write-root={out}")]).unwrap_err()), USAGE_EXIT);
     }
 
     #[test]
