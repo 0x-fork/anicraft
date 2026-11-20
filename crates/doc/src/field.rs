@@ -264,6 +264,10 @@ impl Editor<'_> {
         let one = !self.field.lines.multiline();
         let restrict = self.st.restrict.clone();
         let mut add: String = s.chars().filter(|c| !c.is_control() || (*c == '\n' && !one)).filter(|c| *c == '\n' || restrict.as_deref().is_none_or(|r| allowed(r, *c))).collect();
+        // Typing only what the field refuses does nothing (it doesn't delete the selection).
+        if add.is_empty() && !s.is_empty() {
+            return Changed::default();
+        }
         let (a, b) = self.st.selection();
         let value = self.st.value(self.block).to_string();
         let kept = chars(&value) - (b - a);

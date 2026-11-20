@@ -576,6 +576,46 @@ impl<'a> Bake<'a> {
         if f.max_chars > 0 {
             o["mx"] = json!(f.max_chars.min(MAX_FIELD_CHARS as u32));
         }
+        // What `htmlText` reads and is read against (ADR 0107): the field's own style `st`
+        // and first paragraph's alignment `al`, exactly; the authored runs `rs` (`[characters,
+        // style]`) and paragraph alignments `ps` when the text has several; and `oc`, the
+        // actions its change event runs.
+        let align_key = |a: TextAlign| match a {
+            TextAlign::Left => "left",
+            TextAlign::Center => "center",
+            TextAlign::Right => "right",
+        };
+        let style = |s: &anicraft_doc::CharStyle| {
+            let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+            let mut st = json!({"f": s.font, "z": exact(s.size), "c": [b(s.color.r), b(s.color.g), b(s.color.b)]});
+            if s.bold {
+                st["b"] = json!(true);
+            }
+            if s.italic {
+                st["i"] = json!(true);
+            }
+            if s.underline {
+                st["u"] = json!(true);
+            }
+            if s.letter_spacing != 0.0 {
+                st["ls"] = exact(s.letter_spacing);
+            }
+            if !s.url.is_empty() {
+                st["url"] = json!(s.url);
+            }
+            st
+        };
+        o["st"] = style(&t.char_style());
+        o["al"] = json!(align_key(t.para_style().align));
+        if t.has_runs() {
+            o["rs"] = Value::Array(t.styled_runs().iter().map(|r| json!([r.chars, style(&r.style)])).collect());
+        }
+        if !t.paragraphs.is_empty() {
+            o["ps"] = Value::Array(t.paragraph_styles().iter().map(|q| json!(align_key(q.align))).collect());
+        }
+        if !f.on_change.is_empty() {
+            o["oc"] = actions(&f.on_change);
+        }
         // Authored text in several colours: its pieces, each in its colour (ADR 0085).
         if !t.fills.is_empty() {
             let pieces: Vec<Value> = t.fill_paths().iter().map(|(c, _, p)| json!([self.path(p), self.paint(&Paint::Solid(*c))])).collect();
