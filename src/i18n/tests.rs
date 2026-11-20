@@ -334,7 +334,7 @@ fn georgian_is_offered_only_when_its_face_is_embedded() {
     // ... and through the Proportional family install_fonts builds. Not Monospace: epaint's
     // has_glyph is a false negative there (the Georgian face is that chain's replacement-glyph face).
     let ctx = egui::Context::default();
-    crate::theme::install_fonts(&ctx, None, None);
+    crate::theme::install_fonts(&ctx, None, None, &[]);
     ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear(); // fonts apply at the start of a frame
     let prop = egui::FontId::proportional(14.0);
     assert!(ctx.fonts_mut(|f| f.has_glyphs(&prop, &letters)), "Proportional lacks Georgian letters");
@@ -365,7 +365,7 @@ fn hebrew_is_not_offered_yet_but_its_face_draws_hebrew_names() {
     assert_eq!(laid.missing, 0, "the face lacks some of U+05D0..U+05EA");
     // ... and through the Proportional family install_fonts builds (see the Georgian test).
     let ctx = egui::Context::default();
-    crate::theme::install_fonts(&ctx, None, None);
+    crate::theme::install_fonts(&ctx, None, None, &[]);
     ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
     let prop = egui::FontId::proportional(14.0);
     assert!(ctx.fonts_mut(|f| f.has_glyphs(&prop, &letters)), "Proportional lacks Hebrew letters");

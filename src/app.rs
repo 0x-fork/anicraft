@@ -394,6 +394,8 @@ pub struct App {
     pub shape_dialog: Option<crate::shape_dialogs::ShapeDialog>,
     pub shape_last: crate::shape_dialogs::Last,
     pub trace: Option<crate::trace_dialog::TraceDialog>,
+    /// Modify › Document Settings (#505): the dialog while it is open.
+    pub doc_settings: Option<crate::doc_settings::DocSettings>,
     pub trace_last: anicraft_engine::trace::TraceSettings,
     /// Convert Audio to Keyframes and Auto Lip-Sync (ADR 0114): the dialog while it is open
     /// (its preview is a gesture it keeps open until OK or Cancel), and what it was last given.
@@ -606,6 +608,8 @@ pub struct App {
     pub prefs_to_about: bool,
     /// Installed fonts, scanned off the UI thread on first need.
     pub system_fonts: Option<std::sync::Arc<prefs::SystemFonts>>,
+    /// Faces of this computer for scripts the interface's fonts lack (#482).
+    pub font_fallback: crate::font_fallback::Fallback,
     fonts_rx: Option<std::sync::mpsc::Receiver<prefs::SystemFonts>>,
     /// Re-check which glyphs the active fonts have (after fonts change).
     glyph_check: bool,
@@ -734,6 +738,8 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, session: Session, shot: Option<PathBuf>) -> App {
         #[cfg_attr(not(gpu_stage), allow(unused_mut))]
         let mut app = App::with_context(&cc.egui_ctx, session, shot);
+        // Names in scripts the bundled fonts lack get a face of this computer (#482).
+        app.font_fallback.enabled = true;
         // The GPU stage shares the window's device when it runs on wgpu (ADR 0029).
         #[cfg(gpu_stage)]
         app.stage_cache.gpu.set_window_device(cc.wgpu_render_state.as_ref());
@@ -805,6 +811,7 @@ impl App {
             convert_last: Default::default(),
             shape_dialog: None,
             trace: None,
+            doc_settings: None,
             trace_last: Default::default(),
             audio_keys: None,
             data_view: None,
@@ -917,6 +924,7 @@ impl App {
             desktop: None,
             prefs_to_about: false,
             system_fonts: None,
+            font_fallback: Default::default(),
             fonts_rx: None,
             glyph_check: true,
             copied: false,
@@ -1004,11 +1012,12 @@ impl App {
     }
 
     /// Runs an engine command, reporting failures in the status bar.
-    /// After a move, selected raw shapes merge where they land (ADR 0031).
+    /// After a move, selected raw shapes float over what they landed on, and merge with it when
+    /// they are deselected, as in Animate (ADR 0122, #487): until then they can be moved on.
     pub fn drop_raw(&mut self) {
         let raw = self.s.selected_elements().iter().any(|(_, e)| matches!(&e.kind, anicraft_engine::doc::ElementKind::Shape(sh) if sh.merge));
         if raw {
-            self.run("draw.drop", json!({}));
+            self.run("draw.float", json!({}));
         }
     }
 
@@ -1102,7 +1111,7 @@ impl App {
                 self.status_err(tr!("Font “{name}” is not installed; using the bundled font", name = name));
             }
         }
-        theme::install_fonts(ctx, ui_font.as_ref(), data_font.as_ref());
+        theme::install_fonts(ctx, ui_font.as_ref(), data_font.as_ref(), &self.font_fallback.faces);
         self.glyph_check = true;
     }
 
@@ -1809,6 +1818,8 @@ impl App {
                 }
                 self.run("element.select", json!({"ids": ids}));
             }
+            // Modify › Document Settings (#505): its dialog over the sample.
+            Some("docsettings") => crate::doc_settings::open(self),
             Some("tracebitmap") => {
                 // Trace Bitmap (#463): a small picture (sky, sun, hills) placed twice. The left
                 // one is traced with the defaults and shows as selected raw shapes; the right
@@ -3385,7 +3396,7 @@ impl App {
 
     /// Any modal (prompt, confirmation, close guard) is open: global shortcuts pause.
     pub fn modal_open(&self) -> bool {
-        self.prompt.is_some() || self.convert.is_some() || self.shape_dialog.is_some() || self.trace.is_some() || self.audio_keys.is_some() || self.confirm.is_some() || self.tabs.asking() || self.plugin_dialog.is_some() || self.templates.save.is_some() || self.video_import.is_some()
+        self.prompt.is_some() || self.convert.is_some() || self.shape_dialog.is_some() || self.trace.is_some() || self.doc_settings.is_some() || self.audio_keys.is_some() || self.confirm.is_some() || self.tabs.asking() || self.plugin_dialog.is_some() || self.templates.save.is_some() || self.video_import.is_some()
     }
 
     /// The single entry point for user-initiated commands: asks first when the engine says the
@@ -3815,6 +3826,12 @@ impl App {
             crate::shape_dialogs::open(self, crate::shape_dialogs::Kind::Soften);
             return;
         }
+        // Modify › Document Settings asks for the stage's size, frame rate and colour (#505;
+        // headless, the command takes them).
+        if id == "doc.set_stage" {
+            crate::doc_settings::open(self);
+            return;
+        }
         // Modify › Bitmap › Trace Bitmap asks for Animate's four settings (#463).
         if id == "modify.trace_bitmap" {
             crate::trace_dialog::open(self);
@@ -3927,6 +3944,12 @@ impl App {
         if let Some(p) = timeline::insert_key_params(self, id) {
             self.request(id, p);
             timeline::follow_playhead(self);
+            return;
+        }
+        // Shift+F5 and Shift+F6 with no frame selection act on every layer at the playhead, as
+        // F5 does (#438).
+        if let Some(p) = timeline::remove_key_params(self, id) {
+            self.request(id, p);
             return;
         }
         // Frame commands act on the frame selection (F5 over 3 frames on 2 layers inserts 3
@@ -4334,7 +4357,7 @@ impl App {
         if nudge != egui::Vec2::ZERO && crate::onion::editing(self) {
             crate::onion::nudge(self, anicraft_engine::geom::Vec2::new(nudge.x, nudge.y));
         } else if nudge != egui::Vec2::ZERO && !self.s.selection.is_empty() {
-            // One undo step: the move, and raw shapes merging where they land (ADR 0031).
+            // One undo step: the move, with raw shapes left floating where they land (ADR 0122).
             let own = !self.s.in_gesture();
             if own {
                 self.s.begin_gesture(tr_noop!("Move")); // i18n-exempt: an undo label (the engine's English, translated where shown)
@@ -4800,6 +4823,7 @@ impl App {
         crate::convert_symbol::window(self, &ctx);
         crate::shape_dialogs::window(self, &ctx);
         crate::trace_dialog::window(self, &ctx);
+        crate::doc_settings::window(self, &ctx);
         crate::aids_dialog::window(self, &ctx);
         crate::templates::save_window(self, &ctx);
         crate::layer_props::window(self, &ctx);
@@ -4821,6 +4845,8 @@ impl App {
         crate::test_movie::show(self, &ctx);
         crate::envelope::show(self, &ctx);
         crate::ease_editor::show(self, &ctx);
+        // Everything is painted: text no interface font could draw gets a fallback (#482).
+        crate::font_fallback::tick(self, &ctx);
 
         // Never lose work on close: intercept it while any open document has unsaved changes,
         // and ask once for all of them (ADR 0004, ADR 0112).
