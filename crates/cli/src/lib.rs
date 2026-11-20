@@ -26,7 +26,8 @@ USAGE:
   anicraft-cli export <file|--sample> --format <id> --out <path> [--from A] [--to B] [--frame N]
                       [--options '<json>'] [--overwrite yes]
                                          any export format: the built-in ones (gif, apng, webp,
-                                         lottie, html, video, svg, png, png-sequence, sprite-sheet)
+                                         lottie, html, video, svg, png, png-sequence, svg-sequence,
+                                         sprite-sheet)
                                          and exporter plug-ins (by id, with --plugins); --options
                                          are the plug-in's options, or a built-in's extra params
   anicraft-cli formats                   lists every export format, plug-ins included (JSON)
@@ -861,6 +862,10 @@ mod tests {
         let svg = dir.join("f.svg");
         run(&argv(&["export", "--sample", "--format", "svg", "--frame", "3", "--out", svg.to_str().unwrap()])).unwrap();
         assert!(std::fs::read_to_string(&svg).unwrap().contains("<svg"));
+        // A sequence goes to a folder, one file per frame (#504).
+        let seq = dir.join("vectors");
+        run(&argv(&["export", "--sample", "--format", "svg-sequence", "--from", "2", "--to", "3", "--out", seq.to_str().unwrap()])).unwrap();
+        assert!(std::fs::read_to_string(seq.join("frame_00002.svg")).unwrap().contains("<svg") && seq.join("frame_00003.svg").exists() && !seq.join("frame_00001.svg").exists());
         // An exporter plug-in that writes "frames:" and the count it was handed.
         let m = r#"{"id":"org.test.count","name":"Count","kind":"exporter","format":{"name":"Count","extension":"txt"}}"#;
         let req = r#"{"op":"movie"}"#;

@@ -66,6 +66,15 @@ pub fn specs() -> Vec<CommandSpec> {
             run: export_sequence,
         },
         CommandSpec {
+            id: "file.export_svg_sequence",
+            label: "Export SVG Sequence…",
+            menu: "File/Export",
+            shortcut: None,
+            params: "{dir, from?, to? (movie frames: every scene in order), confirm?} → one frame_00001.svg per frame (vectors, gradients and masks kept)",
+            mutates: false,
+            run: export_svg_sequence,
+        },
+        CommandSpec {
             id: "file.export_gif",
             label: "Export Animated GIF…",
             menu: "File/Export",
@@ -774,6 +783,36 @@ fn export_sequence(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"frames": files, "dir": dir.display().to_string()}))
 }
 
+/// Export SVG Sequence (#504): every movie frame as its own SVG file, named like the PNG
+/// sequence's (`frame_00001.svg`), so other programs read the animation as vectors. Each file
+/// is what Export Frame as SVG writes for that frame.
+fn export_svg_sequence(s: &mut Session, p: &Value) -> Result<Value> {
+    let dir = PathBuf::from(str_req(p, "dir")?);
+    let last = s.doc.frame_count().saturating_sub(1);
+    let from = opt_u32(p, "from")?.unwrap_or(0).min(last);
+    let to = opt_u32(p, "to")?.unwrap_or(last).min(last);
+    if to < from {
+        return Err(EngineError::Param("'to' must not be before 'from'".into()));
+    }
+    crate::vfs::create_dir_all(&dir)?;
+    // Frames are independent: a small batch at a time in parallel, so the text held in memory
+    // stays bounded, written here on the command's thread (ADR 0036).
+    let doc = &s.doc;
+    let job = s.job.as_deref();
+    let (mut files, mut bytes) = (0usize, 0u64);
+    let frames: Vec<u32> = (from..=to).collect();
+    for batch in frames.chunks(16) {
+        let svgs: Vec<String> = batch.par_iter().map(|&f| frame_svg(doc, f)).collect();
+        for (f, svg) in batch.iter().zip(svgs) {
+            bytes = bytes.saturating_add(svg.len() as u64);
+            crate::vfs::write(&dir.join(format!("frame_{:05}.svg", f + 1)), svg.as_bytes())?;
+            files += 1;
+        }
+        crate::publish::tick(job, batch.len() as u64)?;
+    }
+    Ok(json!({"frames": files, "bytes": bytes, "dir": dir.display().to_string()}))
+}
+
 /// Largest GIF we produce (frames × pixels), keeping memory and time bounded.
 const MAX_GIF_PIXELS: u64 = 600 * 1280 * 720;
 
@@ -911,6 +950,41 @@ fn set_stage(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #504: one SVG per movie frame, each the same as Export Frame as SVG gives.
+    #[test]
+    fn svg_sequence_writes_each_frame_as_the_single_frame_export_does() {
+        std::thread::spawn(|| {
+            crate::vfs::use_memory();
+            let mut s = Session::new(anicraft_doc::sample::demo());
+            let info = s.info();
+            let v = s.execute("file.export_svg_sequence", &json!({"dir": "seq", "from": 2, "to": 5})).unwrap();
+            assert_eq!(v["frames"], 4);
+            assert_eq!(v["dir"], "seq");
+            let dir = std::path::Path::new("seq");
+            let mut total = 0;
+            for f in 2..=5u32 {
+                let file = crate::vfs::read_to_string(&dir.join(format!("frame_{:05}.svg", f + 1))).unwrap();
+                assert!(file.starts_with("<svg") || file.starts_with("<?xml"), "{}", &file[..file.len().min(40)]);
+                assert_eq!(file, frame_svg(&s.doc, f), "frame {f}");
+                total += file.len() as u64;
+            }
+            assert_eq!(v["bytes"], total);
+            assert!(!crate::vfs::exists(&dir.join("frame_00002.svg")) && !crate::vfs::exists(&dir.join("frame_00007.svg")), "only the frames asked for");
+            assert_ne!(frame_svg(&s.doc, 2), frame_svg(&s.doc, 5), "the sample moves, so the frames differ");
+            assert_eq!(s.info(), info, "exporting changes nothing");
+            // Past the end is the last frame; a backwards range is refused; frames already there ask.
+            assert_eq!(s.execute("file.export_svg_sequence", &json!({"dir": "tail", "from": 4_000_000_000u32})).unwrap()["frames"], 1);
+            assert!(s.execute("file.export_svg_sequence", &json!({"dir": "seq", "from": 5, "to": 2})).is_err());
+            assert!(s.confirmation("file.export_svg_sequence", &json!({"dir": "seq"})).is_some_and(|c| c.irreversible));
+            assert!(s.confirmation("file.export_svg_sequence", &json!({"dir": "elsewhere"})).is_none());
+            assert!(s.confirmation("file.export_png_sequence", &json!({"dir": "seq"})).is_none(), "SVG frames are not PNG frames");
+            assert!(matches!(s.execute("file.export_svg_sequence", &json!({"dir": "seq"})), Err(EngineError::NeedsConfirmation(_))));
+            s.execute("file.export_svg_sequence", &json!({"dir": "seq", "confirm": true})).unwrap();
+        })
+        .join()
+        .unwrap();
+    }
 
     #[test]
     fn oversized_svg_frame_is_an_error_without_writing() {
