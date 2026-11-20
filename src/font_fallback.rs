@@ -30,10 +30,10 @@ const MAX_SHAPE_DEPTH: u32 = 8;
 /// in this order before any other installed font. Japanese first for Han characters, unless
 /// the system's language says otherwise ([`preferred`]).
 // i18n-exempt: font family names
-const JAPANESE: [&str; 6] = ["Yu Gothic UI", "Meiryo UI", "Meiryo", "Hiragino Sans", "Noto Sans CJK JP", "Noto Sans JP"];
-const CHINESE: [&str; 8] = ["Microsoft YaHei UI", "Microsoft YaHei", "Microsoft JhengHei UI", "PingFang SC", "PingFang TC", "Noto Sans CJK SC", "Noto Sans SC", "WenQuanYi Micro Hei"];
-const KOREAN: [&str; 4] = ["Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR"];
-const OTHERS: [&str; 14] = ["Segoe UI", "Nirmala UI", "Leelawadee UI", "Segoe UI Symbol", "Geeza Pro", "Thonburi", "Kohinoor Devanagari", "Arial Unicode MS", "Noto Sans", "Noto Sans Arabic", "Noto Sans Devanagari", "Noto Sans Thai", "DejaVu Sans", "Droid Sans Fallback"];
+const JAPANESE: [&str; 6] = ["Yu Gothic UI", "Meiryo UI", "Meiryo", "Hiragino Sans", "Noto Sans CJK JP", "Noto Sans JP"]; // i18n-exempt: font family names
+const CHINESE: [&str; 8] = ["Microsoft YaHei UI", "Microsoft YaHei", "Microsoft JhengHei UI", "PingFang SC", "PingFang TC", "Noto Sans CJK SC", "Noto Sans SC", "WenQuanYi Micro Hei"]; // i18n-exempt: font family names
+const KOREAN: [&str; 4] = ["Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR"]; // i18n-exempt: font family names
+const OTHERS: [&str; 14] = ["Segoe UI", "Nirmala UI", "Leelawadee UI", "Segoe UI Symbol", "Geeza Pro", "Thonburi", "Kohinoor Devanagari", "Arial Unicode MS", "Noto Sans", "Noto Sans Arabic", "Noto Sans Devanagari", "Noto Sans Thai", "DejaVu Sans", "Droid Sans Fallback"]; // i18n-exempt: font family names
 
 /// The families to try first, for a system whose language is `locale` (`ja-JP`, `zh_CN`, …):
 /// Han characters are drawn in the reader's own language's face when it is known.

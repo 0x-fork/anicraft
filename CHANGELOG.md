@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+* **Fixes from the issue tracker, second batch** (M8). Thank you to everyone who reported these.
+  * **Memory no longer grows while AniCraft is left running** (#454). The list of commands
+    was rebuilt for the menu bar on every frame, and four of its texts were made afresh and
+    never freed: about 1.5 kB a frame, 2.6 GB over a night of playback or a blinking cursor.
+    Measured: looping playback grew 220.7 to 246.5 MB in five minutes before; the texts are
+    now made once.
+  * **A selection you move no longer cuts what it is dropped on until you deselect it**
+    (#487, ADR 0122), as in Animate: a fill or stroke moved onto another stays whole and
+    selected, can be moved on or back, and joins the drawing when the selection lets go.
+    Undo takes back the move and the cut together. Scripts keep `draw.drop`; the editor uses
+    the new `draw.float`.
+  * **Modify › Document Settings opens** (#505): the stage's size, frame rate and colour in
+    a dialog, with Animate's Ctrl+J. The menu item did nothing before.
+  * **A motion guide with sharp corners is followed to its end** (#490). A zigzag drawn with
+    the Line tool is one stroke per straight run, and only the first was the path, so the
+    object stopped at the first peak or valley. Strokes that meet end to end are one path.
+  * **Shift+F5 and Shift+F6 with no frames selected act on every layer** (#438), as F5 does:
+    the frames F5 added to all layers come off all of them, and holding the key keeps going.
+  * **Japanese, Chinese, Korean, Arabic, Thai and other scripts show in the interface**
+    (#482): the Movie Explorer, the timeline, the Library and Properties drew them as empty
+    boxes with the bundled fonts. A font of your computer that has the letters is added
+    behind the interface's fonts the first time such text is shown.
+  * **A long layer name stops before the layer's eye, lock and outline buttons** (#440),
+    with an ellipsis, instead of running under them.
+  * **CMYK JPEGs import in their own colours** (#447): already right since the picture
+    decoders moved to the shared library; a test now keeps it so.
 * **Requests from artists, second batch** (M8).
   * **Export SVG Sequence** (File › Export, `file.export_svg_sequence`, and
     `anicraft-cli export --format svg-sequence`): one `frame_00001.svg` per frame in a folder,
