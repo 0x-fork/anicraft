@@ -167,7 +167,10 @@ fn scroll_bars_are_always_shown_in_their_own_lane() {
     let ctx = egui::Context::default();
     crate::theme::apply(&ctx);
     let style = ctx.global_style().spacing.scroll;
-    assert!(!style.floating, "scroll bars do not float over the content");
+    // Not over the content: a solid bar, or a "floating" one that keeps a lane as wide as the
+    // bar; and seen at rest, not only when the pointer comes near.
+    assert!(!style.floating || style.floating_allocated_width >= style.bar_width, "scroll bars do not float over the content: {style:?}");
+    assert!(!style.floating || style.dormant_handle_opacity > 0.0, "scroll bars show at rest: {style:?}");
     assert!(style.bar_width >= 8.0 && style.handle_min_length >= crate::theme::TARGET, "{style:?}");
     // Ten rows in room for three: the content gives up the bar's lane with no pointer anywhere.
     // (The lane opens over a few frames.)

@@ -852,7 +852,25 @@ fn restyle(ctx: &egui::Context, t: Tokens) {
 pub const SCROLL_BAR_WIDTH: f32 = 10.0;
 
 fn scroll_bars() -> egui::style::ScrollStyle {
-    egui::style::ScrollStyle { bar_width: SCROLL_BAR_WIDTH, handle_min_length: TARGET, bar_inner_margin: 2.0, foreground_color: true, ..egui::style::ScrollStyle::solid() }
+    // The handle takes the text colour, toned down at rest so a dark theme isn't striped with
+    // white bars: still at least 3:1 against the panel (a control's contrast), brighter under
+    // the pointer and while dragged.
+    // (egui applies these opacities only to "floating" bars, so the bar floats but keeps its
+    // own lane at full width: laid out like a solid bar, toned like a floating one.)
+    egui::style::ScrollStyle {
+        floating: true,
+        bar_width: SCROLL_BAR_WIDTH,
+        floating_width: SCROLL_BAR_WIDTH,
+        floating_allocated_width: SCROLL_BAR_WIDTH,
+        handle_min_length: TARGET,
+        bar_inner_margin: 2.0,
+        foreground_color: true,
+        dormant_background_opacity: 0.0,
+        dormant_handle_opacity: 0.45,
+        active_handle_opacity: 0.7,
+        interact_handle_opacity: 0.9,
+        ..egui::style::ScrollStyle::floating()
+    }
 }
 
 /// The exception: a one-row toolbar too wide for its place scrolls sideways under a thin bar
