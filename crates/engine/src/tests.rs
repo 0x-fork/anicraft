@@ -2630,3 +2630,18 @@ fn path_extend_continues_an_open_path_from_either_end_and_closes_it() {
     assert!(s.execute("path.extend", &json!({"id": id, "d": "M100 0 L100 0 Z"})).is_err(), "a closed piece");
     assert_eq!(stage_anchors(&s, id), [(0.0, 0.0), (100.0, 0.0)]);
 }
+
+/// #454: the registry is rebuilt by every caller (the menu bar asks each frame), so nothing in a
+/// spec may be made afresh per call and kept forever. Each text of every command is the same
+/// allocation from one call to the next.
+#[test]
+fn building_the_registry_again_allocates_no_new_static_text() {
+    let (a, b) = (crate::commands(), crate::commands());
+    assert_eq!(a.len(), b.len());
+    for (x, y) in a.iter().zip(&b) {
+        assert_eq!(x.id, y.id);
+        for (what, p, q) in [("id", x.id, y.id), ("label", x.label, y.label), ("menu", x.menu, y.menu), ("params", x.params, y.params)] {
+            assert!(std::ptr::eq(p.as_ptr(), q.as_ptr()), "{}: its {what} is a new string on every call (leaked each frame)", x.id);
+        }
+    }
+}
