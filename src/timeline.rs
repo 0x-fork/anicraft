@@ -1943,6 +1943,11 @@ fn fps_label(fps: f32) -> String {
     format!("{s} fps")
 }
 
+/// A typed frame rate: the number, with or without "fps" after it.
+fn parse_fps(s: &str) -> Option<f64> {
+    s.trim().trim_end_matches(|c: char| c.is_alphabetic() || c.is_whitespace()).replace(',', ".").parse::<f64>().ok().filter(|v| v.is_finite())
+}
+
 fn header(app: &mut App, ui: &mut egui::Ui) {
     transport(app, ui);
     ui.add_space(4.0);
@@ -1950,8 +1955,34 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
     let f = app.s.frame;
     // Fixed-width readouts: digits stay put while the playhead moves.
     let digits = app.s.frame_count().max(f + 1).to_string().len().max(3);
-    ui.label(text(Type::DataLarge, format!("{:>digits$}", f + 1)).color(T.accent_text)).named(tr!("Current frame")).on_hover_text(tr!("Current frame"));
-    ui.label(text(Type::Data, fps_label(fps)).color(T.text_dim)).on_hover_text(tr!("Frame rate"));
+    // The current frame is a field (#462): click it and type a frame to go there, or drag it to
+    // scrub. A number past the end goes to the last frame, as in Animate.
+    let mut go = f + 1;
+    let field = ui
+        .scope(|ui| {
+            let face = font(Type::DataLarge);
+            ui.spacing_mut().interact_size.x = digits as f32 * face.size * 0.62 + 2.0 * ui.spacing().button_padding.x;
+            ui.style_mut().override_font_id = Some(face);
+            ui.visuals_mut().override_text_color = Some(T.accent_text);
+            ui.add(egui::DragValue::new(&mut go).range(1..=app.s.frame_count().max(1)).speed(0.25))
+        })
+        .inner
+        .named(tr!("Current frame"))
+        .on_hover_text(tr!("Current frame: click to type the frame to go to, or drag to scrub"));
+    if field.changed()
+        && let Some(to) = go.checked_sub(1).filter(|to| *to != f)
+    {
+        app.playing = false;
+        app.run("timeline.goto", json!({"frame": playhead_target(to, app.s.frame_count())}));
+    }
+    // And so is the frame rate (#461): the same value as the document's in Properties.
+    let mut rate = fps;
+    let field = with_type(ui, Type::Data, |ui| ui.add(egui::DragValue::new(&mut rate).custom_formatter(|v, _| fps_label(v as f32)).custom_parser(parse_fps).speed(0.1).range(1.0..=120.0)))
+        .named(tr!("Frame rate"))
+        .on_hover_text(tr!("Frame rate: click to type frames per second, or drag"));
+    if field.changed() && rate != fps {
+        crate::panels::live(app, tr_noop!("Frame rate"), "doc.set_stage", json!({"fps": rate}));
+    }
     ui.label(text(Type::Data, format!("{:>6.2} s", f as f32 / fps.max(1.0))).color(T.text_dim)).on_hover_text(tr!("Time at the playhead"));
     ui.separator();
     // Through `invoke`, so the buttons act on the frame selection like the keys do. Icons (the
@@ -2230,6 +2261,64 @@ mod tests {
         frame(ctx, app, vec![button(at, true, modifiers)], modifiers);
         frame(ctx, app, vec![button(at, false, modifiers)], modifiers);
         settle(ctx, app);
+    }
+
+    /// Where the timeline header's control named `label` is on screen (from the accessibility
+    /// tree): of several with the name, the one beside the current frame.
+    fn control_at(ctx: &egui::Context, app: &mut App, label: &str) -> Pos2 {
+        ctx.enable_accesskit();
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 940.0))), ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| app.frame(ui));
+        out.textures_delta.clear();
+        let tree = out.platform_output.accesskit_update.expect("the accessibility tree");
+        let centres = |label: &str| -> Vec<Pos2> {
+            let named = tree.nodes.iter().filter(|(_, n)| n.label() == Some(label)).filter_map(|(_, n)| n.bounds());
+            named.map(|b| Pos2::new(((b.x0 + b.x1) * 0.5) as f32, ((b.y0 + b.y1) * 0.5) as f32)).collect()
+        };
+        let frame = centres("Current frame");
+        assert_eq!(frame.len(), 1, "one current-frame field");
+        centres(label).into_iter().min_by(|a, b| a.distance(frame[0]).total_cmp(&b.distance(frame[0]))).unwrap_or_else(|| panic!("no control named {label}"))
+    }
+    /// Clicks the field named `label`, types `typed` over what it shows and presses Enter.
+    fn type_into(ctx: &egui::Context, app: &mut App, label: &str, typed: &str) {
+        let at = control_at(ctx, app, label);
+        click(ctx, app, at, Modifiers::NONE);
+        frame(ctx, app, vec![Event::Text(typed.to_string())], Modifiers::NONE);
+        frame(ctx, app, vec![Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }], Modifiers::NONE);
+        settle(ctx, app);
+    }
+
+    /// #462 and #461: the timeline's current frame and frame rate are fields. A typed frame
+    /// moves the playhead (past the end: to the last frame); a typed rate is the document's,
+    /// one undo step.
+    #[test]
+    fn the_frame_and_the_frame_rate_are_typed_in_the_timeline_header() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, anicraft_engine::Session::new(anicraft_engine::doc::sample::demo()), Some(std::path::PathBuf::from("unused.png")));
+        settle(&ctx, &mut app);
+        let frames = app.s.frame_count();
+        assert!(frames > 12, "the sample has frames to go to: {frames}");
+        type_into(&ctx, &mut app, "Current frame", "12");
+        assert_eq!(app.s.frame, 11, "frame 12, counted from one");
+        type_into(&ctx, &mut app, "Current frame", "999999");
+        assert_eq!(app.s.frame, frames - 1, "past the end is the last frame");
+        type_into(&ctx, &mut app, "Current frame", "0");
+        assert_eq!(app.s.frame, 0, "before the start is the first frame");
+        assert!(!app.s.is_dirty(), "moving the playhead changes no document");
+
+        let undo = app.s.history_len();
+        type_into(&ctx, &mut app, "Frame rate", "30");
+        assert_eq!(app.s.doc.stage.fps, 30.0);
+        type_into(&ctx, &mut app, "Frame rate", "12.5 fps");
+        assert_eq!(app.s.doc.stage.fps, 12.5);
+        type_into(&ctx, &mut app, "Frame rate", "9000");
+        assert_eq!(app.s.doc.stage.fps, 120.0, "within the rates a document takes");
+        assert!(app.s.history_len() > undo, "the rate is an undoable edit");
+        assert_eq!(parse_fps("29.97 fps"), Some(29.97));
+        assert_eq!(parse_fps("24"), Some(24.0));
+        assert_eq!(parse_fps("12,5"), Some(12.5));
+        assert_eq!(parse_fps("fps"), None);
+        assert_eq!(parse_fps("NaN"), None);
     }
 
     /// #344: a keyframe moves the way it does in Animate: click it, then drag it. The hand
