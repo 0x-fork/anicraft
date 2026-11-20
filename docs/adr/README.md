@@ -23,4 +23,3 @@ has to renumber because another PR merged first.
 | Number | Pull request | Topic |
 |---|---|---|
 | 0037 | #38 (outside contribution) | Interface languages |
-| 0107 | m5/text-path-fields (M5) | Editing text paths in place, lines on a path, and the text-field API |

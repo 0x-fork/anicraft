@@ -2126,6 +2126,26 @@ impl App {
                     crate::layer_props::open(self, Some(anicraft_engine::doc::LayerId(m)));
                 }
             }
+            Some("pathedit") => {
+                // Editing the path of text on a path in place, and lines on a path (ADR 0107):
+                // three lines along a wave, the Subselection tool showing the path's points
+                // with one selected (its handles out).
+                self.perform("file.new", json!({"width": 640, "height": 400}));
+                self.run("draw.rect", json!({"x": 0, "y": 0, "w": 640, "h": 400, "fill": "#f1faee", "stroke": null}));
+                self.run("layer.new", json!({"name": "Title"}));
+                // i18n-exempt: document content
+                let text = self.run("text.create", json!({"text": "Text follows its own path\nline by line, in parallel\nand the path edits in place", "x": 40, "y": 40, "size": 24, "color": "#1d3557", "align": "center", "runs": [{"chars": 25, "bold": true}, {"chars": 27, "color": "#e76f51"}, {"chars": 28, "italic": true}]})).and_then(|v| v["element"].as_u64());
+                let wave = self.run("draw.path", json!({"d": "M60 170 C200 40 300 40 330 150 C360 260 470 250 580 130", "fill": null, "stroke": "#1d3557", "stroke_width": 1})).and_then(|v| v["element"].as_u64());
+                if let (Some(t), Some(w)) = (text, wave) {
+                    self.run("element.select", json!({"ids": [t]}));
+                    self.run("text.attach_path", json!({"path": w}));
+                    self.run("element.select", json!({"ids": [w]}));
+                    self.run("edit.delete", json!({}));
+                    self.run("element.select", json!({"ids": [t]}));
+                    self.points = vec![(anicraft_engine::doc::ElementId(t), 1, anicraft_engine::geom::edit::ANCHOR)];
+                }
+                self.tool = Tool::Subselect;
+            }
             Some("richtext") => {
                 // Styled text (ADR 0085): a title with bold, coloured and superscript runs and a
                 // centred paragraph, open for typing with a word selected, its style in
@@ -2151,7 +2171,7 @@ impl App {
                     }
                 }
             }
-            Some(which @ ("textfields" | "testtext")) => {
+            Some(which @ ("textfields" | "testtext" | "htmltext" | "embedfield")) => {
                 // Dynamic and input text fields (ADR 0066): a score a script sets, a name field
                 // and a multiline notes field. `textfields` selects the name field for its
                 // Properties; `testtext` plays it in Test Movie with a name typed and Enter
@@ -2166,12 +2186,23 @@ impl App {
                 }
                 // i18n-exempt: script source, document content
                 let code = "stop();\nscore_txt.text = \"Type your name, then press Enter\";\nstage.addEventListener(KeyboardEvent.KEY_DOWN, onKey);\n\nfunction onKey(e:KeyboardEvent):void {\n\tif (e.keyCode == Keyboard.ENTER && name_txt.length > 0) {\n\t\tscore_txt.text = \"Hello, \" + name_txt.text + \"!\";\n\t}\n}\n";
+                // `htmltext` (ADR 0107): styled text from a script, a change listener that
+                // answers every keystroke, and what the viewer may type limited.
+                // i18n-exempt: script source, document content
+                let html_code = "stop();\nscore_txt.htmlText = \"Type a <b>name</b> in <font color=\\\"#e76f51\\\">letters only</font>\";\nname_txt.maxChars = 12;\nname_txt.restrict = \"A-Za-z \";\nname_txt.addEventListener(Event.CHANGE, onChange);\n\nfunction onChange(e:Event):void {\n\tscore_txt.htmlText = \"<i>Hello,</i> <b><font color=\\\"#2a9d8f\\\">\" + name_txt.text + \"</font></b> <font size=\\\"16\\\">(\" + name_txt.length + \" of \" + name_txt.maxChars + \")</font>\";\n}\n";
+                let code = if which == "htmltext" { html_code } else { code };
                 self.run("layer.new", json!({}));
                 self.run("script.set", json!({"frame": 0, "text": code, "language": "actionscript3"}));
-                if which == "textfields" {
+                if which == "textfields" || which == "embedfield" {
                     self.run("layer.select", json!({"index": 1}));
-                    if let Some(id) = self.s.visible_elements().iter().find(|e| e.name == "name_txt").map(|e| e.id.0) {
+                    let name = if which == "embedfield" { "score_txt" } else { "name_txt" };
+                    if let Some(id) = self.s.visible_elements().iter().find(|e| e.name == name).map(|e| e.id.0) {
                         self.run("element.select", json!({"ids": [id]}));
+                    }
+                    // `embedfield`: the score's digits and words travel with the HTML export.
+                    if which == "embedfield" {
+                        // i18n-exempt: document content
+                        self.run("text.field", json!({"embed": "Score: 0123456789"}));
                     }
                 } else {
                     // Floating inside the editor, so the screenshot shows it (this run only).
