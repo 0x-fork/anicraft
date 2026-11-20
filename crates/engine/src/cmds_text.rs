@@ -49,12 +49,23 @@ const PARA_KEYS: &str = "align?: left|center|right, indent? (px, first line), le
 
 pub fn specs() -> Vec<CommandSpec> {
     let c = |id, label, menu, shortcut, params, mutates, run| CommandSpec { id, label, menu, shortcut, params, mutates, run };
-    let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+    // The four params docs put together from the shared key lists: made once and kept, since
+    // the registry is rebuilt by every caller (the menu bar asks each frame; #454: a fresh
+    // copy each time was never freed, about 1.5 kB a frame).
+    static DOCS: std::sync::OnceLock<[String; 4]> = std::sync::OnceLock::new();
+    let [create_doc, edit_doc, style_doc, paragraph_doc] = DOCS.get_or_init(|| {
+        [
+            format!("{{text (may be empty for an input field), type?: static|dynamic|input, x?, y? (top-left; default: centred), width?, {CHAR_KEYS}, {PARA_KEYS}, runs?: [{{chars, …character keys}}] (styles of the text's characters in order; unset keys take the style above), paragraphs?: [{{…paragraph keys}}] (one per line of the text)}} (ADR 0085)"),
+            format!("{{text? (the runs follow the change: typed characters continue the style before them), runs?, paragraphs? (as text.create: replace the styles), width? (px, wraps; null: one line per paragraph), {CHAR_KEYS} (every character), {PARA_KEYS} (every paragraph)}} on the selected text"),
+            format!("{{start?, end? (characters; default: all), {CHAR_KEYS}}} styles those characters of the selected text, splitting and joining its runs (ADR 0085)"),
+            format!("{{start?, end? (characters; default: all), {PARA_KEYS}}} sets the layout of the paragraphs those characters touch in the selected text (ADR 0085)"),
+        ]
+    });
     vec![
-        c("text.create", "New Text", "", None, leak(format!("{{text (may be empty for an input field), type?: static|dynamic|input, x?, y? (top-left; default: centred), width?, {CHAR_KEYS}, {PARA_KEYS}, runs?: [{{chars, …character keys}}] (styles of the text's characters in order; unset keys take the style above), paragraphs?: [{{…paragraph keys}}] (one per line of the text)}} (ADR 0085)")), true, create as crate::RunFn),
-        c("text.edit", "Edit Text", "", None, leak(format!("{{text? (the runs follow the change: typed characters continue the style before them), runs?, paragraphs? (as text.create: replace the styles), width? (px, wraps; null: one line per paragraph), {CHAR_KEYS} (every character), {PARA_KEYS} (every paragraph)}} on the selected text")), true, |s, p| s.each_layer(false, |s| edit(s, p))),
-        c("text.style", "Text Character Style", "", None, leak(format!("{{start?, end? (characters; default: all), {CHAR_KEYS}}} styles those characters of the selected text, splitting and joining its runs (ADR 0085)")), true, |s, p| s.each_layer(false, |s| style_range(s, p))),
-        c("text.paragraph", "Text Paragraph Style", "", None, leak(format!("{{start?, end? (characters; default: all), {PARA_KEYS}}} sets the layout of the paragraphs those characters touch in the selected text (ADR 0085)")), true, |s, p| s.each_layer(false, |s| paragraph_range(s, p))),
+        c("text.create", "New Text", "", None, create_doc.as_str(), true, create as crate::RunFn),
+        c("text.edit", "Edit Text", "", None, edit_doc.as_str(), true, |s, p| s.each_layer(false, |s| edit(s, p))),
+        c("text.style", "Text Character Style", "", None, style_doc.as_str(), true, |s, p| s.each_layer(false, |s| style_range(s, p))),
+        c("text.paragraph", "Text Paragraph Style", "", None, paragraph_doc.as_str(), true, |s, p| s.each_layer(false, |s| paragraph_range(s, p))),
         c("text.styles", "Text Styles", "", None, "{start?, end? (characters; default: all)} of the first selected text: its runs, paragraphs, and what those characters share (a mixed value is null) (ADR 0085)", false, styles_of),
         c("text.fonts", "Fonts", "", None, "{}", false, fonts),
         c(

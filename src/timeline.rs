@@ -331,6 +331,13 @@ pub fn insert_key_params(app: &App, id: &str) -> Option<serde_json::Value> {
     }
 }
 
+/// Params for Shift+F5 and Shift+F6 with no frame selection (#438): like F5 there, they act on
+/// every layer at the playhead, so the layers that F5 extended together shrink together.
+/// `None`: not one of them, or frames are selected (they act on the selection).
+pub fn remove_key_params(app: &App, id: &str) -> Option<serde_json::Value> {
+    (matches!(id, "timeline.remove_frame" | "timeline.clear_keyframe") && app.frame_sel.is_none()).then(|| json!({"all_layers": true}))
+}
+
 /// A one-frame selection moves with the playhead after F5 / F6 / F7 (as in Animate), instead of
 /// being dropped for being left behind.
 pub fn follow_playhead(app: &mut App) {
@@ -340,6 +347,19 @@ pub fn follow_playhead(app: &mut App) {
         sel.anchor.1 = app.s.frame;
         sel.head.1 = app.s.frame;
     }
+}
+
+/// The width a layer's name may take: from where it starts to where the row's toggles begin,
+/// less the room its "has selected artwork" mark needs. Never negative.
+fn name_room(name_x: f32, toggles_left: f32, mark: f32) -> f32 {
+    (toggles_left - name_x - mark).max(0.0)
+}
+
+/// A layer's name on one line, ending in an ellipsis when it is wider than `width`.
+fn elided_name(p: &egui::Painter, name: &str, color: Color32, width: f32) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple_singleline(name.to_owned(), font(Type::Body), color);
+    job.wrap = egui::text::TextWrapping { max_width: width.max(1.0), max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
+    p.layout_job(job)
 }
 
 /// Frame commands that act on the frame selection.
@@ -743,13 +763,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
         type_icon(icon_x, icon);
         let icon_rect = Rect::from_center_size(pos2(icon_x, left.center().y), vec2(16.0, tg));
-        let name_at = painter.text(pos2(name_x, left.center().y), Align2::LEFT_CENTER, &layer.name, font(Type::Body), name_color);
         let has_selection = holding.contains(&layer.id);
-        if has_selection {
-            let sq = Rect::from_center_size(pos2(name_at.right() + 9.0, left.center().y), vec2(SEL_MARK, SEL_MARK));
-            painter.rect_filled(sq, 0.0, to_color32(layer.color));
-            painter.rect_stroke(sq, 0.0, Stroke::new(1.0, T.text), StrokeKind::Outside);
-        }
 
         // Onion / eye / lock / outline toggles, right to left from the outline square: square
         // targets with a hover fill (smaller on short rows).
@@ -810,6 +824,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             None => attach_t.or(speaker).or(onion_t).unwrap_or(eye).left() - 4.0,
         };
         let name_rect = Rect::from_min_max(left.left_top(), pos2(name_end.max(left.left() + 8.0), left.bottom()));
+        // The name stops before the row's toggles, with an ellipsis when it is longer than the
+        // room (#440: a long name, such as an imported sound's file name, ran under them).
+        let mark_room = if has_selection { SEL_MARK + 14.0 } else { 0.0 };
+        let name_galley = elided_name(&painter, &layer.name, name_color, name_room(name_x, name_rect.right(), mark_room));
+        let name_right = name_x + name_galley.rect.width();
+        painter.galley(pos2(name_x, left.center().y - name_galley.rect.height() / 2.0), name_galley, name_color);
+        if has_selection {
+            let sq = Rect::from_center_size(pos2(name_right + 9.0, left.center().y), vec2(SEL_MARK, SEL_MARK));
+            painter.rect_filled(sq, 0.0, to_color32(layer.color));
+            painter.rect_stroke(sq, 0.0, Stroke::new(1.0, T.text), StrokeKind::Outside);
+        }
         if let Some(col) = parent_col {
             // The name gives way to the column: what is under it is painted over.
             let until = attach_t.or(speaker).or(onion_t).unwrap_or(eye).left() - 1.0;
@@ -2084,6 +2109,56 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #438: with no frame selection Shift+F5 and Shift+F6 act on every layer at the playhead,
+    /// as F5 does; with frames selected they act on the selection.
+    #[test]
+    fn shift_f5_and_shift_f6_follow_f5_onto_every_layer() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, anicraft_engine::Session::default(), Some(std::path::PathBuf::from("unused.png")));
+        let a = app.s.layer;
+        app.run("layer.new", json!({}));
+        let len = |app: &App, l: LayerId| app.s.timeline().layer(l).map_or(0, |l| l.end_frame());
+        assert!(app.frame_sel.is_none());
+        for _ in 0..4 {
+            app.invoke("timeline.insert_frame");
+        }
+        let b = app.s.layer;
+        assert_eq!((len(&app, a), len(&app, b)), (5, 5), "F5 extends both layers");
+        app.invoke("timeline.remove_frame");
+        app.invoke("timeline.remove_frame");
+        assert_eq!((len(&app, a), len(&app, b)), (3, 3), "Shift+F5 shortens both");
+        assert_eq!(remove_key_params(&app, "timeline.clear_keyframe"), Some(json!({"all_layers": true})));
+        assert_eq!(remove_key_params(&app, "timeline.insert_frame"), None);
+        // A frame selection is what they act on instead.
+        app.frame_sel = Some(FrameSel { anchor: (b, 1), head: (b, 1) });
+        assert_eq!(remove_key_params(&app, "timeline.remove_frame"), None);
+        app.invoke("timeline.remove_frame");
+        assert_eq!((len(&app, a), len(&app, b)), (3, 2), "only the selected layer");
+    }
+
+    /// #440: a layer named after a long file (an imported sound) ran under the row's eye, lock
+    /// and outline toggles. Its name now stops before them and ends in an ellipsis.
+    #[test]
+    fn a_long_layer_name_is_cut_before_the_rows_toggles() {
+        let ctx = egui::Context::default();
+        let long = "Ahhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh Green Screen recording take 12";
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let p = ui.painter();
+            let room = name_room(32.0, 150.0, 0.0);
+            assert_eq!(room, 118.0);
+            let cut = elided_name(p, long, Color32::WHITE, room);
+            assert!(cut.rect.width() <= room + 0.5, "{} wider than {room}", cut.rect.width());
+            assert_eq!(cut.rows.len(), 1);
+            assert!(cut.elided, "the cut is marked, so the name ends in an ellipsis");
+            // A short name is drawn whole, and the mark of selected artwork has its room.
+            let short = elided_name(p, "Ball", Color32::WHITE, room);
+            assert!(!short.elided && short.rect.width() < room);
+            assert_eq!(name_room(32.0, 150.0, 20.0), 98.0);
+            assert_eq!(name_room(140.0, 150.0, 20.0), 0.0, "never negative in a very narrow column");
+        });
+        out.textures_delta.clear();
+    }
 
     fn layers(n: u64) -> Vec<Arc<Layer>> {
         (1..=n).map(|i| Arc::new(Layer::new(LayerId(i), format!("L{i}")))).collect()

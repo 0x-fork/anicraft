@@ -755,7 +755,7 @@ fn depth(y: i8, blur: u8, alpha: u8) -> Shadow {
 
 /// Fonts and the look, at start-up.
 pub fn apply(ctx: &egui::Context) {
-    install_fonts(ctx, None, None);
+    install_fonts(ctx, None, None, &[]);
     apply_palette(ctx, Palette::Graphite);
 }
 
@@ -958,8 +958,10 @@ pub type UserFont = (String, Vec<u8>, u32);
 /// Installs the UI typefaces (ADR 0005). Order in each family: the user's system font (from
 /// Preferences), then the craft-fonts pair (when embedded at build time), then egui's bundled
 /// fonts, which stay as fallbacks for glyph coverage, then Noto Sans Georgian / Hebrew (when
-/// embedded) for the scripts none of them has.
-pub fn install_fonts(ctx: &egui::Context, ui_font: Option<&UserFont>, data_font: Option<&UserFont>) {
+/// embedded) for the scripts none of them has, then `fallbacks`: faces of this computer for
+/// scripts none of the above has (Japanese, Chinese, Korean, Arabic…; `font_fallback`, #482).
+/// Being last, they change nothing that drew before.
+pub fn install_fonts(ctx: &egui::Context, ui_font: Option<&UserFont>, data_font: Option<&UserFont>, fallbacks: &[UserFont]) {
     use egui::{FontData, FontDefinitions, FontFamily};
     use std::sync::Arc;
     let mut defs = FontDefinitions::default();
@@ -975,6 +977,15 @@ pub fn install_fonts(ctx: &egui::Context, ui_font: Option<&UserFont>, data_font:
             for family in [FontFamily::Proportional, FontFamily::Monospace] {
                 defs.families.entry(family).or_default().push(name.to_owned());
             }
+        }
+    }
+    for (name, bytes, index) in fallbacks {
+        let key = format!("fallback:{name}:{index}");
+        let mut data = FontData::from_owned(bytes.clone());
+        data.index = *index;
+        defs.font_data.insert(key.clone(), Arc::new(data));
+        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+            defs.families.entry(family).or_default().push(key.clone());
         }
     }
     for (user, family) in [(ui_font, FontFamily::Proportional), (data_font, FontFamily::Monospace)] {

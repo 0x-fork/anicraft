@@ -133,6 +133,7 @@ This page is generated from the editor's shortcut map, so it always matches the 
 
 | Action | Windows and Linux | macOS |
 |---|---|---|
+| Document Settings | Ctrl+J | ⌘J |
 | Shape › Add Shape Hint | Ctrl+Shift+H | ⇧⌘H |
 | Arrange › Bring to Front | Ctrl+Shift+Up | ⇧⌘↑ |
 | Arrange › Bring Forward | Ctrl+Up | ⌘↑ |

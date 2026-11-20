@@ -5,7 +5,7 @@ use crate::nine_slice::Slicing;
 use crate::player::PlayerState;
 use crate::{ColorTransform, Document, Element, ElementId, ElementKind, Layer, LayerId, LayerKind, MaskMode, Paint, Rgba, Shape, Stroke, SymbolId, SymbolKind, Timeline, TweenKind};
 use anicraft_geom::walk::PathWalk;
-use anicraft_geom::{Affine, FillRule, Path};
+use anicraft_geom::{Affine, FillRule, Path, Vec2};
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::sync::Arc;
@@ -664,22 +664,71 @@ pub fn instance_start(layer: &Layer, frame: u32, id: ElementId, symbol: SymbolId
     start
 }
 
-/// The path a guide layer's first shape traces at `frame`, in the layer's own space.
+/// Most lines of a guide layer that are looked at when joining them into one path.
+const MAX_GUIDE_LINES: usize = 512;
+
+/// How near two line ends are to be one corner of the guide, in the layer's pixels. Lines drawn
+/// with snapping, and the pieces merge drawing cuts a line into, meet much closer than this.
+const GUIDE_JOIN: f32 = 0.75;
+
+/// The path a guide layer traces at `frame`, in the layer's own space: its first shape's line,
+/// continued through every other line on the layer that meets it end to end. A guide drawn as
+/// several strokes (a zigzag made with the Line tool is one raw stroke per straight run, #490)
+/// is one path, sharp corners and all; a closed outline is followed once round.
 pub fn guide_walk(guide: &Layer, frame: u32) -> Option<PathWalk> {
     let (_, els) = evaluate_layer_elements(guide, frame)?;
-    els.iter().find_map(|e| match &e.kind {
-        ElementKind::Shape(s) => {
-            let line = s.path.flatten(&e.transform, 0.25).into_iter().next()?;
-            let mut pts = line.points;
-            if line.closed
-                && let Some(&first) = pts.first()
-            {
-                pts.push(first);
-            }
-            PathWalk::new(&pts)
+    let mut lines = els
+        .iter()
+        .filter_map(|e| match &e.kind {
+            ElementKind::Shape(s) => Some(s.path.flatten(&e.transform, 0.25)),
+            ElementKind::Symbol { .. } | ElementKind::Text(_) | ElementKind::Camera | ElementKind::Group { .. } => None,
+        })
+        .flatten()
+        .filter(|l| l.points.len() >= 2 && l.points.iter().all(|p| p.is_finite()))
+        .take(MAX_GUIDE_LINES);
+    let first = lines.next()?;
+    let mut pts = first.points;
+    if first.closed {
+        // Round and back to its start: nothing joins a closed outline.
+        if let Some(&start) = pts.first() {
+            pts.push(start);
         }
-        ElementKind::Symbol { .. } | ElementKind::Text(_) | ElementKind::Camera | ElementKind::Group { .. } => None,
-    })
+        return PathWalk::new(&pts);
+    }
+    let mut rest: Vec<Vec<Vec2>> = lines.filter(|l| !l.closed).map(|l| l.points).collect();
+    // Grow the path at its end, then at its start, one line at a time (each line is used once,
+    // so this ends after at most `MAX_GUIDE_LINES` joins).
+    let near = |a: Vec2, b: Vec2| a.distance(b) <= GUIDE_JOIN;
+    while let (Some(&head), Some(&tail)) = (pts.first(), pts.last()) {
+        let join = rest.iter().enumerate().find_map(|(i, l)| {
+            let (a, b) = (*l.first()?, *l.last()?);
+            // (which line, joins at the path's end, the line runs backwards)
+            if near(tail, a) {
+                Some((i, true, false))
+            } else if near(tail, b) {
+                Some((i, true, true))
+            } else if near(head, b) {
+                Some((i, false, false))
+            } else if near(head, a) {
+                Some((i, false, true))
+            } else {
+                None
+            }
+        });
+        let Some((i, at_end, backwards)) = join else { break };
+        let mut line = rest.swap_remove(i);
+        if backwards {
+            line.reverse();
+        }
+        if at_end {
+            pts.extend(line.into_iter().skip(1));
+        } else {
+            line.pop();
+            line.extend(pts);
+            pts = line;
+        }
+    }
+    PathWalk::new(&pts)
 }
 
 /// The tweened transform `tw` moved onto the guide: its origin travels from the point on the

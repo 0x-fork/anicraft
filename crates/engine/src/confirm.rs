@@ -59,6 +59,8 @@ fn target_count(p: &Value) -> u32 {
 /// `(layer name, element count)`.
 fn lost_keys(s: &Session, p: &Value, hit: impl Fn(&Keyframe) -> bool) -> Vec<(String, usize)> {
     let ids: Vec<LayerId> = match p.get("layers").and_then(Value::as_array) {
+        // Every layer that reaches the frame (Shift+F5 and Shift+F6 with no frame selection).
+        _ if p.get("all_layers").and_then(Value::as_bool) == Some(true) => crate::cmds_timeline::layers_at_or_after(s, target_frame(s, p)),
         Some(v) => v.iter().filter_map(Value::as_u64).map(LayerId).take(1000).collect(),
         None => vec![p.get("layer").and_then(Value::as_u64).map_or(s.layer, LayerId)],
     };

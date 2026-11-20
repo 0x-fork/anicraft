@@ -125,7 +125,7 @@ pub fn specs() -> Vec<CommandSpec> {
             id: "doc.set_stage",
             label: "Document Settings",
             menu: "Modify",
-            shortcut: None,
+            shortcut: Some("Ctrl+J"),
             params: "{width?, height?, fps?, background?: \"#rrggbb\"}",
             mutates: true,
             run: set_stage,
