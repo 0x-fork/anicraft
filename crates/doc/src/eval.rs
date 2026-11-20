@@ -699,8 +699,7 @@ pub fn guide_walk(guide: &Layer, frame: u32) -> Option<PathWalk> {
     // Grow the path at its end, then at its start, one line at a time (each line is used once,
     // so this ends after at most `MAX_GUIDE_LINES` joins).
     let near = |a: Vec2, b: Vec2| a.distance(b) <= GUIDE_JOIN;
-    loop {
-        let (Some(&head), Some(&tail)) = (pts.first(), pts.last()) else { break };
+    while let (Some(&head), Some(&tail)) = (pts.first(), pts.last()) {
         let join = rest.iter().enumerate().find_map(|(i, l)| {
             let (a, b) = (*l.first()?, *l.last()?);
             // (which line, joins at the path's end, the line runs backwards)
