@@ -35,6 +35,32 @@ This integration depends on craft-libs #1962 and still requires hosted parity va
 | Stage rendering & build | **Tiled stage** (ADR 0007): 512 px cached tiles, over the stage and the visible pasteboard (artwork off the stage shows, on transparent tiles that never cross the stage edge; View › Clip Content Outside the Stage and its edit-bar button hide it, view state), batched per frame with one scene evaluation per frame, look-ahead ring and playback prefetch, scaled older tiles instead of blank areas, pixel-aligned (no seams). **Space-biased build**: debug build 6.9 GB → 1.04 GB, fresh build 44 s, edit rebuild 4–6 s (`docs/development.md`). |
 | Scale & performance | Pulled forward from M2: persistent document with snapshot undo (memory-budgeted history, save-point dirty tracking, History panel), background render worker with frame cache and playback look-ahead, band-parallel renderer with culling, compact streaming file format v2, `anicraft-cli bench`. Measured numbers are in `docs/performance.md`. Memory, sharing, file-size and culling budgets are a test on every PR; timing budgets are `anicraft-cli bench --check yes` (all met; the 1080p render is 15.3–15.8 ms against 16.7 ms). |
 
+**Requests from artists, second batch (2026-11-20, M8).** Shipped: Export SVG Sequence (#504);
+the timeline's current frame and frame rate as fields (#462, #461); a key for every panel and F4
+to hide them all (#456); menus that follow the pointer once one is open (#455); scroll bars
+always shown (#483); the colour picker's top row (colour and hex that follow the pointer), its
+one palette/mixer button and the palette in Animate's order (#434, #435, #437, #432). Not yet,
+each a candidate with its design:
+
+* **Live preview on the artwork while pointing at a swatch (#436).** The picker already knows
+  the swatch under the pointer. Showing it on the selection or the stage must not touch the
+  document or undo: a session-level *preview override* (which paint of which elements, or the
+  stage colour) applied where the display list is built, set by the picker each frame and
+  dropped when the pointer leaves; a click commits through the usual command.
+* **A Frame Picker panel (#452).** A dockable panel for the selected graphic instance: its
+  symbol's frames as a list or thumbnails (rendered by the oracle through the thumbnail cache),
+  a click sets the instance's first frame (`element.set_loop`), with *Create Keyframe* (insert a
+  keyframe at the playhead first, for lip-sync), the loop mode, a size slider and a pin.
+* **Layer-wide colour effect, blend and filters (#464).** Properties › Frame already has the
+  label, sound, actions and tween of the frame, and Layer Properties has opacity (ADR 0111).
+  Missing is an effect on the whole layer across the timeline: `Layer.color`, `Layer.blend` and
+  `Layer.filters`, applied in `evaluate` as a group around the layer's items (as layer opacity
+  is), with the same three sections in Properties and in XFL import. Needs an ADR.
+* **Squash and stretch for bones (#503).** A per-bone option: when IK or a pose changes a
+  bone's length, scale what it carries along the bone and by the inverse across it (area kept),
+  with a strength per bone; a function of the pose in `evaluate`, in the bones ADRs' model.
+* **SVG sequence in Publish Settings**, and a choice of file name pattern for both sequences.
+
 ## Milestones
 
 | M | Theme | Exit criteria |

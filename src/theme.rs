@@ -835,6 +835,7 @@ fn restyle(ctx: &egui::Context, t: Tokens) {
         s.spacing.icon_width = 16.0;
         s.spacing.icon_width_inner = 9.0;
         s.spacing.menu_margin = egui::Margin::same(6);
+        s.spacing.scroll = scroll_bars();
         // Built-in text styles follow the roles, so plain widgets match the guidelines too.
         use egui::TextStyle;
         s.text_styles.insert(TextStyle::Body, font(Type::Body));
@@ -843,6 +844,40 @@ fn restyle(ctx: &egui::Context, t: Tokens) {
         s.text_styles.insert(TextStyle::Heading, font(Type::Title));
         s.text_styles.insert(TextStyle::Monospace, font(Type::Data));
     });
+}
+
+/// Scroll bars (#483) are part of the layout, not an overlay that shows on hover: wherever there
+/// is more than fits, a bar is there at rest, in its own lane beside the content, showing how
+/// much more there is and where you are in it, and wide enough to grab without aiming.
+pub const SCROLL_BAR_WIDTH: f32 = 10.0;
+
+fn scroll_bars() -> egui::style::ScrollStyle {
+    // The handle takes the text colour, toned down at rest so a dark theme isn't striped with
+    // white bars: still at least 3:1 against the panel (a control's contrast), brighter under
+    // the pointer and while dragged.
+    // (egui applies these opacities only to "floating" bars, so the bar floats but keeps its
+    // own lane at full width: laid out like a solid bar, toned like a floating one.)
+    egui::style::ScrollStyle {
+        floating: true,
+        bar_width: SCROLL_BAR_WIDTH,
+        floating_width: SCROLL_BAR_WIDTH,
+        floating_allocated_width: SCROLL_BAR_WIDTH,
+        handle_min_length: TARGET,
+        bar_inner_margin: 2.0,
+        foreground_color: true,
+        dormant_background_opacity: 0.0,
+        dormant_handle_opacity: 0.45,
+        active_handle_opacity: 0.7,
+        interact_handle_opacity: 0.9,
+        ..egui::style::ScrollStyle::floating()
+    }
+}
+
+/// The exception: a one-row toolbar too wide for its place scrolls sideways under a thin bar
+/// laid over it. A lane of its own would push everything below it down whenever the row's
+/// contents changed width.
+pub fn toolbar_scroll_bars(ui: &mut egui::Ui) {
+    ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
 }
 
 mod craft_fonts {

@@ -242,11 +242,12 @@ pub fn confirmation(s: &Session, id: &str, p: &Value) -> Option<Confirmation> {
             let json = path.with_extension("json");
             [path, json.as_path()].into_iter().find(|f| crate::vfs::exists(f)).map(|f| overwrite(f, "Exporting"))
         }
-        "file.export_png_sequence" => {
+        "file.export_png_sequence" | "file.export_svg_sequence" => {
             let dir = Path::new(p.get("dir").and_then(Value::as_str)?);
+            let ext = if id == "file.export_svg_sequence" { ".svg" } else { ".png" };
             let has_frames = crate::vfs::list(dir, 10_000).iter().any(|e| {
                 let n = e.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
-                n.starts_with("frame_") && n.ends_with(".png")
+                n.starts_with("frame_") && n.ends_with(ext)
             });
             has_frames.then(|| Confirmation {
                 title: "Replace exported frames?".into(),

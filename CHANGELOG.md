@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+* **Requests from artists, second batch** (M8).
+  * **Export SVG Sequence** (File › Export, `file.export_svg_sequence`, and
+    `anicraft-cli export --format svg-sequence`): one `frame_00001.svg` per frame in a folder,
+    each the same drawing Export Frame as SVG makes, for programs that read vector frames
+    (#504).
+  * **The timeline's current frame and frame rate are fields.** Click the frame number and type
+    a frame to go there (a number past the end goes to the last frame), or drag it to scrub;
+    click the frame rate to type a new one. Both are in the timeline's header, next to the
+    transport (#462, #461).
+  * **Every panel opens and closes from the keyboard**, with Animate's keys where they were
+    free: Timeline Ctrl+Alt+T, Tools Ctrl+F2, Properties Ctrl+F3, Library Ctrl+L, Output F2,
+    Colour Ctrl+Shift+F9, Swatches Ctrl+F9, History Ctrl+F10 (Actions stays F9), and **F4**
+    hides every panel and brings them back exactly where they were. Align, Layer Depth and the
+    Motion Editor take a key of your choice in the shortcut editor; the Window menu shows each
+    panel's key (#456).
+  * **With a menu open, pointing at another menu's title opens it**, as menu bars do everywhere
+    (#455).
+  * **Scroll bars are always there.** Wherever a panel or list holds more than fits, its scroll
+    bar shows at rest, in a lane of its own, 10 points wide, with a handle that is easy to see
+    and to grab; it no longer appears only when the pointer comes near (#483).
+  * **The colour picker, as Animate's is laid out.** The colour and its hex are along the top
+    and follow the swatch under the pointer, so you read a colour before you pick it; one
+    button at the top right (a colour wheel, then a grid of swatches) turns the palette into
+    the mixer and back; and the web-safe palette is in the order Animate users know, green
+    across each block and blue down it (#434, #435, #437, #432).
+  * A bitmap imported to the stage turns about the centre of its box (already so since the
+    transformation point of ADR 0111; a test now keeps it, #466).
+
 * **Fixes and hardening from the community** (M8). Thank you to everyone named here.
   * **Double-click the Hand tool to fit the stage in the window**, as in Animate; a single click
     still only selects the tool (#457, Wilder Ccasa).
