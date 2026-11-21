@@ -12,6 +12,14 @@
     history.
   * **A document put aside keeps no pictures**, also when one was still being drawn as you
     switched.
+* **The roadmap is now a guideline, with a parity matrix** (M8, ADR 0125). Docs only.
+  `docs/parity.md` compares AniCraft with the reference app feature by feature (done, partial,
+  missing, won't do), checked against the code and the guide. `docs/roadmap.md` replaces the
+  milestone timeline with a prioritised backlog (stable ids, sizes, what can run in parallel),
+  bugs and reliability first, and gives every open outside pull request a backlog id and a
+  state: planned, superseded, declined or held. Every pull request, ours included, gets a
+  principal-engineer review before it merges.
+
 * **Text: paths you can reshape, lines on a path, and the rest of the text-field API** (M5,
   ADR 0107).
   * **Edit the path of text on a path in place.** With the Subselection tool (or Properties ›
