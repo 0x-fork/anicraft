@@ -36,7 +36,7 @@ eighteen are backlog items for the lead to slot.
 | Tests | 2,257 passed, 0 failed, 17 ignored, in 43 binaries (16 of them hold no test) |
 | The engine's unit-test binary | 271 to 318 s of those 325 s |
 | `tests::panic_hunt_every_command` alone | 318.0 s; the other 816 engine tests add up to 33.6 s |
-| The same sweep as 17 tests, 4 test threads (after this PR) | the engine binary takes 105 s |
+| The same sweep as 17 tests, 4 test threads (after this PR) | the engine binary takes 91 to 105 s; all tests 146 s (2,275 passed) |
 | One starting document of the sweep, alone / 2 at once / 4 at once / 17 at once | 19 s / 32 s / 36 s / 121 to 220 s each |
 | Memory of the engine test process during the sweep | 0.85 GB (one test), 1.57 GB (17 at once) |
 | `tabs::tests::a_document_that_is_not_shown_keeps_no_pictures` | failed 6 of 16 runs before this PR, 0 of 24 after |
@@ -166,7 +166,8 @@ Sizes: **S** a day or less, **M** a few days, **L** a design and more than a wee
   the other 816 tests together.
 * **Done.** The sweep is one test per starting document (`panic_hunt_every_command::<start>`,
   same documents, commands, inputs and final checks), so the test runner spreads them. The
-  engine's tests take 105 s with 4 test threads.
+  engine's tests take 91 to 105 s with 4 test threads, and the whole suite's tests 146 s instead of
+  325 s.
 * **Left.** It scales badly: one start takes 19 s alone but 36 s with four at once and over
   120 s with seventeen, with processors idle. Limiting rayon to one thread changed nothing
   (31 s for four), so it is not the thread pool; the process reaching 1.5 GB points at the
@@ -203,7 +204,7 @@ Sizes: **S** a day or less, **M** a few days, **L** a design and more than a wee
 
 ### 10. Undo memory is budgeted without the media (S, R-09)
 
-* **Evidence [verified].** `history::unique_bytes` (`history.rs:319`) counts layers and
+* **Evidence [verified].** `history::unique_bytes` (`history.rs:323`) counts layers and
   symbols. Bitmaps and sounds are not counted, though a snapshot keeps their `Arc`s alive:
   importing and deleting a 50 MB sound leaves 50 MB held by a step the budget sees as a few
   hundred bytes. The budget is 512 MB a document and ADR 0112 accepts one budget per tab, 32
