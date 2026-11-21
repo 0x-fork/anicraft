@@ -34,7 +34,7 @@ AniCraft is an independent, open-source project, and is not affiliated with or e
 | Colour | 8 | 1 | 2 | 2 |
 | Text | 8 | 5 | 5 | 2 |
 | Symbols and Library | 13 | 3 | 4 | 0 |
-| Timeline | 17 | 2 | 9 | 0 |
+| Timeline | 16 | 2 | 9 | 0 |
 | Tweens and the Motion Editor | 12 | 2 | 4 | 0 |
 | Bones and rigging | 8 | 2 | 3 | 0 |
 | Camera | 5 | 1 | 0 | 0 |
@@ -42,14 +42,14 @@ AniCraft is an independent, open-source project, and is not affiliated with or e
 | Filters and blends | 6 | 1 | 1 | 0 |
 | Sound | 10 | 3 | 4 | 0 |
 | Video | 2 | 2 | 2 | 2 |
-| Interactivity and scripting | 6 | 5 | 4 | 3 |
+| Interactivity and scripting | 6 | 4 | 5 | 3 |
 | Publishing and export | 11 | 2 | 3 | 7 |
 | Import formats | 6 | 2 | 7 | 2 |
 | Assets and sharing | 4 | 1 | 2 | 4 |
 | Accessibility | 4 | 2 | 1 | 0 |
 | Preferences and shortcuts | 6 | 2 | 0 | 1 |
 | Automation | 4 | 2 | 1 | 1 |
-| **All** | **199** | **54** | **69** | **27** |
+| **All** | **198** | **53** | **70** | **27** |
 
 The counts are of the rows below, so they weigh a small feature like a large one. The backlog,
 not this table, says what matters most.
@@ -244,7 +244,7 @@ not this table, says what matters most.
 | Edit Multiple Frames | **done** | [ADR 0051](adr/0051-edit-multiple-frames-complete-and-onion-skin-in-symbols.md). |
 | Playback: play, loop, step, first and last frame | **done** | |
 | Loop a range of frames | **missing** | Loop Playback loops the whole scene (P-021). |
-| Current frame and frame rate as fields; elapsed time | **done** | [#461](https://github.com/storytold/anicraft/issues/461), [#462](https://github.com/storytold/anicraft/issues/462). |
+| Current frame and frame rate as fields | **done** | [#461](https://github.com/storytold/anicraft/issues/461), [#462](https://github.com/storytold/anicraft/issues/462). |
 | Frame View sizes, short rows, layer height | **done** | [ADR 0061](adr/0061-timeline-polish.md). |
 | Frame thumbnails in the cells (Preview) | **missing** | P-050. |
 | Scenes: add, duplicate, rename, reorder | **done** | [ADR 0011](adr/0011-scenes.md). |
@@ -257,7 +257,6 @@ not this table, says what matters most.
 | Undo and redo buttons on the timeline | **missing** | P-050 ([#369](https://github.com/storytold/anicraft/issues/369)). Edit › Undo and the History panel do it. |
 | Auto-keyframe while editing in a tween | **done** | |
 | Keyframe navigation (previous and next keyframe) | **missing** | P-026 ([#51](https://github.com/storytold/anicraft/issues/51)). |
-| Timeline markers for time in seconds | **done** | The ruler shows frames; lengths show in seconds while dragging. |
 | Layer parenting view | **done** | [ADR 0113](adr/0113-layer-parenting.md). |
 | Camera and depth controls in the timeline header | **done** | |
 
@@ -395,7 +394,7 @@ not this table, says what matters most.
 | Test Scene; Test in a browser | **missing** | Export HTML Canvas and open the page (P-035). |
 | Debugger: breakpoints, stepping, variables | **missing** | `trace` and the Output panel only (P-031). |
 | Compiler errors and warnings panel | **done** | In the Actions panel and Output. |
-| Code hints and completion | **partial** | Syntax colours and problems; no completion? (P-051). |
+| Code hints and completion | **missing**? | Problems are shown by line; no completion or syntax colouring was found (P-051). |
 | Document class and symbol classes | **partial** | Names are kept; class files don't run. |
 | Components (buttons, lists, sliders, video players) | **won't do** | A widget set for a retired runtime. |
 | Runtime targets and their APIs (the desktop and mobile runtime, the browser plug-in) | **won't do** | Retired or proprietary runtimes. |
@@ -466,7 +465,7 @@ not this table, says what matters most.
 | Package a document with its media (XFL folder) | **done** | `.anicraft` holds its media. Linked reference video stays outside (P-045). |
 | Document recovery (autosave) | **done** | [ADR 0015](adr/0015-crash-recovery-autosave.md). |
 | File information and metadata | **missing** | P-050. |
-| Export and import of brushes, filters, swatches, eases, shortcuts as files | **done** | JSON files, each documented. |
+| Export and import of brushes, filter presets, swatches and saved commands as files | **done** | JSON files. |
 | A user ease or brush library shared between documents | **missing** | Eases live in the document (P-041). |
 
 ## Accessibility
@@ -486,7 +485,7 @@ not this table, says what matters most.
 | Feature | Status | Notes |
 |---|---|---|
 | Preferences dialog | **done** | [preferences](guide/preferences-shortcuts-accessibility.md). |
-| Keyboard shortcut editor, with the reference app's keys by default | **done** | Sets can be exported. |
+| Keyboard shortcut editor, with the reference app's keys by default | **done** | Saving a set of keys as a file to share: ?. |
 | Interface themes | **done** | Dark, light, high contrast, and your own ([ADR 0117](adr/0117-user-themes-from-a-folder.md)). |
 | Interface languages | **partial** | The machinery is there ([ADR 0040](adr/0040-interface-languages.md)); no full translation ships yet (P-055). Right-to-left: P-034 ([#45](https://github.com/storytold/anicraft/issues/45)). |
 | Undo levels; document-level undo | **done** | A memory budget instead of a count ([ADR 0001](adr/0001-undo-persistent-snapshots.md)). Object-level undo is missing. |
